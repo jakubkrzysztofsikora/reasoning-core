@@ -1,0 +1,816 @@
+"""System 2 sidecar: Tree-sitter AST/CFG + Mamba-backed ImpactReport scoring +
+HTTP service on 127.0.0.1:8765.
+
+Public API (consumed by RC-006/RC-007):
+
+    parse_source(path, src) -> ParseResult
+    build_call_graph(tree, src, language) -> dict[str, set[str]]
+    score_change(path, before_src, after_src) -> ImpactReport
+    select_grammar / UnsupportedLanguageError  (re-exported from grammars.py)
+
+HTTP contract (consumed by mcp_reasoner + pre_edit_guard):
+
+    GET  /health
+    POST /score   { path, before_src, after_src }
+
+Run with: ``python3 -m src.s2_core``
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import os
+import sys
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional
+
+from .grammars import (
+    EXTENSION_MAP,
+    PUBLIC_LANGUAGE,
+    SUPPORTED_LANGUAGES,
+    UnsupportedLanguageError,
+    get_parser,
+    select_grammar,
+)
+from .ssm_backbone import (
+    BACKBONE_INFO,
+    BackboneUnavailableError,
+    ast_to_tokens,
+    embed,
+    is_loaded,
+    load_backbone,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Data shapes
+# ---------------------------------------------------------------------------
+
+RISK_LABELS: tuple[str, ...] = (
+    "cyclomatic",
+    "fan_in",
+    "fan_out",
+    "depth",
+    "churn",
+    "coupling",
+    "cohesion",
+    "novelty",
+)
+
+
+@dataclass
+class ParseResult:
+    tree: Any
+    language: str
+    parse_ok: bool
+    error: Optional[str] = None
+
+
+@dataclass
+class ImpactReport:
+    architectural_impact_score: float
+    coherence_delta: float
+    risk_vector: list[float]
+    regression_detected: bool
+    human_summary: str
+    risk_labels: list[str] = field(default_factory=lambda: list(RISK_LABELS))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "architectural_impact_score": float(self.architectural_impact_score),
+            "coherence_delta": float(self.coherence_delta),
+            "risk_vector": [float(x) for x in self.risk_vector],
+            "risk_labels": list(self.risk_labels),
+            "regression_detected": bool(self.regression_detected),
+            "human_summary": str(self.human_summary),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Parser front-end
+# ---------------------------------------------------------------------------
+
+def parse_source(path: str, src: str) -> ParseResult:
+    """Parse ``src`` using the grammar selected by ``path``'s extension.
+
+    Never raises on syntax errors -- returns ``parse_ok=False`` instead. Does
+    raise ``UnsupportedLanguageError`` for unsupported extensions (caller
+    decides what to do).
+    """
+    lang_id, _ = select_grammar(path)
+    parser = get_parser(lang_id)
+    src_bytes = src.encode("utf-8", errors="replace") if isinstance(src, str) else (src or b"")
+    try:
+        tree = parser.parse(src_bytes)
+    except Exception as exc:
+        return ParseResult(tree=None, language=lang_id, parse_ok=False, error=str(exc))
+
+    parse_ok = True
+    try:
+        if tree.root_node.has_error:  # type: ignore[attr-defined]
+            parse_ok = False
+    except Exception:
+        # Older bindings: walk for ERROR nodes manually, bounded.
+        try:
+            stack = [tree.root_node]
+            steps = 0
+            while stack and steps < 4096:
+                steps += 1
+                node = stack.pop()
+                if getattr(node, "type", "") == "ERROR" or getattr(node, "is_missing", False):
+                    parse_ok = False
+                    break
+                stack.extend(list(getattr(node, "children", [])))
+        except Exception:
+            pass
+
+    return ParseResult(tree=tree, language=lang_id, parse_ok=parse_ok)
+
+
+# ---------------------------------------------------------------------------
+# Call graph builder
+# ---------------------------------------------------------------------------
+
+def _node_text(node: Any, src_bytes: bytes) -> str:
+    try:
+        return src_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _walk(node: Any):
+    """Iterative pre-order traversal yielding every descendant node."""
+    if node is None:
+        return
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n is None:
+            continue
+        yield n
+        try:
+            stack.extend(reversed(list(n.children)))
+        except Exception:
+            pass
+
+
+def _identifier_of(node: Any, src_bytes: bytes, field_names: tuple[str, ...] = ("name",)) -> Optional[str]:
+    for fname in field_names:
+        try:
+            child = node.child_by_field_name(fname)
+        except Exception:
+            child = None
+        if child is not None:
+            text = _node_text(child, src_bytes).strip()
+            if text:
+                return text
+    # Fallback: first identifier child.
+    try:
+        for child in node.children:
+            if "identifier" in getattr(child, "type", "") or getattr(child, "type", "") == "identifier":
+                text = _node_text(child, src_bytes).strip()
+                if text:
+                    return text
+    except Exception:
+        pass
+    return None
+
+
+def _python_calls(func_node: Any, src_bytes: bytes) -> set[str]:
+    out: set[str] = set()
+    for n in _walk(func_node):
+        if getattr(n, "type", "") == "call":
+            try:
+                callee = n.child_by_field_name("function")
+            except Exception:
+                callee = None
+            if callee is None:
+                continue
+            t = getattr(callee, "type", "")
+            if t == "identifier":
+                out.add(_node_text(callee, src_bytes).strip())
+            elif t == "attribute":
+                try:
+                    attr = callee.child_by_field_name("attribute")
+                except Exception:
+                    attr = None
+                if attr is not None:
+                    out.add(_node_text(attr, src_bytes).strip())
+    return {x for x in out if x}
+
+
+def _js_like_calls(func_node: Any, src_bytes: bytes) -> set[str]:
+    out: set[str] = set()
+    for n in _walk(func_node):
+        if getattr(n, "type", "") == "call_expression":
+            try:
+                callee = n.child_by_field_name("function")
+            except Exception:
+                callee = None
+            if callee is None:
+                continue
+            t = getattr(callee, "type", "")
+            if t == "identifier":
+                out.add(_node_text(callee, src_bytes).strip())
+            elif t == "member_expression":
+                try:
+                    prop = callee.child_by_field_name("property")
+                except Exception:
+                    prop = None
+                if prop is not None:
+                    out.add(_node_text(prop, src_bytes).strip())
+    return {x for x in out if x}
+
+
+def _csharp_calls(func_node: Any, src_bytes: bytes) -> set[str]:
+    out: set[str] = set()
+    for n in _walk(func_node):
+        if getattr(n, "type", "") == "invocation_expression":
+            try:
+                callee = n.child_by_field_name("function")
+            except Exception:
+                callee = None
+            if callee is None:
+                # Fallback to first child.
+                try:
+                    callee = n.children[0]
+                except Exception:
+                    callee = None
+            if callee is None:
+                continue
+            t = getattr(callee, "type", "")
+            if t == "identifier":
+                out.add(_node_text(callee, src_bytes).strip())
+            elif t == "member_access_expression":
+                try:
+                    name = callee.child_by_field_name("name")
+                except Exception:
+                    name = None
+                if name is not None:
+                    out.add(_node_text(name, src_bytes).strip())
+                else:
+                    # Last identifier descendant.
+                    last = None
+                    for d in _walk(callee):
+                        if getattr(d, "type", "") == "identifier":
+                            last = d
+                    if last is not None:
+                        out.add(_node_text(last, src_bytes).strip())
+            else:
+                # Generic / qualified names: pick last identifier descendant.
+                last = None
+                for d in _walk(callee):
+                    if getattr(d, "type", "") == "identifier":
+                        last = d
+                if last is not None:
+                    out.add(_node_text(last, src_bytes).strip())
+    return {x for x in out if x}
+
+
+def _sql_invocations(node: Any, src_bytes: bytes) -> set[str]:
+    """Collect EXEC/CALL targets and function-call identifiers under a node."""
+    out: set[str] = set()
+    for n in _walk(node):
+        ntype = getattr(n, "type", "")
+        # invocation: most SQL grammars expose call_expression / function_call /
+        # invocation. Also catch EXEC/EXECUTE statements heuristically.
+        if ntype in {"invocation", "function_call", "call_expression"}:
+            ident = None
+            try:
+                ident = n.child_by_field_name("function") or n.child_by_field_name("name")
+            except Exception:
+                ident = None
+            if ident is None:
+                # First identifier descendant.
+                for d in _walk(n):
+                    if getattr(d, "type", "") == "identifier":
+                        ident = d
+                        break
+            if ident is not None:
+                out.add(_node_text(ident, src_bytes).strip())
+        elif ntype in {"execute_statement", "exec_statement", "call_statement"}:
+            for d in _walk(n):
+                if getattr(d, "type", "") == "identifier":
+                    out.add(_node_text(d, src_bytes).strip())
+                    break
+    return {x for x in out if x}
+
+
+def _python_functions(root: Any, src_bytes: bytes) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for n in _walk(root):
+        if getattr(n, "type", "") in {"function_definition", "async_function_definition"}:
+            name = _identifier_of(n, src_bytes)
+            if name:
+                out[name] = n
+    return out
+
+
+def _js_functions(root: Any, src_bytes: bytes) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for n in _walk(root):
+        t = getattr(n, "type", "")
+        if t in {"function_declaration", "method_definition", "function_expression"}:
+            name = _identifier_of(n, src_bytes)
+            if name:
+                out[name] = n
+        elif t == "lexical_declaration" or t == "variable_declaration":
+            # const foo = () => { ... } / var foo = function() {}
+            for child in _walk(n):
+                if getattr(child, "type", "") == "variable_declarator":
+                    try:
+                        nm = child.child_by_field_name("name")
+                        val = child.child_by_field_name("value")
+                    except Exception:
+                        nm, val = None, None
+                    if nm is not None and val is not None and getattr(val, "type", "") in {
+                        "arrow_function",
+                        "function_expression",
+                        "function",
+                    }:
+                        text = _node_text(nm, src_bytes).strip()
+                        if text:
+                            out[text] = val
+    return out
+
+
+def _csharp_methods(root: Any, src_bytes: bytes) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for n in _walk(root):
+        t = getattr(n, "type", "")
+        if t in {"method_declaration", "local_function_statement", "constructor_declaration"}:
+            name = _identifier_of(n, src_bytes)
+            if name:
+                out[name] = n
+    return out
+
+
+def _sql_routines(root: Any, src_bytes: bytes) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for n in _walk(root):
+        t = getattr(n, "type", "")
+        if t in {
+            "create_function_statement",
+            "create_procedure_statement",
+            "create_function",
+            "create_procedure",
+            "function_definition",
+            "procedure_definition",
+        }:
+            name = _identifier_of(n, src_bytes, field_names=("name",))
+            if name is None:
+                # Last identifier in the create-stmt header.
+                for d in _walk(n):
+                    if getattr(d, "type", "") == "identifier":
+                        name = _node_text(d, src_bytes).strip()
+                        break
+            if name:
+                out[name] = n
+    return out
+
+
+def build_call_graph(tree: Any, src: str, language: str) -> dict[str, set[str]]:
+    """Return {function_name: {called_names}} for the supported languages.
+
+    Returns an empty dict on any failure (per the graceful-degradation
+    contract in RC-003 acceptance criteria).
+    """
+    if tree is None:
+        return {}
+    src_bytes = src.encode("utf-8", errors="replace") if isinstance(src, str) else (src or b"")
+    try:
+        root = tree.root_node
+    except Exception:
+        return {}
+
+    try:
+        if language == "python":
+            funcs = _python_functions(root, src_bytes)
+            return {name: _python_calls(node, src_bytes) for name, node in funcs.items()}
+        if language in {"javascript", "typescript", "tsx"}:
+            funcs = _js_functions(root, src_bytes)
+            return {name: _js_like_calls(node, src_bytes) for name, node in funcs.items()}
+        if language == "csharp":
+            methods = _csharp_methods(root, src_bytes)
+            return {name: _csharp_calls(node, src_bytes) for name, node in methods.items()}
+        if language == "sql":
+            routines = _sql_routines(root, src_bytes)
+            graph: dict[str, set[str]] = {}
+            for name, node in routines.items():
+                graph[name] = _sql_invocations(node, src_bytes)
+            if not graph:
+                # No routines: fall back to a module-level node mapping table refs.
+                tables: set[str] = set()
+                for n in _walk(root):
+                    if getattr(n, "type", "") in {"object_reference", "table_reference", "relation"}:
+                        for d in _walk(n):
+                            if getattr(d, "type", "") == "identifier":
+                                tables.add(_node_text(d, src_bytes).strip())
+                                break
+                graph["_module"] = {t for t in tables if t}
+            return graph
+    except Exception as exc:
+        logger.debug("build_call_graph failed for %s: %s", language, exc)
+        return {}
+
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# AST/CFG metrics for the risk vector
+# ---------------------------------------------------------------------------
+
+_BRANCH_NODE_TYPES = {
+    # Python
+    "if_statement", "for_statement", "while_statement", "try_statement",
+    "elif_clause", "except_clause", "conditional_expression",
+    "boolean_operator",
+    # JS/TS
+    "if_statement", "for_statement", "while_statement", "do_statement",
+    "switch_case", "ternary_expression", "catch_clause", "logical_expression",
+    # C#
+    "if_statement", "for_statement", "for_each_statement", "while_statement",
+    "do_statement", "switch_section", "catch_clause", "case_switch_label",
+    "conditional_expression",
+    # SQL
+    "case", "when_clause", "if_statement",
+}
+
+
+def _count_branches(root: Any) -> int:
+    if root is None:
+        return 0
+    n = 0
+    for node in _walk(root):
+        if getattr(node, "type", "") in _BRANCH_NODE_TYPES:
+            n += 1
+    return n
+
+
+def _max_depth(root: Any) -> int:
+    """Simple structural max-depth via DFS (bounded)."""
+    if root is None:
+        return 0
+    best = 0
+    stack: list[tuple[Any, int]] = [(root, 1)]
+    steps = 0
+    while stack and steps < 8192:
+        steps += 1
+        node, d = stack.pop()
+        if d > best:
+            best = d
+        try:
+            children = list(node.children)
+        except Exception:
+            children = []
+        for c in children:
+            stack.append((c, d + 1))
+    return best
+
+
+def _safe_div(a: float, b: float) -> float:
+    return a / b if b else 0.0
+
+
+def _norm(x: float, scale: float) -> float:
+    if scale <= 0:
+        return 0.0
+    v = x / scale
+    if v < 0.0:
+        return 0.0
+    if v > 1.0:
+        return 1.0
+    return float(v)
+
+
+def _compute_risk_vector(
+    parse_before: ParseResult,
+    parse_after: ParseResult,
+    graph_before: dict[str, set[str]],
+    graph_after: dict[str, set[str]],
+    novelty: float,
+    before_src: str,
+    after_src: str,
+) -> list[float]:
+    # cyclomatic: branch count delta normalised to 20 branches added.
+    b_before = _count_branches(parse_before.tree.root_node) if parse_before.tree else 0
+    b_after = _count_branches(parse_after.tree.root_node) if parse_after.tree else 0
+    cyclomatic = _norm(max(0, b_after - b_before) + 0.25 * b_after, 20.0)
+
+    # fan_in / fan_out from call graph.
+    in_counts_after: dict[str, int] = {n: 0 for n in graph_after}
+    for callers in graph_after.values():
+        for callee in callers:
+            if callee in in_counts_after:
+                in_counts_after[callee] = in_counts_after.get(callee, 0) + 1
+    max_fan_in = max(in_counts_after.values(), default=0)
+    max_fan_out = max((len(v) for v in graph_after.values()), default=0)
+    fan_in = _norm(float(max_fan_in), 8.0)
+    fan_out = _norm(float(max_fan_out), 12.0)
+
+    # depth: max AST depth.
+    d_before = _max_depth(parse_before.tree.root_node) if parse_before.tree else 0
+    d_after = _max_depth(parse_after.tree.root_node) if parse_after.tree else 0
+    depth = _norm(float(max(d_before, d_after)), 40.0)
+
+    # churn: line-edit-distance (Levenshtein-on-lines simplification = symmetric diff size).
+    before_lines = (before_src or "").splitlines()
+    after_lines = (after_src or "").splitlines()
+    set_before = set(before_lines)
+    set_after = set(after_lines)
+    churn_lines = len(set_before.symmetric_difference(set_after))
+    churn = _norm(float(churn_lines), 200.0)
+
+    # coupling: total edges in graph_after (proxy for module-level coupling).
+    edges = sum(len(v) for v in graph_after.values())
+    coupling = _norm(float(edges), 40.0)
+
+    # cohesion: 1 - (isolated nodes / nodes). Higher = more cohesive (-> risk dim
+    # represents LACK of cohesion, so we invert).
+    nodes = max(1, len(graph_after))
+    isolated = sum(1 for v in graph_after.values() if not v)
+    lack_cohesion = _safe_div(float(isolated), float(nodes))
+    cohesion = _norm(lack_cohesion, 1.0)
+
+    # novelty: cosine-distance of the two pooled embeddings, already in [0,1].
+    novelty_dim = _norm(novelty, 1.0)
+
+    return [
+        float(cyclomatic),
+        float(fan_in),
+        float(fan_out),
+        float(depth),
+        float(churn),
+        float(coupling),
+        float(cohesion),
+        float(novelty_dim),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+
+_REGRESSION_AIS_THRESHOLD = 0.4
+_REGRESSION_COHERENCE_THRESHOLD = 1.5
+_REGRESSION_RISK_DIM_THRESHOLD = 0.9
+
+
+def _cosine_similarity(a, b) -> float:
+    """Compute cosine sim between two 1D torch tensors. Returns float in [-1, 1]."""
+    import torch
+
+    if a is None or b is None:
+        return 1.0
+    na = torch.linalg.norm(a)
+    nb = torch.linalg.norm(b)
+    if float(na) == 0.0 or float(nb) == 0.0:
+        return 1.0
+    return float(torch.dot(a, b) / (na * nb))
+
+
+def _l2_distance(a, b) -> float:
+    import torch
+
+    if a is None or b is None:
+        return 0.0
+    return float(torch.linalg.norm(a - b))
+
+
+def _summarize(
+    ais: float,
+    coherence_delta: float,
+    risk_vector: list[float],
+    regression: bool,
+    language: str,
+) -> str:
+    if regression:
+        # Find dominant risk dim.
+        idx = max(range(len(risk_vector)), key=lambda i: risk_vector[i])
+        dim = RISK_LABELS[idx]
+        return (
+            f"Regression detected in {language}: AIS={ais:.3f}, "
+            f"coherence_delta={coherence_delta:.3f}, dominant_risk={dim}={risk_vector[idx]:.3f}."
+        )
+    return (
+        f"Change accepted ({language}): AIS={ais:.3f}, "
+        f"coherence_delta={coherence_delta:.3f}, max_risk={max(risk_vector):.3f}."
+    )
+
+
+def score_change(path: str, before_src: str, after_src: str) -> ImpactReport:
+    """Score a proposed source edit. Hard contract -- see board RC-004."""
+    # Grammar selection (raises UnsupportedLanguageError to caller).
+    lang_id, _ = select_grammar(path)
+
+    parse_before = parse_source(path, before_src or "")
+    parse_after = parse_source(path, after_src or "")
+
+    graph_before = build_call_graph(parse_before.tree, before_src or "", parse_before.language)
+    graph_after = build_call_graph(parse_after.tree, after_src or "", parse_after.language)
+
+    # AST -> token strings; falls back to raw source if tree is unusable.
+    before_tokens = ast_to_tokens(parse_before.tree, before_src or "")
+    after_tokens = ast_to_tokens(parse_after.tree, after_src or "")
+
+    # Forward pass through the real Mamba backbone.
+    try:
+        emb_before = embed(before_tokens)
+        emb_after = embed(after_tokens)
+        cos = _cosine_similarity(emb_before, emb_after)
+        l2 = _l2_distance(emb_before, emb_after)
+    except BackboneUnavailableError:
+        # We propagate this -- the sidecar should fail loudly rather than
+        # silently degrade scoring quality.
+        raise
+    except Exception as exc:
+        logger.exception("Backbone forward pass failed: %s", exc)
+        raise BackboneUnavailableError(f"forward pass failed: {exc}") from exc
+
+    # AIS in [0, 1]: 1.0 == identical embeddings. Map cos in [-1,1] -> [0,1].
+    ais = max(0.0, min(1.0, (cos + 1.0) / 2.0))
+    coherence_delta = float(l2)
+
+    # novelty in [0, 1]: 1 - max(cos, 0).
+    novelty = max(0.0, min(1.0, 1.0 - max(cos, 0.0)))
+
+    risk_vector = _compute_risk_vector(
+        parse_before,
+        parse_after,
+        graph_before,
+        graph_after,
+        novelty,
+        before_src or "",
+        after_src or "",
+    )
+
+    regression = (
+        ais < _REGRESSION_AIS_THRESHOLD
+        or coherence_delta > _REGRESSION_COHERENCE_THRESHOLD
+        or any(dim > _REGRESSION_RISK_DIM_THRESHOLD for dim in risk_vector)
+    )
+
+    public_lang = PUBLIC_LANGUAGE.get(lang_id, lang_id)
+    summary = _summarize(ais, coherence_delta, risk_vector, regression, public_lang)
+
+    return ImpactReport(
+        architectural_impact_score=float(ais),
+        coherence_delta=float(coherence_delta),
+        risk_vector=risk_vector,
+        regression_detected=bool(regression),
+        human_summary=summary,
+    )
+
+
+# ---------------------------------------------------------------------------
+# HTTP service (FastAPI)
+# ---------------------------------------------------------------------------
+
+def create_app():
+    """Construct the FastAPI app. Loads the SSM backbone eagerly."""
+    # Imports are hoisted into module globals so FastAPI's get_type_hints()
+    # can resolve `Request` in the route signature even with
+    # `from __future__ import annotations` active at the top of this module.
+    import fastapi as _fastapi
+    import fastapi.responses as _fastapi_responses
+    globals().setdefault("Request", _fastapi.Request)
+    globals().setdefault("JSONResponse", _fastapi_responses.JSONResponse)
+    FastAPI = _fastapi.FastAPI
+    Request = _fastapi.Request
+    JSONResponse = _fastapi_responses.JSONResponse
+
+    app = FastAPI(title="reasoning-core S2 sidecar", version="1.0")
+
+    @app.on_event("startup")
+    async def _startup() -> None:  # pragma: no cover - exercised via boot
+        try:
+            load_backbone()
+            logger.info("backbone pre-warmed at startup")
+        except BackboneUnavailableError as exc:
+            # Log + keep server alive so /health honestly reports model_loaded:false.
+            logger.error("backbone load failed at startup: %s", exc)
+
+    @app.get("/health")
+    async def health():
+        return JSONResponse(
+            {
+                "status": "ok",
+                "model_loaded": bool(is_loaded()),
+                "languages": list(SUPPORTED_LANGUAGES),
+                "backbone": dict(BACKBONE_INFO),
+            }
+        )
+
+    @app.post("/score")
+    async def score(request: Request):
+        try:
+            raw = await request.body()
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "bad_request", "detail": f"invalid JSON: {exc}"},
+            )
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "bad_request", "detail": "expected JSON object"},
+            )
+
+        path = payload.get("path")
+        before_src = payload.get("before_src", "")
+        after_src = payload.get("after_src", "")
+        if not isinstance(path, str) or not path:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "bad_request", "detail": "missing or invalid 'path'"},
+            )
+        if not isinstance(before_src, str) or not isinstance(after_src, str):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "bad_request",
+                    "detail": "'before_src' and 'after_src' must be strings",
+                },
+            )
+
+        try:
+            report = score_change(path, before_src, after_src)
+        except UnsupportedLanguageError as exc:
+            return JSONResponse(
+                status_code=415,
+                content={"error": "unsupported_language", "extension": exc.extension},
+            )
+        except BackboneUnavailableError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "backbone_unavailable", "detail": str(exc)},
+            )
+        except Exception as exc:
+            logger.exception("scoring failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "internal_error", "detail": str(exc)},
+            )
+
+        return JSONResponse(status_code=200, content=report.to_dict())
+
+    return app
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
+
+def _run() -> int:
+    """Run the HTTP service on 127.0.0.1:8765 (loopback only)."""
+    host = "127.0.0.1"
+    port = int(os.environ.get("S2_PORT", "8765"))
+
+    # Pre-warm the backbone synchronously BEFORE binding the port so callers
+    # who probe /health immediately get model_loaded:true.
+    try:
+        load_backbone()
+    except BackboneUnavailableError as exc:
+        logger.error("backbone unavailable at startup: %s", exc)
+        # Do not exit -- /health will reflect the degraded state. The contract
+        # says startup must not crash the sidecar on backbone failure.
+
+    try:
+        import uvicorn
+    except Exception as exc:  # pragma: no cover - dep missing
+        print(f"ERROR: uvicorn import failed: {exc}", file=sys.stderr)
+        return 1
+
+    app = create_app()
+    try:
+        # uvicorn.run blocks. log_level is left as default; we already have
+        # logging configured.
+        uvicorn.run(app, host=host, port=port, log_level=os.environ.get("S2_LOG_LEVEL", "info"))
+    except OSError as exc:
+        # Address already in use, etc.
+        print(f"ERROR: could not bind {host}:{port}: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised via boot
+    logging.basicConfig(level=os.environ.get("S2_LOG_LEVEL", "INFO").upper())
+    sys.exit(_run())
+
+
+__all__ = [
+    "ImpactReport",
+    "ParseResult",
+    "RISK_LABELS",
+    "UnsupportedLanguageError",
+    "build_call_graph",
+    "create_app",
+    "parse_source",
+    "score_change",
+    "select_grammar",
+]

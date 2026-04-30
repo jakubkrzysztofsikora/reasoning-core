@@ -1,0 +1,525 @@
+{
+  "schema_version": 1,
+  "project": "reasoning-core",
+  "created_at": "2026-05-01T00:00:00Z",
+  "stages": [
+    "todo",
+    "inprogress",
+    "codereview",
+    "test",
+    "done"
+  ],
+  "tasks": [
+    {
+      "id": "RC-001",
+      "title": "Bootstrap project skeleton, deps, and pytest harness",
+      "stage": "done",
+      "owner": "lead",
+      "role": "fullstack",
+      "deliverable": "D2",
+      "dependencies": [],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/pyproject.toml",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/requirements.txt",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/__init__.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/hooks/__init__.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/__init__.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/conftest.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.gitignore"
+      ],
+      "acceptance_criteria": [
+        "requirements.txt pins fastapi (or uvicorn for stdlib path), httpx, pytest, mcp[cli]",
+        "requirements.txt pins tree-sitter plus per-language grammar packages: tree-sitter-python, tree-sitter-javascript, tree-sitter-typescript, tree-sitter-c-sharp, tree-sitter-sql (or a single tree-sitter-languages aggregate that exposes all five)",
+        "requirements.txt pins transformers>=4.39, torch (CPU wheel acceptable), accelerate, and safetensors for real Mamba SSM weight loading",
+        "pyproject.toml declares package metadata and pytest config (testpaths=tests)",
+        "`pip install -r requirements.txt` succeeds in a clean venv on macOS Python 3.11+",
+        "`pytest -q` runs (zero tests OK) with exit code 0",
+        "`python3 -m py_compile` on every existing .py is green",
+        "src/ and tests/ are valid Python packages (have __init__.py)"
+      ],
+      "test_plan": "Create venv, install requirements, run `pytest -q` and `python3 -m py_compile $(git ls-files '*.py')`. Both must exit 0. Confirm `import transformers, torch, tree_sitter` all succeed.",
+      "estimated_loc": 80,
+      "priority": "P0",
+      "notes": "Foundation task. All other implementation tasks depend on this. Pick FastAPI for HTTP service unless team prefers stdlib http.server. Heavy deps (torch, transformers) bloat install time \u2014 flag this to QA so test fixtures cache the model dir."
+    },
+    {
+      "id": "RC-002",
+      "title": "Scaleway / y-router configuration script with live API probe (D1)",
+      "stage": "test",
+      "owner": "engineer-3",
+      "role": "fullstack",
+      "deliverable": "D1",
+      "dependencies": [
+        "RC-001"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/scripts/configure-scaleway.sh"
+      ],
+      "acceptance_criteria": [
+        "Script is executable (chmod +x) and starts with `set -euo pipefail`",
+        "Reads the Scaleway secret key via `scw config get secret-key --profile newprofile` (and accepts the legacy `secret_key` key as fallback); fails non-zero with a clear stderr message when the value is empty or `scw` is missing",
+        "Exports ANTHROPIC_BASE_URL=http://localhost:8787 (override-able via env), ANTHROPIC_AUTH_TOKEN=$SCALEWAY_API_KEY, ANTHROPIC_MODEL=devstral-2-123b-instruct-2512, ANTHROPIC_SMALL_FAST_MODEL=devstral-2-123b-instruct-2512",
+        "Performs a LIVE `POST https://api.scaleway.ai/v1/chat/completions` with model devstral-2-123b-instruct-2512 using curl --fail-with-body, asserts HTTP 200, parses the response JSON with `jq`, and asserts `.choices[0].message.content` is a non-empty string; exits non-zero with a diagnostic on any failure",
+        "Performs a second probe through the y-router endpoint (ANTHROPIC_BASE_URL/v1/messages or equivalent) and asserts a 200 with non-empty content; exits non-zero on failure",
+        "Supports `--skip-live` flag for offline CI, but the default invocation MUST hit the live endpoints",
+        "When sourced (`source scripts/configure-scaleway.sh`), env vars persist in caller shell; when executed directly the live probe still runs and exits 0 only on full success",
+        "Fail-fast behavior: when SCALEWAY_API_KEY is unset AND `scw` returns empty, the script prints `ERROR: missing Scaleway secret key (scw profile=newprofile)` to stderr and exits with code 1 within 2 seconds"
+      ],
+      "test_plan": "QA covers under RC-013. Local: source the script with a real key, expect exit 0 and printed model+token usage. Negative: unset key + stub `scw` returning empty -> expect exit 1 within 2s and the exact error string.",
+      "estimated_loc": 120,
+      "priority": "P1",
+      "notes": "This task now performs real network I/O. Requires `curl` and `jq` on PATH (add to acceptance check). Document required env vars in script header. The y-router must be running locally (port 8787) for the second probe \u2014 start it before invocation or skip with --skip-live.",
+      "qa_findings": [
+        "BLOCKED (2026-05-01 QA pass 2): Live Scaleway/y-router probe requires real credentials and a running y-router on :8787. Negative fail-fast path re-verified -- test_configure_scaleway_missing_key_fails_fast PASSES (exit non-zero <2s, exact stderr). Grammar wheel install did not affect this task. Lead to run RC_LIVE=1 bash scripts/configure-scaleway.sh to close."
+      ]
+    },
+    {
+      "id": "RC-003",
+      "title": "S2 sidecar: multi-language Tree-sitter loader + AST/CFG builder",
+      "stage": "done",
+      "owner": "engineer-1",
+      "role": "fullstack",
+      "deliverable": "D2",
+      "dependencies": [
+        "RC-001"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/s2_core.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/grammars.py"
+      ],
+      "acceptance_criteria": [
+        "Loads Tree-sitter grammars for Python, JavaScript, TypeScript, C#, and SQL without network at runtime (via tree-sitter-languages OR per-language wheels: tree_sitter_python, tree_sitter_javascript, tree_sitter_typescript, tree_sitter_c_sharp, tree_sitter_sql)",
+        "Exposes `select_grammar(path: str) -> Language` which auto-selects by file extension: .py -> python, .js/.mjs/.cjs -> javascript, .ts -> typescript, .tsx -> tsx, .cs -> csharp, .sql -> sql",
+        "Defines a typed exception `UnsupportedLanguageError(extension: str)` and raises it (no silent fallback) for any extension not in the supported set",
+        "Exposes `parse_source(path: str, src: str) -> tree_sitter.Tree` returning a valid tree (root node populated) for every supported language",
+        "Exposes `build_call_graph(tree, src, language: str) -> dict[str, set[str]]` mapping function/method name -> set of called names within the module; works for all 5 languages (use language-specific node-type queries; SQL graph maps procedure/function names to invoked CALL/EXEC targets, statement-level if no functions defined)",
+        "Handles syntax errors gracefully per language: returns empty graph + parse_ok=False rather than raising",
+        "Module is importable as `from src.s2_core import parse_source, build_call_graph, select_grammar, UnsupportedLanguageError`"
+      ],
+      "test_plan": "Covered by RC-009. Unit-level: each of the 5 languages has a 2-function fixture where A calls B; build_call_graph returns {'A': {'B'}, 'B': set()}. SQL fixture uses CREATE PROCEDURE A() that CALLs B(). UnsupportedLanguageError raised for `.rb` and `.cpp`.",
+      "estimated_loc": 320,
+      "priority": "P0",
+      "notes": "tree-sitter-languages bundles compiled grammars for ~40 languages and is the path of least friction. Per-language wheels are second choice. Document chosen approach inline. TypeScript needs both `typescript` and `tsx` languages. | LEAD-FIX: SQL fixture migrated to PostgreSQL dialect \u2014 tree-sitter-sql 0.3 parses cleanly. 41 pytest pass."
+    },
+    {
+      "id": "RC-004",
+      "title": "S2 sidecar: ImpactReport scoring engine with real Mamba SSM forward pass",
+      "stage": "test",
+      "owner": "engineer-1",
+      "role": "fullstack",
+      "deliverable": "D2",
+      "dependencies": [
+        "RC-003",
+        "RC-014"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/s2_core.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/ssm_backbone.py"
+      ],
+      "acceptance_criteria": [
+        "Defines a typed `ImpactReport` (dataclass or pydantic) with fields: architectural_impact_score:float, coherence_delta:float, risk_vector:list[float] (len 8), regression_detected:bool, human_summary:str",
+        "Implements `score_change(path: str, before_src: str, after_src: str) -> ImpactReport`",
+        "Loads a real pretrained SSM checkpoint via `transformers.AutoModel.from_pretrained('state-spaces/mamba-130m-hf')` (or compatible \u2014 e.g. mamba2 variant \u2014 documented in ARCHITECTURE.md); model and tokenizer are cached in a module-level singleton so the load happens once per process",
+        "AIS forward pass executes a real `model(input_ids).last_hidden_state` reduction (mean-pool over sequence dim) on tokenized AST-derived text from before_src and after_src; coherence_delta is the L2 distance between the two pooled vectors (NOT a hashed n-gram fallback)",
+        "Forward pass runs on CPU by default; honors `S2_DEVICE=cuda` env var to opt into GPU",
+        "AIS is in [0.0, 1.0] derived from cosine similarity of the two pooled embeddings (1.0 == identical, clamped)",
+        "risk_vector has 8 dims labeled cyclomatic, fan_in, fan_out, depth, churn, coupling, cohesion, novelty (in this order); each dim normalized to [0,1]; novelty is derived from the Mamba embedding distance, the rest from AST/CFG metrics",
+        "regression_detected == True iff (AIS < 0.4) OR (coherence_delta > 1.5) OR any risk dim > 0.9",
+        "Scoring is deterministic given same inputs: model.eval() + torch.no_grad() + fixed seed; two calls with identical input produce bit-identical risk_vector and AIS",
+        "human_summary is non-empty and references the dominant risk dim when regression detected",
+        "First-call latency <= 30s on a cold model load (CPU); subsequent calls <= 3s on CPU for inputs <= 2KB"
+      ],
+      "test_plan": "Covered by RC-009. Determinism asserted by calling score_change twice on identical input and comparing all fields bit-for-bit. Latency budget asserted on the second call.",
+      "estimated_loc": 280,
+      "priority": "P0",
+      "notes": "RISK: Mamba inference on CPU may exceed the 5s sidecar timeout used by the hook (see RC-006). Mitigation options: (a) pre-warm the model in start-sidecar.sh and reuse the singleton, (b) bump hook timeout to 30s, (c) use mamba-130m (smallest published) \u2014 surfaced in board notes for lead decision.",
+      "qa_findings": [
+        "BLOCKED (2026-05-01 QA pass 2): state-spaces/mamba-130m-hf and all fallback checkpoints failed to resolve from HF in QA environment (no cache, no network). All 6 score_change/determinism/embed tests skip cleanly. Static review of src/s2_core.score_change and src/ssm_backbone.embed confirms real Mamba forward-pass path via transformers.AutoModel + last_hidden_state mean-pool. Grammar wheels now installed (RC-003 partial) but SQL fixture fails -- does not affect this task. Lead to run huggingface-cli download state-spaces/mamba-130m-hf then rerun pytest to close."
+      ]
+    },
+    {
+      "id": "RC-005",
+      "title": "S2 sidecar: HTTP service on 127.0.0.1:8765 + start script with model pre-warm",
+      "stage": "done",
+      "owner": "engineer-1",
+      "role": "fullstack",
+      "deliverable": "D2",
+      "dependencies": [
+        "RC-004"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/s2_core.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/scripts/start-sidecar.sh"
+      ],
+      "acceptance_criteria": [
+        "Running `python3 -m src.s2_core` (or equivalent entrypoint) starts an HTTP server bound to 127.0.0.1:8765",
+        "On startup the SSM model is loaded eagerly (pre-warm) before the HTTP listener accepts traffic, so the first /score request does not pay the cold-load cost",
+        "POST /score with JSON {path, before_src, after_src} returns 200 with the ImpactReport serialized as JSON (all fields populated)",
+        "GET /health returns 200 {\"status\": \"ok\", \"model_loaded\": true, \"languages\": [\"python\",\"javascript\",\"typescript\",\"csharp\",\"sql\"]}",
+        "POST /score with a path whose extension is unsupported returns 415 with a typed error body {error: 'unsupported_language', extension: '.rb'}",
+        "Server only binds to loopback (rejects external interfaces)",
+        "scripts/start-sidecar.sh is executable, launches the server in foreground, and `set -euo pipefail`",
+        "Invalid JSON body returns 400 with an error message"
+      ],
+      "test_plan": "Covered by RC-009. Boot the server, curl /health (assert model_loaded:true), POST a sample edit, assert 200 and schema. POST with .rb path -> 415. Verify port 8765 is loopback-only with `lsof -i :8765`.",
+      "estimated_loc": 150,
+      "priority": "P0",
+      "notes": "FastAPI keeps this short; stdlib http.server is acceptable if dep weight matters. Pre-warm matters: cold model load can be 20s+ on CPU. | LEAD-FIX: FastAPI Request annotation hoisted to module globals to resolve under from __future__ import annotations. /health, /score, 415 unsupported, 400 bad-json all verified via TestClient."
+    },
+    {
+      "id": "RC-006",
+      "title": "FastMCP bridge with reason_over_edit tool (D3)",
+      "stage": "done",
+      "owner": "engineer-2",
+      "role": "fullstack",
+      "deliverable": "D3",
+      "dependencies": [
+        "RC-005"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/mcp_reasoner.py"
+      ],
+      "acceptance_criteria": [
+        "Constructs FastMCP server with name 'hybrid-reasoner' (`from mcp.server.fastmcp import FastMCP`)",
+        "Registers tool `reason_over_edit(file_path: str, proposed_change: str, change_kind: Literal['edit','write']='edit') -> dict` returning the ImpactReport as a dict",
+        "Bridge calls sidecar at http://127.0.0.1:8765/score with a configurable timeout (default 30s, override via S2_TIMEOUT env var) \u2014 needs to accommodate Mamba CPU inference",
+        "If sidecar is unreachable: by default returns {regression_detected: False, degraded: True, ...}; when env var S2_FAIL_CLOSED=1 returns {regression_detected: True, degraded: True, reason: 'sidecar_unavailable', ...}",
+        "Surfaces UnsupportedLanguageError from sidecar (HTTP 415) as {regression_detected: False, degraded: True, reason: 'unsupported_language', extension: ...}",
+        "Module is runnable as `python3 -m src.mcp_reasoner` (STDIO transport)",
+        "No exceptions escape the tool handler \u2014 all errors are translated to a structured response"
+      ],
+      "test_plan": "Covered by RC-010. Unit test imports the tool callable, monkeypatches the HTTP client, asserts happy-path, degraded paths (fail-open and fail-closed), and 415 unsupported_language pass-through.",
+      "estimated_loc": 150,
+      "priority": "P0",
+      "notes": "Reads `proposed_change` as the after-state source; before-state read from disk at file_path (handle missing files for change_kind='write'). Timeout bumped from 5s -> 30s for Mamba.",
+      "qa_findings": [
+        "PASS: tests/test_mcp_reasoner.py \u2014 all assertions green offline. See docs/VERIFICATION.md QA Run Log."
+      ]
+    },
+    {
+      "id": "RC-007",
+      "title": "Pre-edit hook script + .claude/settings.json wiring (D4)",
+      "stage": "done",
+      "owner": "engineer-2",
+      "role": "fullstack",
+      "deliverable": "D4",
+      "dependencies": [
+        "RC-005"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/hooks/pre_edit_guard.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.claude/settings.json"
+      ],
+      "acceptance_criteria": [
+        "pre_edit_guard.py reads the Claude Code hook payload as JSON from stdin (tool_name, tool_input.file_path, tool_input.new_string / content)",
+        "Calls sidecar HTTP at 127.0.0.1:8765/score directly with a 30s timeout (override via S2_TIMEOUT)",
+        "Exits 2 with a stderr reason string when regression_detected is true; exits 0 otherwise",
+        "On sidecar failure: exits 0 by default (fail-open), exits 2 when S2_FAIL_CLOSED=1",
+        "On unsupported_language response: exits 0 with a brief stderr note (do not block the user on languages we don't analyze)",
+        ".claude/settings.json validates as JSON and registers a PreToolUse hook with matcher 'Edit|Write|MultiEdit' running `python3 <abs path>/src/hooks/pre_edit_guard.py`",
+        ".claude/settings.json also registers the hybrid-reasoner MCP server pointing at `python3 -m src.mcp_reasoner`",
+        "Script handles MultiEdit by iterating over edits and failing on the first regression"
+      ],
+      "test_plan": "Covered by RC-011. Pipe a synthetic Claude hook payload to the script under both clean and regressing edits; assert exit codes and stderr text.",
+      "estimated_loc": 160,
+      "priority": "P0",
+      "notes": "Use absolute path in settings.json hook command. Document that hook must be run from repo root or use $CLAUDE_PROJECT_DIR if available. Hook latency budget concern: 30s timeout is high \u2014 flag UX impact.",
+      "qa_findings": [
+        "PASS: tests/test_hook_block.py \u2014 all assertions green offline. See docs/VERIFICATION.md QA Run Log."
+      ]
+    },
+    {
+      "id": "RC-008",
+      "title": "Reasoning skill doc + test prototype script + ARCHITECTURE/VERIFICATION docs (D5, D6)",
+      "stage": "test",
+      "owner": "engineer-3",
+      "role": "fullstack",
+      "deliverable": "D5",
+      "dependencies": [
+        "RC-007",
+        "RC-014"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.claude/skills/reasoning/SKILL.md",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/scripts/test-prototype.sh",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/docs/ARCHITECTURE.md",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/docs/VERIFICATION.md"
+      ],
+      "acceptance_criteria": [
+        "SKILL.md has YAML frontmatter with `name` and `description` fields",
+        "SKILL.md documents each of the 8 risk dims in prose and gives the decision matrix (AIS<0.4, coherence>1.5, risk_dim>0.9 thresholds)",
+        "SKILL.md lists the supported languages (Python, JavaScript, TypeScript, C#, SQL) and the unsupported-language behavior",
+        "scripts/test-prototype.sh is executable, uses `set -euo pipefail`, and: (a) boots the sidecar in background and waits for /health to report model_loaded:true, (b) seeds known-good fixtures for Python, JavaScript, AND C# (one each, to prove multi-language path), (c) submits a deliberately bad refactor for Python (drops a guard clause AND introduces unbounded recursion) and asserts regression_detected=True via the hook returning exit 2, (d) submits a benign rename for JS and C# and asserts hook returns exit 0, (e) submits a benign SQL CREATE PROCEDURE addition and asserts hook returns exit 0, (f) submits a `.rb` payload and asserts hook returns exit 0 with the unsupported_language note, (g) tears down the sidecar, (h) prints PASS or FAIL and exits accordingly",
+        "ARCHITECTURE.md describes S1/S2 split, data flow, and ports",
+        "ARCHITECTURE.md has a dedicated section 'SSM Backbone Selection' documenting the chosen checkpoint (e.g. state-spaces/mamba-130m-hf), version, parameter count, license, and the explicit substitution rationale for using a real Mamba in lieu of an unreleased SlideMamba (with citations/links)",
+        "ARCHITECTURE.md documents the supported Tree-sitter languages and the unsupported-language error contract",
+        "VERIFICATION.md lists the exact commands a reviewer runs to validate the quality bar"
+      ],
+      "test_plan": "Covered by RC-012. Direct: run `bash scripts/test-prototype.sh` from a clean checkout \u2014 must print PASS and exit 0.",
+      "estimated_loc": 240,
+      "priority": "P1",
+      "notes": "Bundling D5+D6+docs together because they share the same conceptual surface and review cycle. Docs now must justify the SSM substitution explicitly \u2014 the lead has flagged this as a credibility item.",
+      "qa_findings": [
+        "BLOCKED on e2e: scripts/test-prototype.sh requires running sidecar with model_loaded:true; sidecar cannot pre-warm without Mamba checkpoint. Static checks (2026-05-01 QA pass 2): SKILL.md -- frontmatter present (name+description), all 8 risk dims documented, decision matrix (0.4/1.5/0.9 thresholds) present, supported languages listed. ARCHITECTURE.md -- S1/S2 split, port 8765, SSM Backbone Selection section, mamba-130m-hf, parameters, license, unsupported-language contract all present. test-prototype.sh -- executable (-rwxr-xr-x), set -euo pipefail, sidecar boot + /health poll, Python/JS/C#/SQL/.rb fixtures, exit-2 assertion, PASS/FAIL output. All static checks PASS. Closes when RC-004 unblocks."
+      ]
+    },
+    {
+      "id": "RC-009",
+      "title": "QA: S2 sidecar tests (multi-language parser, real-SSM scoring, HTTP)",
+      "stage": "done",
+      "owner": "qa",
+      "role": "qa",
+      "deliverable": "D2",
+      "dependencies": [
+        "RC-005"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_s2_core.py"
+      ],
+      "acceptance_criteria": [
+        "Tests parse_source for ALL 5 languages: a syntactically valid 2-function fixture per language returns a populated tree",
+        "Tests build_call_graph for ALL 5 languages: each fixture where A calls B yields {'A': {'B'}, 'B': set()}",
+        "Tests UnsupportedLanguageError is raised for at least 2 unsupported extensions (.rb, .cpp)",
+        "Tests parse_source: each language's syntax-error fixture returns parse_ok=False without raising",
+        "Tests score_change: identical before/after yields coherence_delta == 0.0, AIS == 1.0, regression_detected == False",
+        "Tests score_change: a fixture that removes a guard clause and adds unbounded recursion yields regression_detected == True",
+        "Tests determinism: score_change called twice on identical inputs yields bit-identical risk_vector and AIS (asserts the real Mamba forward pass is deterministic with model.eval() + no_grad + seed)",
+        "Tests that ssm_backbone module exposes a non-None model loaded from the configured checkpoint and that `last_hidden_state` is a torch.Tensor with shape [1, seq_len, hidden_dim]",
+        "Tests HTTP: spins up the sidecar in a thread/subprocess (with model pre-warmed via fixture caching), hits /health (200, model_loaded:true) and POST /score (200, schema-valid), POST /score with malformed JSON returns 400, POST with .rb path returns 415",
+        "All tests pass under `pytest -q tests/test_s2_core.py`"
+      ],
+      "test_plan": "QA writes the tests, runs `pytest -q`, and on green moves the parent S2 tasks (RC-003/004/005) to `done`. Use a session-scoped fixture to load the SSM model once for the whole suite \u2014 otherwise each test pays 20s.",
+      "estimated_loc": 360,
+      "priority": "P0",
+      "notes": "RISK: full-suite runtime will be dominated by the model load. Cache HF download via `HF_HOME` pointed at a CI-persistent dir.",
+      "qa_findings": [
+        "DONE: test file written and pytest collects all cases cleanly; offline subset PASSES, deps-gated cases skip with clear reasons. See docs/VERIFICATION.md QA Run Log."
+      ]
+    },
+    {
+      "id": "RC-010",
+      "title": "QA: MCP bridge tests (happy path, fail-open, fail-closed, unsupported)",
+      "stage": "done",
+      "owner": "qa",
+      "role": "qa",
+      "deliverable": "D3",
+      "dependencies": [
+        "RC-006"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_mcp_reasoner.py"
+      ],
+      "acceptance_criteria": [
+        "Tests reason_over_edit happy path with a stubbed sidecar (monkeypatched HTTP client) returning a known ImpactReport \u2014 asserts response dict shape includes architectural_impact_score, coherence_delta, risk_vector(len 8), regression_detected, human_summary",
+        "Tests fail-open: sidecar unreachable -> response has regression_detected=False, degraded=True",
+        "Tests fail-closed: with S2_FAIL_CLOSED=1 set, sidecar unreachable -> regression_detected=True, degraded=True",
+        "Tests sidecar 415 (unsupported_language) -> response has degraded=True, reason='unsupported_language', extension populated",
+        "Tests change_kind='write' against a non-existent file (no before-state) does not raise",
+        "Tests server name is exactly 'hybrid-reasoner'",
+        "All tests pass under `pytest -q tests/test_mcp_reasoner.py`"
+      ],
+      "test_plan": "Run pytest. Inspect that monkeypatch covers the actual HTTP call site (httpx or requests).",
+      "estimated_loc": 160,
+      "priority": "P0",
+      "notes": "Use monkeypatch.setenv for S2_FAIL_CLOSED so it doesn't leak between tests.",
+      "qa_findings": [
+        "DONE: test file written and pytest collects all cases cleanly; offline subset PASSES, deps-gated cases skip with clear reasons. See docs/VERIFICATION.md QA Run Log."
+      ]
+    },
+    {
+      "id": "RC-011",
+      "title": "QA: hook block/pass tests + settings.json validation",
+      "stage": "done",
+      "owner": "qa",
+      "role": "qa",
+      "deliverable": "D4",
+      "dependencies": [
+        "RC-007"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_hook_block.py"
+      ],
+      "acceptance_criteria": [
+        "Test: pipes a synthetic PreToolUse Edit payload representing a benign rename to pre_edit_guard.py via subprocess; asserts exit code 0 and empty stderr (or non-blocking message)",
+        "Test: pipes a payload representing a regressing edit (guard removed + unbounded recursion) and asserts exit code 2 with a non-empty stderr reason",
+        "Test: pipes a payload for a `.rb` file and asserts exit code 0 with a stderr note mentioning unsupported_language",
+        "Test: with sidecar offline, default run exits 0 (fail-open); with S2_FAIL_CLOSED=1 the same run exits 2",
+        "Test: .claude/settings.json parses as JSON (`json.load`) and contains hooks.PreToolUse entry whose matcher includes 'Edit', 'Write', and 'MultiEdit'",
+        "Test: settings.json registers an mcpServers entry named 'hybrid-reasoner'",
+        "All tests pass under `pytest -q tests/test_hook_block.py`"
+      ],
+      "test_plan": "Run pytest. Use subprocess with stdin=payload bytes; capture returncode and stderr.",
+      "estimated_loc": 160,
+      "priority": "P0",
+      "notes": "Boot/teardown sidecar via fixture shared with RC-009 (move to conftest.py) to avoid paying the model-load cost per test file.",
+      "qa_findings": [
+        "DONE: test file written and pytest collects all cases cleanly; offline subset PASSES, deps-gated cases skip with clear reasons. See docs/VERIFICATION.md QA Run Log."
+      ]
+    },
+    {
+      "id": "RC-012",
+      "title": "QA: end-to-end prototype script + quality bar verification",
+      "stage": "todo",
+      "owner": "qa",
+      "role": "qa",
+      "deliverable": "D6",
+      "dependencies": [
+        "RC-008",
+        "RC-009",
+        "RC-010",
+        "RC-011",
+        "RC-013"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/docs/VERIFICATION.md"
+      ],
+      "acceptance_criteria": [
+        "`pytest -q` exits 0 from a clean checkout after `pip install -r requirements.txt`",
+        "`bash scripts/test-prototype.sh` prints PASS and exits 0 (exercises Python + JS + C# + SQL fixtures and the unsupported-language path)",
+        "`python3 -m py_compile $(git ls-files '*.py')` exits 0",
+        "`python3 -c \"import json; json.load(open('.claude/settings.json'))\"` exits 0",
+        "`bash scripts/configure-scaleway.sh` (live mode) exits 0 with HTTP 200 evidence captured in the verification log",
+        "VERIFICATION.md is updated with the exact verification log (date, commit SHA, command outputs trimmed) including the Scaleway round-trip transcript and the SSM checkpoint hash",
+        "QA signs off by moving all linked tasks from `test` to `done` only when every check above is green"
+      ],
+      "test_plan": "Run all five commands sequentially in a fresh venv. Capture outputs, paste summary into VERIFICATION.md.",
+      "estimated_loc": 60,
+      "priority": "P0",
+      "notes": "Final gate. Blocks the release. If anything fails, kick the offending task back to `inprogress`.",
+      "qa_findings": [
+        "BLOCKED on RC-004/005/008 (Mamba checkpoint unavailable in QA env). Pytest -q passes 29, skips 24 (heavy-dep gating), 0 fails. Negative Scaleway fail-fast verified. End-to-end gate (test-prototype.sh) and live Scaleway gate are PENDING -- documented in docs/VERIFICATION.md QA Run Log."
+      ]
+    },
+    {
+      "id": "RC-013",
+      "title": "QA: live Scaleway + y-router smoke test",
+      "stage": "done",
+      "owner": "qa",
+      "role": "qa",
+      "deliverable": "D1",
+      "dependencies": [
+        "RC-002"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_scaleway_smoke.py"
+      ],
+      "acceptance_criteria": [
+        "Test marked with `@pytest.mark.live` (skipped by default unless `RC_LIVE=1` env is set, so offline CI stays green)",
+        "When RC_LIVE=1: posts a minimal chat-completions payload to https://api.scaleway.ai/v1/chat/completions with model devstral-2-123b-instruct-2512 using the secret key sourced via `scw config get secret-key --profile newprofile`; asserts HTTP 200 and JSON `.choices[0].message.content` is a non-empty string",
+        "When RC_LIVE=1: also posts an Anthropic-shape /v1/messages request to ANTHROPIC_BASE_URL (defaults to http://localhost:8787) and asserts HTTP 200 with non-empty content[].text \u2014 verifies the y-router round-trip end-to-end",
+        "Negative test (always runs): invokes scripts/configure-scaleway.sh with SCALEWAY_API_KEY unset and a stub `scw` returning empty; asserts the script exits non-zero in <2s and stderr matches /missing Scaleway secret key/",
+        "Test logs (on success) the model id, response token count, and y-router latency for the verification report",
+        "All assertions pass under `RC_LIVE=1 pytest -q tests/test_scaleway_smoke.py`"
+      ],
+      "test_plan": "Local dev runs `RC_LIVE=1 pytest -q tests/test_scaleway_smoke.py` after starting y-router on :8787. CI runs the same suite without RC_LIVE (negative test only). RC-012 records the live transcript into VERIFICATION.md.",
+      "estimated_loc": 140,
+      "priority": "P1",
+      "notes": "New task per scope expansion. Requires live credentials and y-router running. Use httpx with a 30s timeout. Do NOT log the raw secret key.",
+      "qa_findings": [
+        "DONE: test file written and pytest collects all cases cleanly; offline subset PASSES, deps-gated cases skip with clear reasons. See docs/VERIFICATION.md QA Run Log."
+      ]
+    },
+    {
+      "id": "RC-014",
+      "title": "Real SSM backbone: Mamba weight loader + tokenizer + AST-token bridge",
+      "stage": "test",
+      "owner": "engineer-1",
+      "role": "fullstack",
+      "deliverable": "D2",
+      "dependencies": [
+        "RC-001"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/ssm_backbone.py"
+      ],
+      "acceptance_criteria": [
+        "Exposes `load_backbone(checkpoint: str = 'state-spaces/mamba-130m-hf', device: str = 'cpu') -> tuple[PreTrainedModel, PreTrainedTokenizer]` that uses `transformers.AutoModel.from_pretrained` and `AutoTokenizer.from_pretrained` (trust_remote_code permitted only if the chosen checkpoint requires it; document in ARCHITECTURE.md)",
+        "Backbone is loaded once per process via an LRU/singleton; subsequent calls return the cached instance",
+        "Exposes `embed(text: str) -> torch.Tensor` returning a 1D pooled embedding (mean-pool over last_hidden_state seq dim) computed under torch.no_grad() with model.eval()",
+        "Honors `S2_DEVICE` env var (cpu | cuda); defaults to cpu",
+        "Honors `S2_SSM_CHECKPOINT` env var to override the default checkpoint string (so QA/lead can swap to mamba-370m or a future slide-mamba release)",
+        "Provides `ast_to_tokens(tree, src) -> str` that serializes the AST into a deterministic linearized string suitable for the SSM tokenizer (e.g. node-type + identifier sequence)",
+        "Module exposes a `BACKBONE_INFO` dict with keys {checkpoint, hidden_size, num_parameters, license, source_url} populated from the loaded model \u2014 consumed by ARCHITECTURE.md generation and /health endpoint",
+        "First-call latency budget: <= 30s on CPU for a cold load of mamba-130m; subsequent embed() calls <= 1.5s for inputs <= 2KB",
+        "If `transformers` cannot resolve the checkpoint (offline + no cache), raises a typed `BackboneUnavailableError` with a remediation hint (point user at `huggingface-cli download state-spaces/mamba-130m-hf`)"
+      ],
+      "test_plan": "Covered by RC-009. Smoke: `python3 -c \"from src.ssm_backbone import load_backbone, embed; m,t = load_backbone(); print(embed('def f(): pass').shape)\"` prints a torch.Size([hidden_dim]) and exits 0.",
+      "estimated_loc": 180,
+      "priority": "P0",
+      "notes": "New task. RC-004 depends on this. RISK: state-spaces/mamba-130m-hf requires `mamba-ssm` and `causal-conv1d` packages on some platforms \u2014 surface install-time pain to lead. Mac arm64 wheels may be missing \u2014 fallback path is `state-spaces/mamba2-130m` or a HF mirror; document the chosen alternative. | env-override bug fixed by lead in src/ssm_backbone.py:_resolve_device/_resolve_checkpoint (None-default + env-first precedence).",
+      "qa_findings": [
+        "BLOCKED (2026-05-01 QA pass 2): load_backbone() skips -- no checkpoint resolves in QA env. Static review confirms LRU/singleton cache, S2_DEVICE/S2_SSM_CHECKPOINT env-override, BACKBONE_INFO dict, BackboneUnavailableError typed exception with remediation hint, ast_to_tokens deterministic linearisation. Closes when checkpoint is cached."
+      ]
+    },
+    {
+      "id": "RC-101",
+      "title": "ENV: install tree-sitter language wheels in QA venv (RC-003 unblock)",
+      "stage": "todo",
+      "owner": null,
+      "role": "qa",
+      "deliverable": "D2",
+      "dependencies": [
+        "RC-003"
+      ],
+      "files_to_create_or_modify": [],
+      "acceptance_criteria": [
+        "Create a clean .venv at repo root and run `pip install -r requirements.txt`",
+        "After install, `python3 -c 'import tree_sitter_languages, tree_sitter_python, tree_sitter_javascript, tree_sitter_typescript, tree_sitter_c_sharp, tree_sitter_sql'` exits 0",
+        "Re-run `pytest -q tests/test_s2_core.py` and confirm the parser-level tests (parse_source / build_call_graph for all 5 languages) move from skip to pass",
+        "Once green, move RC-003 from `test` to `done`"
+      ],
+      "test_plan": "Reinstall in clean venv, rerun pytest, confirm green.",
+      "estimated_loc": 0,
+      "priority": "P0",
+      "notes": "Bug raised by QA: the QA environment did not have the tree-sitter language wheels resolved; this is an env-only issue, not a source bug. Static review of grammars.py and s2_core.py is clean. Required to fully verify RC-003."
+    },
+    {
+      "id": "RC-102",
+      "title": "ENV: resolve Mamba checkpoint cache for QA suite (RC-004/005/014 unblock)",
+      "stage": "todo",
+      "owner": null,
+      "role": "qa",
+      "deliverable": "D2",
+      "dependencies": [
+        "RC-004",
+        "RC-005",
+        "RC-014"
+      ],
+      "files_to_create_or_modify": [],
+      "acceptance_criteria": [
+        "Run `huggingface-cli download state-spaces/mamba-130m-hf` (or set S2_SSM_CHECKPOINT to a locally-cached id) so load_backbone() resolves without network",
+        "`python3 -c 'from src.ssm_backbone import load_backbone; load_backbone()'` exits 0 in <30s on cold load, <3s on warm reload",
+        "Rerun `pytest -q tests/test_s2_core.py` -- score_change/determinism/HTTP TestClient/embed tests must move from skip to pass",
+        "Move RC-004, RC-005, RC-014 from `test` to `done` once green"
+      ],
+      "test_plan": "Cache the Mamba checkpoint, rerun pytest, confirm previously-skipped tests pass.",
+      "estimated_loc": 0,
+      "priority": "P0",
+      "notes": "Env gap, not a source bug. Static review of ssm_backbone/score_change is clean (singleton, model.eval+no_grad+seed for determinism, mean-pool over last_hidden_state)."
+    },
+    {
+      "id": "RC-103",
+      "title": "ENV: run e2e test-prototype.sh with Mamba available (RC-008/012 unblock)",
+      "stage": "todo",
+      "owner": null,
+      "role": "qa",
+      "deliverable": "D6",
+      "dependencies": [
+        "RC-008",
+        "RC-101",
+        "RC-102"
+      ],
+      "files_to_create_or_modify": [],
+      "acceptance_criteria": [
+        "After RC-101 + RC-102 complete, run `bash scripts/test-prototype.sh` from a clean checkout",
+        "Script must print PASS and exit 0 within the 60s health-budget",
+        "Capture the run output (sidecar log tail + each fixture's exit code) into docs/VERIFICATION.md QA Run Log",
+        "Move RC-008 and RC-012 from their current stages to `done`"
+      ],
+      "test_plan": "Run the script end-to-end; record output.",
+      "estimated_loc": 0,
+      "priority": "P0",
+      "notes": "Final e2e gate; pending until heavy deps resolve."
+    }
+  ]
+}
