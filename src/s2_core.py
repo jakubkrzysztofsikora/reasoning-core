@@ -388,6 +388,11 @@ def build_call_graph(tree: Any, src: str, language: str) -> dict[str, set[str]]:
         return {}
 
     try:
+        # Structured-data languages (markdown / json / yaml) have no call
+        # semantics — return empty graph; novelty scoring still runs in
+        # score_change via the SSM embedding pass.
+        if language in {"markdown", "json", "yaml"}:
+            return {}
         if language == "python":
             funcs = _python_functions(root, src_bytes)
             return {name: _python_calls(node, src_bytes) for name, node in funcs.items()}

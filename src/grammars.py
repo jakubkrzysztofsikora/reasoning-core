@@ -34,13 +34,24 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # Public language identifiers. The HTTP /health response advertises these.
+# Code languages get full call-graph extraction; structured-data languages
+# (markdown / json / yaml) are parsed for embedding-based novelty scoring
+# only — call_graph is a no-op for them.
 SUPPORTED_LANGUAGES: tuple[str, ...] = (
     "python",
     "javascript",
     "typescript",
     "csharp",
     "sql",
+    "markdown",
+    "json",
+    "yaml",
 )
+
+# Languages where build_call_graph returns {} by design (structured data,
+# no call semantics). score_change still runs the Mamba embedding pass so
+# semantic drift is detected.
+DATA_LANGUAGES: frozenset[str] = frozenset({"markdown", "json", "yaml"})
 
 # Extension -> internal language id used for grammar selection. Note that
 # ``.tsx`` is mapped to a separate parser even though the public surface area
@@ -55,6 +66,13 @@ EXTENSION_MAP: dict[str, str] = {
     ".tsx": "tsx",
     ".cs": "csharp",
     ".sql": "sql",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".mdx": "markdown",
+    ".json": "json",
+    ".jsonc": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
 }
 
 # Public-facing language label for a given internal id (collapses tsx ->
@@ -66,6 +84,9 @@ PUBLIC_LANGUAGE: dict[str, str] = {
     "tsx": "typescript",
     "csharp": "csharp",
     "sql": "sql",
+    "markdown": "markdown",
+    "json": "json",
+    "yaml": "yaml",
 }
 
 
@@ -101,7 +122,12 @@ def _load_via_aggregate(lang_id: str) -> Optional[Any]:
         "tsx": "tsx",
         "csharp": "c_sharp",
         "sql": "sql",
-    }[lang_id]
+        "markdown": "markdown",
+        "json": "json",
+        "yaml": "yaml",
+    }.get(lang_id)
+    if aggregate_name is None:
+        return None
     try:
         return get_language(aggregate_name)
     except Exception as exc:
@@ -140,6 +166,23 @@ def _load_via_per_lang(lang_id: str) -> Optional[Any]:
             import tree_sitter_sql as ts_sql  # type: ignore
 
             return Language(ts_sql.language())
+        if lang_id == "markdown":
+            import tree_sitter_markdown as ts_md  # type: ignore
+
+            # tree-sitter-markdown ships two grammars (block + inline);
+            # we use the block grammar — sufficient for novelty scoring.
+            try:
+                return Language(ts_md.language())
+            except AttributeError:
+                return Language(ts_md.language_block())
+        if lang_id == "json":
+            import tree_sitter_json as ts_json  # type: ignore
+
+            return Language(ts_json.language())
+        if lang_id == "yaml":
+            import tree_sitter_yaml as ts_yaml  # type: ignore
+
+            return Language(ts_yaml.language())
     except Exception as exc:
         logger.debug("per-language wheel miss for %s: %s", lang_id, exc)
         return None
