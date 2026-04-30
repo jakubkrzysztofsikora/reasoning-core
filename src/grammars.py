@@ -179,21 +179,44 @@ def select_grammar(path: str) -> tuple[str, Any]:
 
 
 def get_parser(lang_id: str) -> Any:
-    """Build a Parser bound to the requested language."""
+    """Build a Parser bound to the requested language.
+
+    Tree-sitter 0.23+ accepts ``Parser(language)`` directly; older 0.21/0.22
+    require ``parser.set_language(...)`` or attribute assignment. Try the
+    constructor path first, then fall back. Raises a typed RuntimeError when
+    none of the binding strategies work — usually an ABI version mismatch
+    between the Python bindings and the per-language grammar wheel.
+    """
     from tree_sitter import Parser  # type: ignore
 
     lang = _load_language(lang_id)
+    # Path 1: modern bindings — Parser(language) constructor.
+    try:
+        return Parser(lang)  # type: ignore[call-arg]
+    except TypeError:
+        pass
+    except ValueError as exc:
+        # ABI version mismatch surfaces here as ValueError. Re-raise with hint.
+        raise RuntimeError(
+            f"tree-sitter ABI mismatch for {lang_id!r}: {exc}. "
+            f"Upgrade `tree-sitter` core to 0.25+ (see requirements.txt)."
+        ) from exc
+    # Path 2: legacy bindings — empty constructor + assignment / set_language.
     parser = Parser()
-    # Newer tree-sitter Python bindings prefer assignment; older ones expose
-    # set_language(). Try both.
     try:
         parser.language = lang  # type: ignore[attr-defined]
-    except Exception:
-        try:
-            parser.set_language(lang)  # type: ignore[attr-defined]
-        except Exception as exc:
-            raise RuntimeError(f"could not bind tree-sitter language: {exc}") from exc
-    return parser
+        return parser
+    except (AttributeError, ValueError):
+        pass
+    try:
+        parser.set_language(lang)  # type: ignore[attr-defined]
+        return parser
+    except Exception as exc:
+        raise RuntimeError(
+            f"could not bind tree-sitter language {lang_id!r}: {exc}. "
+            f"This typically means a tree-sitter ABI mismatch — upgrade "
+            f"`tree-sitter` to 0.25+ in requirements.txt."
+        ) from exc
 
 
 __all__ = [

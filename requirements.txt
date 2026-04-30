@@ -12,11 +12,11 @@ mcp[cli]>=1.0,<2.0
 # tree-sitter-languages aggregate has no Py 3.13 wheel — use per-language
 # wheels which all have current Py 3.13 binaries. The grammars loader in
 # src/grammars.py prefers the aggregate when available and falls back here.
-tree-sitter>=0.21,<0.25
-tree-sitter-python>=0.21
-tree-sitter-javascript>=0.21
-tree-sitter-typescript>=0.21
-tree-sitter-c-sharp>=0.21
+tree-sitter>=0.25,<0.27         # ABI v15 — matches modern per-language wheels
+tree-sitter-python>=0.23
+tree-sitter-javascript>=0.23
+tree-sitter-typescript>=0.23
+tree-sitter-c-sharp>=0.23
 tree-sitter-sql>=0.3
 
 # --- Real Mamba SSM backbone ---
