@@ -671,28 +671,31 @@ def score_change(path: str, before_src: str, after_src: str) -> ImpactReport:
 # ---------------------------------------------------------------------------
 
 def create_app():
-    """Construct the FastAPI app. Loads the SSM backbone eagerly."""
+    """Construct the FastAPI app. Loads the SSM backbone eagerly via lifespan."""
     # Imports are hoisted into module globals so FastAPI's get_type_hints()
     # can resolve `Request` in the route signature even with
     # `from __future__ import annotations` active at the top of this module.
     import fastapi as _fastapi
     import fastapi.responses as _fastapi_responses
+    from contextlib import asynccontextmanager
     globals().setdefault("Request", _fastapi.Request)
     globals().setdefault("JSONResponse", _fastapi_responses.JSONResponse)
     FastAPI = _fastapi.FastAPI
     Request = _fastapi.Request
     JSONResponse = _fastapi_responses.JSONResponse
 
-    app = FastAPI(title="reasoning-core S2 sidecar", version="1.0")
-
-    @app.on_event("startup")
-    async def _startup() -> None:  # pragma: no cover - exercised via boot
+    @asynccontextmanager
+    async def _lifespan(_app):  # pragma: no cover - exercised via boot
         try:
             load_backbone()
             logger.info("backbone pre-warmed at startup")
         except BackboneUnavailableError as exc:
             # Log + keep server alive so /health honestly reports model_loaded:false.
             logger.error("backbone load failed at startup: %s", exc)
+        yield
+        # No teardown work — the SSM handle is process-lifetime.
+
+    app = FastAPI(title="reasoning-core S2 sidecar", version="1.0", lifespan=_lifespan)
 
     @app.get("/health")
     async def health():
