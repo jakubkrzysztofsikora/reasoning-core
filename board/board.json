@@ -520,6 +520,524 @@
       "estimated_loc": 0,
       "priority": "P0",
       "notes": "Final e2e gate; pending until heavy deps resolve."
+    },
+    {
+      "id": "RC-200",
+      "title": "Plan-time guard: pre_plan_guard.py heuristic + SSM novelty scoring",
+      "stage": "todo",
+      "owner": null,
+      "role": "fullstack",
+      "deliverable": "PHASE2-1",
+      "dependencies": [
+        "RC-005",
+        "RC-014",
+        "RC-102"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/hooks/pre_plan_guard.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/plan_heuristics.py"
+      ],
+      "acceptance_criteria": [
+        "Hook reads Claude Code PreToolUse JSON payload from stdin and is invoked when tool_name is 'Write' AND tool_input.file_path matches one of: thoughts/shared/plans/**/*.md, **/PLAN.md, **/*.plan.md (case-insensitive). For non-matching paths it exits 0 immediately without scoring.",
+        "Heuristic checks implemented in src/plan_heuristics.py and unit-tested independently: (a) per-file LOC budget where any single file in the plan that is described as receiving > 400 LOC of new content emits a warning; (b) phase/file ratio where if the plan declares more 'Phase'/'Step' headings than distinct file paths the structure is flagged as too-broad-too-thin; (c) boundary-crossing detection scans for prose tokens like 'across', 'every file', 'all modules', 'global rename' and counts unique top-level dir prefixes in mentioned paths -- > 3 distinct top-level dirs flags 'boundary-crossing'.",
+        "SSM novelty score: extract every Markdown code fence block, concatenate, embed via src.ssm_backbone.embed; compute cosine distance against an embedding of a sampled cross-section (10 random files) of the existing repo. novelty = 1 - max(cos, 0). Score > 0.7 emits a warning.",
+        "Output is structured JSON written to stderr (one object per warning, fields: severity ['info','warn','block'], rule_id, message, file_path|null, span|null) plus a human-readable trailing summary line. Exit 0 by default; when env RC_PLAN_BLOCK=1 is set and any warning has severity == 'block' (currently only the per-file LOC > 800 case), exit 2.",
+        "If src.ssm_backbone.embed raises BackboneUnavailableError the hook still runs heuristic checks and emits a single 'novelty_unavailable' info-severity record; never raises uncaught.",
+        "Unit tests in tests/test_pre_plan_guard.py cover: (1) happy path -- balanced plan emits zero warn/block records; (2) over-budget single file -- 1200 LOC budget for one path emits severity=block under RC_PLAN_BLOCK=1, exit 2; (3) phase-to-file ratio 5 phases / 2 files emits warn; (4) boundary-crossing language across 4 top-level dirs emits warn; (5) high-novelty fenced code emits warn; (6) BackboneUnavailableError handled cleanly with exit 0; (7) non-plan path bypasses entirely with exit 0.",
+        "Hook latency budget: <= 5s on a 200-line plan when backbone unavailable, <= 12s when backbone forward pass runs (mamba-130m CPU)."
+      ],
+      "test_plan": "QA runs `pytest -q tests/test_pre_plan_guard.py`. Pipes synthetic plan-Markdown payloads representing each acceptance scenario. Captures exit codes and stderr JSON.",
+      "estimated_loc": 380,
+      "priority": "P0",
+      "notes": "Plan-time scoring is the missing-left-shift item from HARDENING.md residual gaps section. Heuristics are deliberately conservative -- a future task can tune thresholds against EVAL_DESIGN data. Threshold for 'block' severity (per-file 800 LOC) is intentionally high so default behavior never blocks Claude on plan creation."
+    },
+    {
+      "id": "RC-201",
+      "title": "Wire pre_plan_guard.py into .claude/settings.json with path-filtered Write matcher",
+      "stage": "todo",
+      "owner": null,
+      "role": "fullstack",
+      "deliverable": "PHASE2-1",
+      "dependencies": [
+        "RC-200"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.claude/settings.json"
+      ],
+      "acceptance_criteria": [
+        "Adds a PreToolUse entry with matcher 'Write' whose command is `python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_plan_guard.py`, timeout 15000ms; the hook itself does the path filtering so a single matcher entry covers all plan paths.",
+        "Existing PreToolUse entries (Edit|Write|MultiEdit pre_edit_guard, Bash pre_bash_guard) remain intact and ordered after the plan guard so the plan guard runs first on plan files.",
+        "settings.json continues to parse via `python3 -c 'import json; json.load(open(\".claude/settings.json\"))'` exiting 0.",
+        "Tests in tests/test_hook_block.py extended (new test_settings_registers_pre_plan_guard) to assert the hook entry exists, points at the right script, and timeout >= 10000."
+      ],
+      "test_plan": "Run pytest tests/test_hook_block.py::test_settings_registers_pre_plan_guard. JSON-parse check. Manual: trigger a Write to thoughts/shared/plans/foo.md in a Claude session and observe hook execution in stderr.",
+      "estimated_loc": 60,
+      "priority": "P0",
+      "notes": "Single matcher with internal path filter keeps settings.json hook list shorter than registering a UserPromptSubmit hook for plan creation skills (which would also miss raw Write calls). Trade-off: plan guard runs once on every Write, but path filter exits in <50ms for non-plan paths."
+    },
+    {
+      "id": "RC-202",
+      "title": "Subagent inheritance audit + Task PreToolUse guard injection",
+      "stage": "todo",
+      "owner": null,
+      "role": "fullstack",
+      "deliverable": "PHASE2-2",
+      "dependencies": [
+        "RC-007"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/hooks/pre_task_guard.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.claude/settings.json",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/docs/HARDENING.md"
+      ],
+      "acceptance_criteria": [
+        "src/hooks/pre_task_guard.py reads the Task PreToolUse payload from stdin (tool_name == 'Task'), extracts tool_input.prompt and tool_input.subagent_type, and screens the prompt for verbs that indicate code mutation: 'implement', 'edit', 'write', 'modify', 'refactor', 'create', 'delete', 'patch'. Detection is regex-based, word-boundary aware, case-insensitive.",
+        "When mutation verbs are detected AND the prompt mentions any of the GUARDED_PATHS from pre_edit_guard.py (resolve same constant via shared import), the hook exits 2 with a stderr message naming the offending path token and verb. When env RC_ALLOW_SUBAGENT_GUARD_EDIT=1 the hook exits 0 with a warning instead.",
+        "When mutation verbs detected on non-guarded paths, the hook exits 0 but emits a stderr advisory naming the verbs detected -- this is informational and never blocks.",
+        "settings.json registers a PreToolUse entry with matcher 'Task' that runs `python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_task_guard.py`, timeout 5000ms.",
+        "docs/HARDENING.md gets a new subsection 'L4 -- Subagent inheritance' describing the actual residual gap (subagents inherit settings.json from the parent project dir, so their tool calls DO pass through the parent hooks; the gap is only when the subagent's working dir is outside CLAUDE_PROJECT_DIR -- documented with a concrete reproduction recipe and the screening fallback).",
+        "Unit tests in tests/test_pre_task_guard.py: (1) safe research prompt exits 0 silently; (2) 'implement edits to src/s2_core.py' prompt exits 2; (3) 'review the auth code' (no mutation verb) exits 0; (4) RC_ALLOW_SUBAGENT_GUARD_EDIT=1 downgrades block to warn; (5) malformed payload exits 0 with stderr note."
+      ],
+      "test_plan": "pytest -q tests/test_pre_task_guard.py. Manual end-to-end: spawn a Task subagent with a payload that mentions src/s2_core.py and 'implement', verify it is rejected before the subagent boots.",
+      "estimated_loc": 220,
+      "priority": "P1",
+      "notes": "The user's brief says 'audit + fix'. After investigation: Claude Code DOES propagate settings.json to spawned Task subagents when they run in CLAUDE_PROJECT_DIR. The realistic residual gap is prompt-level intent screening, which this hook adds as a belt-and-braces layer. Documented openly in HARDENING.md so the gap is not silently papered over."
+    },
+    {
+      "id": "RC-203",
+      "title": "Persistent JSONL audit trail in sidecar (per-event records, redaction, ring buffer)",
+      "stage": "todo",
+      "owner": null,
+      "role": "fullstack",
+      "deliverable": "PHASE2-3",
+      "dependencies": [
+        "RC-005"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/audit_log.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/s2_core.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/hooks/pre_edit_guard.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/hooks/pre_bash_guard.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/hooks/pre_task_guard.py"
+      ],
+      "acceptance_criteria": [
+        "src/audit_log.py exposes append_event(event: dict) -> None which writes a single JSON line to /tmp/rc-events/<YYYY-MM-DD>/<session_id>.jsonl. session_id is read from the env var CLAUDE_SESSION_ID (Claude Code-set) with fallback to a stable uuid-per-process hash. Directory created with mkdir -p semantics.",
+        "Every hook (pre_edit_guard, pre_bash_guard, pre_task_guard, pre_plan_guard) emits exactly one record per invocation with mandatory fields: ts (ISO-8601 with timezone), session_id, project_dir (CLAUDE_PROJECT_DIR), tool_name, file_path|command (exclusive), language, decision ('allow'|'block'|'warn'|'degraded'), ais|null, coherence_delta|null, regression_detected|null, latency_ms, before_bytes|null, after_bytes|null, retry_after_block|null.",
+        "Redaction rule: any file_path matching the patterns *secret*, *credential*, *.env, *.pem, *.key (case-insensitive on basename) has the file_path field replaced with the literal '[REDACTED]' before write. Bash command field has the same redaction applied to any token matching those patterns. Test fixture proves a path '/x/.env.production' becomes '[REDACTED]'.",
+        "Sidecar exposes GET /metrics returning JSON {p50_score_latency_ms, p95_score_latency_ms, sample_size, regression_rate, fail_open_count} computed over a ring buffer of the last 1000 /score calls. Ring buffer is in-process memory only (no persistence); reset on sidecar restart. Latency tracked with monotonic_ns precision.",
+        "Append is best-effort: if /tmp is unwritable the audit call logs a warning to stderr and returns silently -- never raises into the hook, never blocks the user.",
+        "Unit tests in tests/test_audit_log.py cover: (1) record schema validates; (2) redaction triggers on the documented filename patterns; (3) directory rotates by date when ts crosses midnight; (4) /metrics returns p50/p95 from a stubbed buffer of known latencies (deterministic percentile assertion); (5) /tmp-unwritable path degrades silently."
+      ],
+      "test_plan": "pytest -q tests/test_audit_log.py. Manual: run a 30s session with multiple edits and verify the JSONL file accumulates lines with the right schema.",
+      "estimated_loc": 340,
+      "priority": "P1",
+      "notes": "Closes the instrumentation gap referenced at the bottom of HARDENING.md. Ring buffer is intentionally in-memory; persisting it is a follow-up. Redaction list is conservative -- expand once the team sees real false-positive misses in the trail."
+    },
+    {
+      "id": "RC-204",
+      "title": "Cumulative repo-baseline drift: session-level embedding + new regression rule",
+      "stage": "todo",
+      "owner": null,
+      "role": "fullstack",
+      "deliverable": "PHASE2-4",
+      "dependencies": [
+        "RC-004",
+        "RC-014"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/s2_core.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/src/repo_baseline.py"
+      ],
+      "acceptance_criteria": [
+        "src/repo_baseline.py exposes set_baseline(repo_root: str) -> None and current_baseline() -> Optional[torch.Tensor]. set_baseline walks the repo (respecting .gitignore via subprocess `git ls-files`), samples up to 100 files (deterministic random with seed 0), embeds each via src.ssm_backbone.embed, and stores the mean-pooled embedding in a module-level singleton.",
+        "Sidecar exposes POST /baseline with body {repo_root: str} that calls set_baseline and returns 200 {status: 'ok', n_files_sampled: int, hidden_size: int}. POST with bad body returns 400.",
+        "score_change extended: when current_baseline() is not None, also computes cumulative_drift = ||embed(after_src) - baseline||_2 and includes it in the ImpactReport (new field). Default ImpactReport.cumulative_drift is None when no baseline set.",
+        "New regression rule: regression_detected becomes True if any of the existing conditions OR (cumulative_drift is not None AND cumulative_drift > 3.0). The 3.0 threshold is documented in ARCHITECTURE.md (new subsection 'Cumulative Drift Calibration') and chosen as 2x the mean intra-repo embedding distance from a 1000-file calibration sample.",
+        "ImpactReport JSON serialization adds the new field; existing consumers (mcp_reasoner, hooks) tolerate both old (no field) and new (field present) shapes.",
+        "Sidecar startup honors env RC_BASELINE_ROOT -- if set, calls set_baseline(RC_BASELINE_ROOT) after the SSM is loaded, before binding the HTTP listener.",
+        "Unit tests in tests/test_repo_baseline.py: (1) set_baseline on a tmp git repo with 5 files succeeds and current_baseline() returns a tensor of shape [hidden_size]; (2) score_change against an in-baseline file yields cumulative_drift << 3.0 and regression_detected reflects only the per-file rules; (3) score_change against an unrelated text file yields cumulative_drift > 3.0 and regression_detected==True; (4) /baseline POST end-to-end via TestClient; (5) ImpactReport schema test asserts cumulative_drift field present with float|None type."
+      ],
+      "test_plan": "pytest -q tests/test_repo_baseline.py. Manual: start sidecar with RC_BASELINE_ROOT=/Users/jakubsikora/Repos/personal/reasoning-core, verify /health reports baseline_loaded:true.",
+      "estimated_loc": 260,
+      "priority": "P1",
+      "notes": "Threshold 3.0 is a placeholder pending RC-217 calibration on real eval data. The Data Eng cross-verification flagged that raw L2 thresholds are checkpoint-dependent (item 3 in the suspicious-items list); this task knowingly inherits that risk and is gated by the eval suite to retune."
+    },
+    {
+      "id": "RC-205",
+      "title": "Eval toolkit: dataset subsample script + 100 stratified SWE-bench Verified Python tasks",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-5",
+      "dependencies": [
+        "RC-001"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/datasets/swe_bench_verified_python_subset.json",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/datasets/refresh_subset.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/datasets/README.md"
+      ],
+      "acceptance_criteria": [
+        "refresh_subset.py loads princeton-nlp/SWE-bench_Verified via `datasets.load_dataset` (HF), filters: language inferred Python only (gold patch touches only .py files), difficulty in {'<15 min fix','15 min - 1 hour'}, repo NOT in DOCKER_REQUIRED set (hard-coded list of 6 repos that need Docker -- documented in the README), gold patch touches <= 5 files, no .c/.rs/.go in patch.",
+        "Stratification: from the filtered set, sample uniformly across 3 strata by number of test files touched ([1], [2-5], [6+]) -- ~34 tasks each, total 100. Random seed = 42, deterministic.",
+        "Output written as JSON {schema_version: 1, generated_at: iso, source: 'princeton-nlp/SWE-bench_Verified', source_revision: <commit>, n: 100, strata: {...counts...}, tasks: [{instance_id, repo, base_commit, difficulty, n_test_files_touched, fail_to_pass: [...], pass_to_pass: [...]}, ...]}.",
+        "refresh_subset.py supports `--dry-run` (prints filter pass/fail counts without writing) and `--n 100` (override sample size).",
+        "datasets/README.md documents (a) how to refresh, (b) the exclusion criteria with rationale, (c) the DOCKER_REQUIRED list, (d) the expected output shape, (e) HF authentication note (anonymous works for this dataset).",
+        "Tests in tests/test_eval_dataset.py: (1) subset JSON parses and conforms to schema; (2) all instance_ids are unique; (3) stratification counts within +/-3 of nominal 34/33/33; (4) `--dry-run` mode does not modify the JSON file."
+      ],
+      "test_plan": "pytest -q tests/test_eval_dataset.py. Manual: `python3 eval/datasets/refresh_subset.py --dry-run` prints filter telemetry. With network: `python3 eval/datasets/refresh_subset.py` regenerates the JSON and the tests still pass.",
+      "estimated_loc": 240,
+      "priority": "P0",
+      "notes": "If HF SWE-bench_Verified is unreachable in the dev env (Cato proxy issue from QA Pass 2), ship the JSON with the sample committed. The refresh script is then a regeneration tool, not a runtime dep."
+    },
+    {
+      "id": "RC-206",
+      "title": "Eval toolkit: per-task harness run_task.sh",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-5",
+      "dependencies": [
+        "RC-205",
+        "RC-005",
+        "RC-007"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/run_task.sh",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/lib/task_runner.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/prompts/system_prompt.txt"
+      ],
+      "acceptance_criteria": [
+        "run_task.sh signature: `eval/run_task.sh <task_id> <arm>` where arm in {'vanilla','treatment'}. Sets `set -euo pipefail`, exits non-zero on missing args or unknown arm.",
+        "Looks up task metadata from eval/datasets/swe_bench_verified_python_subset.json (jq parse). Clones repo at base_commit into /tmp/reasoning-core-eval/<task_id>/<arm>/repo (fresh per arm).",
+        "If arm == treatment: starts the sidecar via scripts/start-sidecar.sh in background, polls /health up to 60s, captures pid for teardown. If arm == vanilla: skips sidecar entirely.",
+        "Invokes Claude via the `claude` CLI with --model claude-opus-4-7, temperature 0, max-turns 40, system prompt from eval/prompts/system_prompt.txt; treatment passes the project settings.json (so hooks fire); vanilla passes --no-hooks. Captures stdin from a generated problem statement file (PROBLEM.md derived from task fail_to_pass tests + repo README).",
+        "After Claude exits: runs `python -m pytest <gold tests> --tb=no -q --timeout=60` in the repo to populate test_results.json (gold_tests_passing: bool, newly_failing_tests: [str], pre_existing_failures: [str]).",
+        "Writes per_task_metrics.json with: {task_id, arm, gold_tests_passing, regression_detected, wall_clock_seconds, hook_blocks: int|null, hook_fail_opens: int|null, input_tokens, output_tokens, novelty_drift_mean: float|null, claude_exit_code, timeout: bool}.",
+        "Tears down: SIGTERM the sidecar if started, rm -rf the scratch repo dir on success (preserve on failure for debugging).",
+        "When env var RC_LIVE!=1, the script enters dry-run mode: prints the would-be commands and the resolved task metadata, exits 0 without invoking Claude or pytest. This makes CI smoke tests safe.",
+        "Tests in tests/test_run_task.py: (1) bash -n run_task.sh; (2) shellcheck clean; (3) dry-run on a real task_id prints the expected jq-resolved fields."
+      ],
+      "test_plan": "Run `eval/run_task.sh django__django-11099 vanilla` in dry-run mode and inspect the printed plan. Run shellcheck. pytest tests/test_run_task.py.",
+      "estimated_loc": 480,
+      "priority": "P0",
+      "notes": "claude CLI invocation specifics may differ across Claude Code versions; use the published `claude --help` flags as of 2026-05. If --no-hooks is unavailable, use SETTINGS_DIR pointed at an empty directory for the vanilla arm. Document the exact flag in the script header so the harness is self-describing."
+    },
+    {
+      "id": "RC-207",
+      "title": "Eval toolkit: suite runner run_suite.py with paired task scheduling",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-5",
+      "dependencies": [
+        "RC-206"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/run_suite.py"
+      ],
+      "acceptance_criteria": [
+        "CLI: `eval/run_suite.py --n N --arms vanilla,treatment [--dataset PATH] [--out DIR] [--parallel K] [--seed S]`. N defaults to 5 (smoke), dataset defaults to eval/datasets/swe_bench_verified_python_subset.json, out defaults to eval/results, parallel defaults to 1, seed defaults to 42.",
+        "Selects the first N tasks from the dataset after deterministic shuffle by seed. Runs both arms for each task. With parallel > 1, uses concurrent.futures.ProcessPoolExecutor to run K task-arm pairs concurrently (each pair still sequential -- vanilla then treatment for a given task to share a pre-warmed scratch).",
+        "For each (task, arm), invokes eval/run_task.sh as a subprocess with a wall-clock cap (default 1800s per arm; configurable via --task-timeout). On timeout, kills the process group and writes a per_task_metrics.json with timeout=true.",
+        "Writes a top-level eval/results/run_summary.json {schema_version, started_at, finished_at, n_tasks, arms_run, dataset_sha, runtime_seconds, completed: int, timed_out: int, errored: int}.",
+        "Honors RC_LIVE: when unset, run_suite.py prints the planned schedule (which tasks and arms in which order) and exits 0 without spawning run_task.sh. CI uses this dry-run mode by default; smoke runs gate behind RC_LIVE=1.",
+        "Logs to stdout in human format and to eval/results/run_suite.log in JSONL (one record per task-arm transition).",
+        "Unit tests in tests/test_run_suite.py: (1) --help exits 0 and lists all flags; (2) dry-run schedule matches expected ordering (deterministic given seed); (3) bad arm name exits non-zero; (4) parallel=2 schedule contains the documented interleaving."
+      ],
+      "test_plan": "pytest tests/test_run_suite.py. Manual: `python3 eval/run_suite.py --n 5 --arms vanilla,treatment` (dry-run) prints the schedule.",
+      "estimated_loc": 320,
+      "priority": "P0",
+      "notes": "Concurrency primitive is process-pool (not thread-pool) so each runner gets its own sidecar instance. The sidecar binds 127.0.0.1:8765 -- if parallel>1 in treatment arm, conflicts will occur; mitigation is to bind sidecar on a port chosen from a per-task offset (8765 + worker_id). Document this and gate parallel>1 behind treatment-only when sidecar port allocation lands."
+    },
+    {
+      "id": "RC-208",
+      "title": "Eval toolkit: aggregate.py with paired stats + 10-metric report",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-5",
+      "dependencies": [
+        "RC-207",
+        "RC-203"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/aggregate.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/lib/stats.py"
+      ],
+      "acceptance_criteria": [
+        "CLI: `eval/aggregate.py --results-dir DIR --out report.json [--format json|markdown|both]`. Default both: writes report.json + report.md side by side.",
+        "Loads every per_task_metrics.json under DIR and joins on (task_id) across vanilla and treatment arms, also joins the JSONL audit trail from /tmp/rc-events/ for hook event counts and decisions.",
+        "Computes all 10 metrics from EVAL_DESIGN.md: Regression Rate (RR), Resolved Rate (ResR), AST Edit Distance (AED), Cyclomatic Delta (CycΔ), Fan-In/Fan-Out Delta (FIOΔ), Hook FPBR, Hook TPBR, Block-Recovery Rate (BRR), Wall-clock Latency (Latency_task), Hook overhead p50/p95 (HookOverhead), Token cost (Tokens), Novelty Drift (NovΔ). Each metric reports paired difference mean, BCa 95% CI (10000 resamples via scipy.stats.bootstrap), Wilcoxon signed-rank p, Holm-corrected p.",
+        "Decision-criteria block in report.md applies the EVAL_DESIGN section 7 thresholds (RR delta >=0.15, ResR no worse than -5pp, FPBR<=0.10, latency ratio<=1.5, BRR>=0.60) and prints PASS/FAIL per criterion, plus an overall ship/kill/inconclusive verdict.",
+        "Handles missing tasks: any task that errored or timed out is included with documented imputation (RR=0.5, novelty=NaN excluded from mean). The report distinguishes 'completed', 'errored', 'timed_out' counts in a header section.",
+        "Tests in tests/test_aggregate.py: (1) given a fixture results dir with 5 fake task pairs, aggregate produces a valid report.json schema; (2) Wilcoxon p computed against scipy.stats matches; (3) Holm correction matches statsmodels.multitest.multipletests; (4) decision block correctly flips on synthetic data crafted to fail criterion 1; (5) markdown rendering does not crash on edge cases (n=1, all-zero diffs)."
+      ],
+      "test_plan": "pytest tests/test_aggregate.py. Manual: build a 2-task fixture results dir and run aggregate -> inspect report.md.",
+      "estimated_loc": 420,
+      "priority": "P0",
+      "notes": "Adds scipy + statsmodels to requirements.txt -- both are heavy. Keep the import lazy (only loaded when aggregate runs) to keep the hook path fast. Holm correction over 10 metrics will eat statistical power on n=5 smoke runs -- the smoke output is descriptive only; ship/kill verdicts only meaningful at n>=50."
+    },
+    {
+      "id": "RC-209",
+      "title": "Eval toolkit: pinned env (Dockerfile + requirements-eval.txt) + Mamba checkpoint bake",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-5",
+      "dependencies": [
+        "RC-001",
+        "RC-014"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/Dockerfile",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/requirements-eval.txt",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/scripts/prefetch_checkpoint.sh"
+      ],
+      "acceptance_criteria": [
+        "Dockerfile based on python:3.11-slim. Installs system deps (git, curl, jq, build-essential), copies requirements.txt + requirements-eval.txt, pip installs both, runs prefetch_checkpoint.sh during build to cache state-spaces/mamba-130m-hf via huggingface-cli into /opt/hf-cache.",
+        "Sets HF_HOME=/opt/hf-cache, TRANSFORMERS_OFFLINE=0 (CI), TORCH_NUM_THREADS=2 (avoid thrashing on shared runners).",
+        "ENTRYPOINT is `bash -lc` so commands like `eval/run_suite.py --n 5` work directly.",
+        "requirements-eval.txt pins (not just constraints): scipy==1.13.1, statsmodels==0.14.2, datasets==2.20.0, GitPython==3.1.43 (for repo cloning), torch==2.3.1 (matches EVAL_DESIGN section 6.4 pin).",
+        "prefetch_checkpoint.sh: if state-spaces/mamba-130m-hf already in cache, skip; else run `huggingface-cli download state-spaces/mamba-130m-hf --quiet` with retry x3, sha256-validate the safetensors file against a known hash recorded in the script header.",
+        "Documented size + build time in eval/Dockerfile header comment: image ~2.1 GB; cold build ~6 min on GitHub-hosted runners (mostly torch + Mamba checkpoint download).",
+        "Tests in tests/test_eval_env.py: (1) hadolint clean (skip if hadolint not installed in dev env); (2) requirements-eval.txt parses and pins are exact (`==`, no `>=`); (3) prefetch script bash -n + shellcheck clean."
+      ],
+      "test_plan": "Manual: docker build -f eval/Dockerfile -t reasoning-core-eval:test . (in env with docker available). pytest tests/test_eval_env.py.",
+      "estimated_loc": 180,
+      "priority": "P1",
+      "notes": "Mamba checkpoint is ~250MB safetensors. Baking into the image vs. downloading on first run trades image size for cold-start determinism -- bake it. CI cache layer hits the same image hash so the 6-min cold build amortizes."
+    },
+    {
+      "id": "RC-210",
+      "title": "Eval toolkit: AST/cyclomatic helper scripts (ast_edit_distance, cyclomatic_delta)",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-5",
+      "dependencies": [
+        "RC-001"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/scripts/ast_edit_distance.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/scripts/cyclomatic_delta.py"
+      ],
+      "acceptance_criteria": [
+        "ast_edit_distance.py CLI: `<gold_patch_path> <claude_patch_path>` -- parses both as unified diffs, applies each to a synthesized base file, computes ast.dump on each side, returns integer count of node insertions+deletions via difflib.SequenceMatcher over the dumped representations. Writes JSON {ast_edit_distance: int} to stdout.",
+        "cyclomatic_delta.py CLI: `<base_dir> <patched_dir> <files_touched_csv>` -- for each .py file in files_touched, computes McCabe cyclomatic complexity (sum over functions) using the radon library; emits JSON {cyclomatic_delta: float, per_file: {path: {base: int, patched: int}}}.",
+        "Both scripts are self-contained -- importable via `python -c 'import eval.scripts.ast_edit_distance'` AND runnable as `python eval/scripts/ast_edit_distance.py ...`. Add radon==6.0.1 to requirements-eval.txt.",
+        "Tests in tests/test_eval_scripts.py: (1) ast_edit_distance on identical patches returns 0; (2) ast_edit_distance on a fixture (rename function) returns small integer; (3) cyclomatic_delta on a 'add nested if' fixture returns +1; (4) cyclomatic_delta with files_touched empty returns 0.0."
+      ],
+      "test_plan": "pytest tests/test_eval_scripts.py.",
+      "estimated_loc": 200,
+      "priority": "P1",
+      "notes": "Both scripts feed aggregate.py (RC-208). Keep them stdlib-light to keep the eval image lean."
+    },
+    {
+      "id": "RC-211",
+      "title": "Eval toolkit: README runbook with local + CI invocation matrix",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-5",
+      "dependencies": [
+        "RC-205",
+        "RC-206",
+        "RC-207",
+        "RC-208",
+        "RC-209"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/eval/README.md"
+      ],
+      "acceptance_criteria": [
+        "Sections present: Overview, Prerequisites (local + CI), Quick Start (smoke n=5), Full Run (n=100), Results Layout, Aggregation, Threats to Validity (link to EVAL_DESIGN.md sections 5.5, 6.4), Troubleshooting (sidecar boot, HF 403, port collisions), Cost & Runtime estimates (cite EVAL_DESIGN.md section 6.1).",
+        "Quick Start verbatim runnable on a clean checkout (assuming requirements-eval.txt installed and HF cache available).",
+        "Documents every env var consumed by run_suite.py / run_task.sh / aggregate.py with default and effect.",
+        "Includes a 'Reading the report' section explaining each of the 10 metrics with one-sentence intuition (cribbed from EVAL_DESIGN.md but not duplicated verbatim).",
+        "Lists the exact CI workflow file path (.github/workflows/eval.yml) and the gh CLI commands to invoke eval-full manually.",
+        "Tests in tests/test_eval_readme.py: (1) markdown lint via mdformat --check; (2) every shell command in fenced ```bash``` blocks parses with bash -n (extracted via a one-shot regex)."
+      ],
+      "test_plan": "pytest tests/test_eval_readme.py. Manual: read top-to-bottom and follow the Quick Start.",
+      "estimated_loc": 220,
+      "priority": "P1",
+      "notes": "Document is the operator's first read; budget time to make the troubleshooting section actually exhaustive (especially the HF 403 + Cato proxy gotcha that the QA + Data Eng cross-verifications hit)."
+    },
+    {
+      "id": "RC-212",
+      "title": "GitHub Actions workflow: lint-and-test job (offline pytest gate)",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-6",
+      "dependencies": [
+        "RC-001",
+        "RC-009",
+        "RC-010",
+        "RC-011"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.github/workflows/eval.yml"
+      ],
+      "acceptance_criteria": [
+        "Workflow file `.github/workflows/eval.yml` with triggers `push` (branches: [main]) and `workflow_dispatch` with input `n_tasks` (default 100, used by eval-full only).",
+        "Job `lint-and-test` runs on ubuntu-latest, python 3.11, with steps: checkout, setup-python, pip install -r requirements.txt -r eval/requirements-eval.txt, py_compile every .py, json.load on .claude/settings.json, pytest -q -m 'not live' with 5-min timeout, shellcheck on scripts/*.sh and eval/run_task.sh.",
+        "Caches pip via actions/setup-python's built-in cache. No HF cache needed for this job (offline tests skip Mamba-dependent cases).",
+        "Job fails if any of py_compile / pytest / shellcheck / settings.json parse fails. Exit code surfaced.",
+        "Sets env: S2_FAIL_CLOSED=1 (matches HARDENING runtime recommendation) and RC_LIVE=0 explicitly so live tests are skipped.",
+        "Tests in tests/test_workflow.py: (1) YAML parses via PyYAML; (2) the `lint-and-test` job has a step calling `pytest -q`; (3) timeout-minutes <= 5 declared."
+      ],
+      "test_plan": "pytest tests/test_workflow.py. Manual: act-cli or actual push to a feature branch and observe Actions tab.",
+      "estimated_loc": 90,
+      "priority": "P0",
+      "notes": "First job runs on every push -- must stay fast (<5 min) so it doesn't block routine work. Shellcheck inclusion catches script regressions before they hit the eval jobs."
+    },
+    {
+      "id": "RC-213",
+      "title": "GitHub Actions workflow: eval-smoke job (n=5 paired runs, 30-min budget)",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-6",
+      "dependencies": [
+        "RC-212",
+        "RC-207",
+        "RC-208",
+        "RC-209"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.github/workflows/eval.yml"
+      ],
+      "acceptance_criteria": [
+        "Adds `eval-smoke` job to the same workflow, depends_on: lint-and-test, runs on ubuntu-latest with timeout-minutes: 30.",
+        "Steps: checkout, setup-python 3.11, pip install both requirements files, restore HF cache from actions/cache keyed on `hf-mamba-130m-${{ hashFiles('eval/scripts/prefetch_checkpoint.sh') }}` (so a checksum bump invalidates), run `bash eval/scripts/prefetch_checkpoint.sh` (no-op on cache hit), set RC_LIVE=1, S2_FAIL_CLOSED=1, run `python3 eval/run_suite.py --n 5 --arms vanilla,treatment --parallel 1`, run `python3 eval/aggregate.py --results-dir eval/results --out eval/results/report --format both`.",
+        "On success, posts a sticky comment on the commit SHA (or PR if from a PR push) summarising the headline metrics (RR delta, ResR delta, FPBR, latency ratio) using actions/github-script. Comment body comes from `eval/results/report.md` first-30-lines.",
+        "Uploads `eval/results/` as a workflow artifact (retention 30 days).",
+        "Documents in workflow YAML comments: realistic runtime estimate (~22 min on ubuntu-latest free runner: 6 min cold env + 16 min for 5 paired tasks at ~3.2 min each); kill switch is the 30-min timeout.",
+        "Tests in tests/test_workflow.py extended: (1) eval-smoke job exists and depends on lint-and-test; (2) timeout-minutes == 30; (3) cache-key references prefetch_checkpoint.sh hashing."
+      ],
+      "test_plan": "pytest tests/test_workflow.py extended cases. Manual: push to a feature branch, observe Actions run, time it; iterate the n parameter if budget overshoots.",
+      "estimated_loc": 110,
+      "priority": "P0",
+      "notes": "REALITY CHECK FLAG -- 30-min budget on free ubuntu-latest is TIGHT for 5 paired tasks. See manager report for the alternative tiers (matrix sharding, self-hosted runner, n=3 fallback). If first 3 runs blow the budget, drop to n=3 or move to a larger runner."
+    },
+    {
+      "id": "RC-214",
+      "title": "GitHub Actions workflow: eval-full job (workflow_dispatch, n=100, 6-hr budget)",
+      "stage": "todo",
+      "owner": null,
+      "role": "data-eng",
+      "deliverable": "PHASE2-6",
+      "dependencies": [
+        "RC-213"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/.github/workflows/eval.yml"
+      ],
+      "acceptance_criteria": [
+        "Adds `eval-full` job to the same workflow, gated on `if: github.event_name == 'workflow_dispatch'`, depends_on: lint-and-test, runs on ubuntu-latest-large (or self-hosted if available; documented in YAML comments), timeout-minutes: 360.",
+        "Reads `inputs.n_tasks` from workflow_dispatch (default 100) and passes to run_suite.py via `--n ${{ inputs.n_tasks }}`.",
+        "Posts a final comment on the triggering commit summarising all 10 metrics + ship/kill verdict from report.md.",
+        "Uploads full eval/results/ artifact (retention 90 days) plus a separate report.md artifact for easy download.",
+        "Requires manual approval via environment protection rules (env: 'eval-full-approved' configured in repo settings -- documented in workflow YAML and README).",
+        "Tests in tests/test_workflow.py extended: (1) eval-full has if-gate on workflow_dispatch; (2) timeout-minutes == 360; (3) inputs.n_tasks declared with default 100."
+      ],
+      "test_plan": "pytest tests/test_workflow.py extended cases. Manual: actuate via gh workflow run eval.yml -f n_tasks=10 to test the full path at n=10 first.",
+      "estimated_loc": 80,
+      "priority": "P1",
+      "notes": "ubuntu-latest-large is paid -- on the free tier this needs to be self-hosted or n=100 must be sharded. Documented in manager report. Worst case the job runs but times out at 6h with partial results -- aggregate.py handles partial dirs."
+    },
+    {
+      "id": "RC-215",
+      "title": "Update requirements.txt + ARCHITECTURE.md for phase-2 surface",
+      "stage": "todo",
+      "owner": null,
+      "role": "fullstack",
+      "deliverable": "PHASE2-3",
+      "dependencies": [
+        "RC-203",
+        "RC-204",
+        "RC-208"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/requirements.txt",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/docs/ARCHITECTURE.md"
+      ],
+      "acceptance_criteria": [
+        "requirements.txt unchanged for runtime hooks; eval-only deps live in eval/requirements-eval.txt (RC-209). Adds nothing new to runtime.",
+        "ARCHITECTURE.md adds three subsections: 'Audit Trail' (covers /tmp/rc-events JSONL schema + redaction rules + /metrics ring buffer), 'Cumulative Drift Calibration' (covers session baseline embedding + 3.0 threshold rationale), 'Subagent Inheritance & Plan-Time Guard' (links pre_plan_guard + pre_task_guard into the data-flow diagram).",
+        "Updates the data-flow ASCII diagram to show the new hook layers (Plan -> pre_plan_guard, Task spawn -> pre_task_guard, /metrics endpoint exposed off the sidecar block).",
+        "Documents the regression-rule precedence: per-file rules (AIS<0.4, coherence>1.5, dim>0.9) OR cumulative_drift>3.0 OR plan-block when RC_PLAN_BLOCK=1.",
+        "Tests in tests/test_architecture_doc.py: (1) doc parses as Markdown; (2) the three new subsection headings exist; (3) the ASCII diagram contains the strings 'pre_plan_guard', 'pre_task_guard', '/metrics'."
+      ],
+      "test_plan": "pytest tests/test_architecture_doc.py. Manual: read top-to-bottom for narrative consistency.",
+      "estimated_loc": 140,
+      "priority": "P2",
+      "notes": "Lead user explicitly said do not modify HARDENING.md or PLAN.md. ARCHITECTURE.md is allowed to grow."
+    },
+    {
+      "id": "RC-216",
+      "title": "QA: phase-2 hook + audit + drift unit tests pass",
+      "stage": "todo",
+      "owner": null,
+      "role": "qa",
+      "deliverable": "PHASE2-3",
+      "dependencies": [
+        "RC-200",
+        "RC-201",
+        "RC-202",
+        "RC-203",
+        "RC-204",
+        "RC-215"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_pre_plan_guard.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_pre_task_guard.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_audit_log.py",
+        "/Users/jakubsikora/Repos/personal/reasoning-core/tests/test_repo_baseline.py"
+      ],
+      "acceptance_criteria": [
+        "All four new test files exist and pytest collects them without import errors; all tests pass under `pytest -q -m 'not live' tests/test_pre_plan_guard.py tests/test_pre_task_guard.py tests/test_audit_log.py tests/test_repo_baseline.py`.",
+        "Coverage of the acceptance criteria from RC-200, RC-202, RC-203, RC-204 is one-to-one (each AC has a named test).",
+        "Uses session-scoped fixtures (in tests/conftest.py) for the SSM backbone + sidecar boot to avoid re-loading per test (matches RC-009 pattern).",
+        "Total runtime of the new tests <= 60s on warm cache (CPU)."
+      ],
+      "test_plan": "Run pytest. Compare AC coverage against task entries. QA signs off and moves RC-200..204 from `test` to `done` only when all green.",
+      "estimated_loc": 720,
+      "priority": "P0",
+      "notes": "QA cross-checks the AC->test mapping. If a single AC has no test, kick the parent task back to inprogress."
+    },
+    {
+      "id": "RC-217",
+      "title": "QA: run eval/run_suite.py --n 5 smoke locally, capture report, write docs/EVAL_RESULTS.md",
+      "stage": "todo",
+      "owner": null,
+      "role": "qa",
+      "deliverable": "PHASE2-7",
+      "dependencies": [
+        "RC-205",
+        "RC-206",
+        "RC-207",
+        "RC-208",
+        "RC-209",
+        "RC-210",
+        "RC-211",
+        "RC-216"
+      ],
+      "files_to_create_or_modify": [
+        "/Users/jakubsikora/Repos/personal/reasoning-core/docs/EVAL_RESULTS.md"
+      ],
+      "acceptance_criteria": [
+        "Runs `RC_LIVE=1 python3 eval/run_suite.py --n 5 --arms vanilla,treatment --parallel 1` to completion (or to a documented partial result if any task errors).",
+        "Runs `python3 eval/aggregate.py --results-dir eval/results --out eval/results/report --format both` and confirms report.md + report.json exist.",
+        "Creates docs/EVAL_RESULTS.md containing: (1) commit SHA, host, date; (2) the headline table from report.md (10 metrics with paired diffs + p-values); (3) the operational summary (timeouts, errors, hook fail-opens); (4) explicit non-conclusion statement that n=5 is descriptive only, not powered to support EVAL_DESIGN section 7 ship/kill thresholds; (5) link to the artifact directory.",
+        "Files docs/EVAL_RESULTS.md is committed; the underlying eval/results/ directory is .gitignore'd (large + per-host).",
+        "If any blocking infra issue prevents a complete smoke run (HF 403, sidecar crash, dataset unreachable), the doc instead documents the failure mode end-to-end with reproduction commands and stages of the workflow that did succeed -- this is still acceptable for sign-off as long as the toolkit itself ran (i.e. run_suite.py and aggregate.py exited 0 in dry-run mode)."
+      ],
+      "test_plan": "Run the two commands listed; manually inspect report.md; write the summary doc. Run `pytest tests/test_eval_*` to confirm no test regressions from the actual run.",
+      "estimated_loc": 80,
+      "priority": "P0",
+      "notes": "The user explicitly said NOT to run the full 100-task eval ($528, 9h) without approval. n=5 is the proof the toolkit works. Be honest about the descriptive-not-inferential nature in EVAL_RESULTS.md."
     }
   ]
 }
