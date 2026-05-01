@@ -8,7 +8,29 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_edit_guard.py",
-            "timeout": 35000
+            "timeout": 60000
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_bash_guard.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/post_bash_revive.py",
+            "timeout": 5000
           }
         ]
       }

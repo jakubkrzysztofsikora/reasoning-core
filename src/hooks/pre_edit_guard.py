@@ -234,6 +234,33 @@ def main() -> None:
     if not file_path:
         _exit(0)
 
+    # Layer 2: lock guard-files. Edits to the hook scripts, settings.json,
+    # sidecar source, or grammar loader are denied unless the user explicitly
+    # set RC_ALLOW_GUARD_EDIT=1 in the shell that started Claude. This stops
+    # a runaway agent from rewriting the very file that polices it.
+    GUARDED_PATHS = (
+        "/.claude/settings.json",
+        "/.claude/settings.local.json",
+        "/src/hooks/pre_edit_guard.py",
+        "/src/hooks/pre_bash_guard.py",
+        "/src/s2_core.py",
+        "/src/grammars.py",
+        "/src/ssm_backbone.py",
+        "/src/mcp_reasoner.py",
+        "/scripts/start-sidecar.sh",
+    )
+    if (
+        any(g in file_path for g in GUARDED_PATHS)
+        and os.environ.get("RC_ALLOW_GUARD_EDIT") != "1"
+    ):
+        _exit(
+            2,
+            "[hybrid-reasoner] BLOCKED: guard-file edits denied.\n"
+            f"  file: {file_path}\n"
+            "  override: set RC_ALLOW_GUARD_EDIT=1 in your shell, restart Claude.",
+        )
+        return  # pragma: no cover
+
     pairs = _extract_changes(tool_name, tool_input)
     if not pairs:
         _exit(0)

@@ -300,3 +300,102 @@ def test_multiedit_first_regression_blocks(stub_sidecar, tmp_path):
     }
     result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
     assert result.returncode == 2, f"stderr={result.stderr!r}"
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: guard-file lock — edits to .claude/settings.json or src/hooks/*
+# are blocked unless RC_ALLOW_GUARD_EDIT=1.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "guarded_path",
+    [
+        "/abs/repo/.claude/settings.json",
+        "/abs/repo/.claude/settings.local.json",
+        "/abs/repo/src/hooks/pre_edit_guard.py",
+        "/abs/repo/src/hooks/pre_bash_guard.py",
+        "/abs/repo/src/s2_core.py",
+        "/abs/repo/src/grammars.py",
+        "/abs/repo/src/ssm_backbone.py",
+        "/abs/repo/src/mcp_reasoner.py",
+        "/abs/repo/scripts/start-sidecar.sh",
+    ],
+)
+def test_guard_file_edit_blocks_without_override(stub_sidecar, guarded_path):
+    """Editing any guarded file is denied without RC_ALLOW_GUARD_EDIT=1."""
+    payload = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": guarded_path,
+            "old_string": "a",
+            "new_string": "b",
+        },
+    }
+    env = {"S2_URL": stub_sidecar.url()}
+    # Make sure RC_ALLOW_GUARD_EDIT is not inherited.
+    env["RC_ALLOW_GUARD_EDIT"] = ""
+    result = _run_hook(payload, env=env)
+    assert result.returncode == 2, f"stderr={result.stderr!r}"
+    assert "guard-file" in result.stderr.lower() or "BLOCKED" in result.stderr
+
+
+def test_guard_file_edit_allowed_with_override(stub_sidecar, tmp_path):
+    """RC_ALLOW_GUARD_EDIT=1 lets a guard-file edit through to the sidecar."""
+    # Stub returns no regression, so the call should reach the sidecar and
+    # exit 0.
+    stub_sidecar.set_response(200, {
+        "architectural_impact_score": 0.95,
+        "coherence_delta": 0.1,
+        "risk_vector": [0.0] * 8,
+        "risk_labels": [
+            "cyclomatic", "fan_in", "fan_out", "depth",
+            "churn", "coupling", "cohesion", "novelty",
+        ],
+        "regression_detected": False,
+        "human_summary": "ok",
+    })
+    f = tmp_path / "settings.json"
+    # Use a path that contains the guarded fragment but lives outside the
+    # real repo so the hook only sees the path string.
+    abs_with_fragment = str(f).replace(str(tmp_path), "/abs/repo/.claude")
+    payload = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": abs_with_fragment,
+            "old_string": "a",
+            "new_string": "b",
+        },
+    }
+    f.write_text("a", encoding="utf-8")
+    result = _run_hook(payload, env={
+        "S2_URL": stub_sidecar.url(),
+        "RC_ALLOW_GUARD_EDIT": "1",
+    })
+    assert result.returncode == 0, f"stderr={result.stderr!r}"
+
+
+def test_non_guard_path_passes_through(stub_sidecar, tmp_path):
+    """Edits outside the guarded set go to the sidecar normally."""
+    stub_sidecar.set_response(200, {
+        "architectural_impact_score": 0.9,
+        "coherence_delta": 0.1,
+        "risk_vector": [0.0] * 8,
+        "risk_labels": [
+            "cyclomatic", "fan_in", "fan_out", "depth",
+            "churn", "coupling", "cohesion", "novelty",
+        ],
+        "regression_detected": False,
+        "human_summary": "ok",
+    })
+    src_file = tmp_path / "user_code.py"
+    src_file.write_text("x = 1\n", encoding="utf-8")
+    payload = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": str(src_file),
+            "old_string": "x = 1\n",
+            "new_string": "x = 2\n",
+        },
+    }
+    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
+    assert result.returncode == 0, f"stderr={result.stderr!r}"
