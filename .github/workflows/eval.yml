@@ -119,13 +119,7 @@ jobs:
             bash eval/scripts/prefetch_mamba.sh
           else
             echo "eval/scripts/prefetch_mamba.sh not present yet (Track C); falling back to a transient transformers download."
-            python3 - <<'PY'
-          import os
-          from transformers import AutoTokenizer, AutoModelForCausalLM
-          ckpt = os.environ.get("S2_SSM_CHECKPOINT", "state-spaces/mamba-130m-hf")
-          AutoTokenizer.from_pretrained(ckpt)
-          AutoModelForCausalLM.from_pretrained(ckpt)
-          PY
+            python3 -c "import os; from transformers import AutoTokenizer, AutoModelForCausalLM; ckpt = os.environ.get('S2_SSM_CHECKPOINT', 'state-spaces/mamba-130m-hf'); AutoTokenizer.from_pretrained(ckpt); AutoModelForCausalLM.from_pretrained(ckpt)"
           fi
 
       - name: Boot sidecar (background) and wait for /health
@@ -281,13 +275,7 @@ jobs:
           if [[ -f eval/scripts/prefetch_mamba.sh ]]; then
             bash eval/scripts/prefetch_mamba.sh
           else
-            python3 - <<'PY'
-          import os
-          from transformers import AutoTokenizer, AutoModelForCausalLM
-          ckpt = os.environ.get("S2_SSM_CHECKPOINT", "state-spaces/mamba-130m-hf")
-          AutoTokenizer.from_pretrained(ckpt)
-          AutoModelForCausalLM.from_pretrained(ckpt)
-          PY
+            python3 -c "import os; from transformers import AutoTokenizer, AutoModelForCausalLM; ckpt = os.environ.get('S2_SSM_CHECKPOINT', 'state-spaces/mamba-130m-hf'); AutoTokenizer.from_pretrained(ckpt); AutoModelForCausalLM.from_pretrained(ckpt)"
           fi
 
       - name: Boot sidecar (background) and wait for /health
