@@ -16,7 +16,9 @@ packages = ["src", "src.hooks"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-q --strict-markers"
+norecursedirs = [".git", ".venv", "venv", "build", "dist", "*.egg-info", "__pycache__", "hf_cache", ".cache"]
+addopts = "-q --strict-markers --rootdir=."
+consider_namespace_packages = false
 markers = [
   "live: requires live network and Scaleway credentials (gated by RC_LIVE=1)",
   "slow: takes >5s; auto-runs in CI with timeout",

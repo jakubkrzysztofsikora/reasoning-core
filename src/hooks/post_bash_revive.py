@@ -22,8 +22,19 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
+
+# Hooks dir on sys.path for shared audit_log import.
+_HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+
+try:
+    import audit_log  # type: ignore  # noqa: E402
+except Exception:  # noqa: BLE001
+    audit_log = None  # type: ignore
 
 SIDECAR_HEALTH_URL = os.getenv("S2_URL", "http://127.0.0.1:8765") + "/health"
 
@@ -109,6 +120,17 @@ def main() -> None:
         f"  command: {cmd[:200]}\n"
     )
     _start_sidecar()
+    if audit_log is not None:
+        try:
+            audit_log.append_event(audit_log.new_event(
+                tool_name="Bash",
+                decision="degraded",
+                command=cmd[:512],
+                reason="sidecar_kill_revived",
+                latency_ms=0,
+            ))
+        except Exception:  # noqa: BLE001
+            pass
     sys.exit(0)
 
 

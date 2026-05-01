@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-05-01T00:00:00Z",
+  "source": "princeton-nlp/SWE-bench_Verified",
+  "source_revision": "placeholder-offline-bootstrap",
+  "n": 5,
+  "seed": 42,
+  "strata": {
+    "1": 2,
+    "2-5": 2,
+    "6+": 1
+  },
+  "tasks": [
+    {
+      "instance_id": "django__django-11099",
+      "repo": "django/django",
+      "base_commit": "d26b2424437dabeeca94d7900b37d2df4410da0c",
+      "difficulty": "<15 min fix",
+      "n_test_files_touched": 1,
+      "fail_to_pass": ["tests.auth_tests.test_validators"],
+      "pass_to_pass": []
+    },
+    {
+      "instance_id": "django__django-13710",
+      "repo": "django/django",
+      "base_commit": "1bd6a7a0acc11e249fca11c017505ad39f15ebf6",
+      "difficulty": "15 min - 1 hour",
+      "n_test_files_touched": 1,
+      "fail_to_pass": ["tests.admin_inlines.tests"],
+      "pass_to_pass": []
+    },
+    {
+      "instance_id": "sympy__sympy-13971",
+      "repo": "sympy/sympy",
+      "base_commit": "84c125972ad535b2dfb245f8d311d347b45e5b8a",
+      "difficulty": "<15 min fix",
+      "n_test_files_touched": 2,
+      "fail_to_pass": ["sympy.printing.tests.test_latex"],
+      "pass_to_pass": []
+    },
+    {
+      "instance_id": "psf__requests-2317",
+      "repo": "psf/requests",
+      "base_commit": "091991be0da19de9108dbe5e3752917fea3d7fdc",
+      "difficulty": "15 min - 1 hour",
+      "n_test_files_touched": 3,
+      "fail_to_pass": ["tests.test_requests"],
+      "pass_to_pass": []
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13439",
+      "repo": "scikit-learn/scikit-learn",
+      "base_commit": "a62775bbcfe0a3d9a2b2c8f2d2c5fa3e7a8f7c5e",
+      "difficulty": "15 min - 1 hour",
+      "n_test_files_touched": 6,
+      "fail_to_pass": ["sklearn.tests.test_pipeline"],
+      "pass_to_pass": []
+    }
+  ],
+  "_note": "Placeholder offline bootstrap (5 tasks). Run eval/datasets/refresh_subset.py with HF reachable to regenerate the full 100-task stratified subset."
+}

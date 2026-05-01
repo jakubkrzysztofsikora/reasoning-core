@@ -28,7 +28,15 @@ import json
 import os
 import re
 import sys
+import time
 from typing import Any, Dict, List, Optional
+
+# Hooks dir on sys.path for shared audit_log import.
+_HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+
+import audit_log  # type: ignore  # noqa: E402
 
 ALLOW_OVERRIDE_ENV = "RC_ALLOW_GUARD_EDIT"
 
@@ -250,6 +258,7 @@ def screen_command(cmd: str) -> tuple[int, str]:
 
 
 def main() -> None:
+    started = time.time()
     payload = _read_payload()
     if payload is None:
         _exit(0)
@@ -264,6 +273,17 @@ def main() -> None:
         _exit(0)
 
     code, msg = screen_command(cmd)
+    decision = "blocked" if code == 2 else "allowed"
+    try:
+        audit_log.append_event(audit_log.new_event(
+            tool_name="Bash",
+            decision=decision,
+            command=cmd[:512],
+            latency_ms=int((time.time() - started) * 1000),
+            reason=msg.splitlines()[0] if msg else "",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
     _exit(code, msg)
 
 

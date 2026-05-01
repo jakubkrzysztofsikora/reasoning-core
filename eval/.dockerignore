@@ -1,0 +1,66 @@
+# Build context hygiene for eval/Dockerfile.
+# The Dockerfile is invoked with the project root as build context, so
+# every path here is relative to /Users/jakubsikora/Repos/personal/reasoning-core.
+
+# --- Python build / runtime junk ---
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# --- Local virtualenvs (host-specific, would balloon image) ---
+.venv/
+venv/
+env/
+
+# --- Editor / IDE state ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- VCS metadata (large, not needed inside the image) ---
+.git/
+.gitignore
+.gitattributes
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+
+# --- Eval scratch + result artefacts (per-host, large) ---
+eval/results/
+eval/scratch/
+eval/datasets/cache/
+/tmp/
+
+# --- HF / Torch caches outside the canonical builder location ---
+# (the Dockerfile populates /root/.cache/huggingface at build time;
+#  ignore any host-side caches that might be sitting in the tree).
+.cache/
+**/.cache/huggingface/
+**/.cache/torch/
+
+# --- Logs ---
+*.log
+logs/
+
+# --- CI bootstrap files we do not need at build time ---
+.github/
+
+# --- Secrets / local overrides (defence in depth; never commit) ---
+.env
+.env.*
+.claude/settings.local.json
+*.pem
+*.key

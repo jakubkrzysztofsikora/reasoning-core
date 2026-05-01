@@ -87,21 +87,47 @@ reasoning-core/
 |-- .claude/
 |   |-- settings.json              hook + MCP server registration
 |   `-- skills/reasoning/SKILL.md  prose translator for the 8 risk dims
+|-- .github/
+|   `-- workflows/eval.yml         lint-and-test (push) + eval-smoke (push)
+|                                  + eval-full (workflow_dispatch)
 |-- board/board.json               kanban
 |-- src/
 |   |-- s2_core.py                 sidecar entrypoint + scoring engine
 |   |-- grammars.py                Tree-sitter loader + select_grammar
 |   |-- ssm_backbone.py            Mamba weights + embed() helper
 |   |-- mcp_reasoner.py            FastMCP bridge
-|   `-- hooks/pre_edit_guard.py    PreToolUse hook
+|   |-- audit_log.py               JSONL audit emitter for /tmp/rc-events
+|   `-- hooks/
+|       |-- pre_edit_guard.py      PreToolUse hook (Edit|Write|MultiEdit)
+|       |-- pre_bash_guard.py      PreToolUse hook (Bash) — L1 hardening
+|       |-- pre_plan_guard.py      PreToolUse hook (plan-doc Write)
+|       |-- pre_task_guard.py      PreToolUse hook (Task subagent spawn)
+|       `-- post_bash_revive.py    PostToolUse hook (sidecar revival)
 |-- scripts/
 |   |-- configure-scaleway.sh      ANTHROPIC_* env + live API probes
 |   |-- start-sidecar.sh           launches sidecar with model pre-warm
 |   `-- test-prototype.sh          end-to-end smoke
+|-- eval/
+|   |-- Dockerfile                 multi-stage image (builder+runtime)
+|   |-- .dockerignore              build-context hygiene
+|   |-- requirements-eval.txt      scipy, statsmodels, datasets, radon
+|   |-- run_suite.py               (Track B) per-task harness orchestrator
+|   |-- run_task.sh                (Track B) clones repo, drives claude
+|   |-- aggregate.py               (Track B) report.json + report.md
+|   |-- scripts/
+|   |   |-- prefetch_mamba.sh      bake checkpoint into image w/ sha pin
+|   |   |-- ast_edit_distance.py   (Track B) AST-level diff scorer
+|   |   `-- cyclomatic_delta.py    (Track B) McCabe complexity delta
+|   |-- prompts/system_prompt.txt  (Track B) pinned system prompt
+|   |-- datasets/                  task list + fixtures
+|   |-- fixtures/                  per-task seed data
+|   `-- README.md                  operator runbook
 |-- tests/                          pytest suite
 `-- docs/
     |-- PLAN.md
     |-- ARCHITECTURE.md            (this file)
+    |-- EVAL_DESIGN.md             hypothesis, metrics, decision criteria
+    |-- HARDENING.md               threat model + bypass mitigations
     `-- VERIFICATION.md
 ```
 
@@ -201,3 +227,173 @@ is **rejected explicitly** — there is no silent fallback.
 
 The intent: never block a user on a language we cannot analyse, but make
 the gap audible so it is obvious why no risk math was applied.
+
+## Evaluation Subsystem
+
+The evaluation subsystem measures whether the PreToolUse hook + S2
+sidecar (treatment) actually reduces real-world regression rate vs.
+vanilla Claude Code (control). The full methodology lives in
+[`EVAL_DESIGN.md`](./EVAL_DESIGN.md); this section maps it onto the code.
+
+### Hypothesis & methodology
+
+The benchmark is **SWE-bench Verified**, stratified to 100 Python-only
+tasks with a paired design (each task runs once per arm). The primary
+metric is **Regression Rate** — fraction of submitted patches that break
+≥ 1 previously-passing test in the target repo. H1 is that treatment
+reduces RR by ≥ 15 pp at α = 0.05 (Wilcoxon signed-rank, Holm-corrected
+across 10 metrics). Power at n=100 ≈ 0.87 for δ = 0.15. Secondary
+metrics cover resolved rate, AST edit distance, cyclomatic delta,
+fan-in/out delta, hook FPR/TPR/recovery, latency, tokens, and novelty
+drift. See `EVAL_DESIGN.md` §1–§5.
+
+### Data flow
+
+```
+                +--------------------+
+                | eval/run_suite.py  |  (orchestrator: stratified
+                +----------+---------+   sample, seed=42, --parallel N)
+                           |
+                           v
+                +--------------------+
+                | eval/run_task.sh   |  one (task_id, arm) at a time
+                +----------+---------+
+                           |
+            clones repo @ base_commit, sets env per arm
+                           |
+                           v
+                +--------------------+        treatment-only:
+                |    claude CLI      |--->  PreToolUse hooks fire
+                | --model opus-4-7   |      pre_edit_guard / pre_bash_guard
+                | T=0.0  max_turns=40|      pre_plan_guard / pre_task_guard
+                +----------+---------+              |
+                           |                        v
+                           |               +-----------------+
+                           |               |   S2 sidecar    |
+                           |               | 127.0.0.1:8765  |
+                           |               +-----------------+
+                           v                        |
+            +------------------------------+        | append
+            | claude_transcript.jsonl      |        v
+            | hook_events.jsonl (treatment)|  /tmp/rc-events/<date>/
+            | sidecar.log     (treatment)  |   <session>.jsonl
+            +--------------+---------------+        |
+                           |                        |
+                           v                        |
+            +------------------------------+        |
+            | repo pytest --tb=no -q       |        |
+            | -> test_results.json         |        |
+            +--------------+---------------+        |
+                           |                        |
+                           v                        |
+            +------------------------------+        |
+            | post-hoc scorers:            |        |
+            |   ast_edit_distance.py       |        |
+            |   cyclomatic_delta.py        |        |
+            |   s2_core.score_change()     |        |
+            | -> per_task_metrics.json     |        |
+            +--------------+---------------+        |
+                           |                        |
+                           +-----+------------------+
+                                 |
+                                 v
+                +----------------------------+
+                |     eval/aggregate.py      |  joins arms,
+                +-------------+--------------+  paired Wilcoxon,
+                              |                 BCa bootstrap,
+                              v                 Holm correction
+                +----------------------------+
+                | report.json + report.md    |
+                | (10 metrics, decision tbl) |
+                +----------------------------+
+```
+
+### Scoring pipeline
+
+Each per-task metric is computed from one of three sources, kept
+separate so the eval harness never has to hot-load the sidecar weights
+when scoring offline.
+
+1. **AST + complexity (offline).** `eval/scripts/ast_edit_distance.py`
+   parses the gold and Claude patches, applies them to a synthesized
+   base, and runs `ast.dump` diff via `difflib.SequenceMatcher` to
+   produce an integer node-edit count. `eval/scripts/cyclomatic_delta.py`
+   walks the touched `.py` files with `radon` to produce a McCabe sum
+   delta (patched − base). Both are stdlib-light and deterministic;
+   neither needs the sidecar.
+
+2. **Mamba-derived (online, sidecar).** Fan-in/out delta and novelty
+   drift come from `s2_core.score_change(file_path, before_src,
+   after_src)` — the same code path the runtime hook uses. The eval
+   harness reuses the warm sidecar (one process per worker) so the
+   ~3 s Mamba forward pass is amortized across all calls in a run.
+   `coherence_delta` and the 8-dimensional risk vector come straight
+   from the returned `ImpactReport`.
+
+3. **Hook telemetry (treatment only).** `hook_events.jsonl` (one line
+   per PreToolUse fire) is consumed alongside the structured audit
+   stream at `/tmp/rc-events/<date>/<session>.jsonl` to compute FPBR,
+   TPBR, BRR, and hook overhead p50/p95. Replay verification for TPBR
+   re-applies blocked content to a scratch clone and re-runs pytest;
+   that step is the only post-hoc pass that needs network and a clean
+   filesystem, so it runs after the main eval, not interleaved with it.
+
+The aggregator (`eval/aggregate.py`) joins per-task JSON across arms on
+`task_id`, computes paired differences `d_i = metric_i(treatment) −
+metric_i(control)`, runs `scipy.stats.wilcoxon` and a BCa bootstrap
+(10 000 resamples), and applies Holm-Bonferroni across the full 10-metric
+panel before printing the decision block defined in `EVAL_DESIGN.md` §7.
+
+### CI integration
+
+`/.github/workflows/eval.yml` (Track D) wires three jobs to the surface
+this subsystem exposes:
+
+- **`lint-and-test`** runs on every push (and on PRs targeting `main`).
+  Python 3.11 host, no Docker. Steps: `pip install`, `py_compile`,
+  `json.load` on `.claude/settings.json`, `pytest -q -m 'not live'`,
+  `shellcheck` on `scripts/*.sh` and `eval/run_task.sh`. 5-minute
+  timeout. This is the gate every change must clear before any eval
+  job runs.
+- **`eval-smoke`** runs on every push to `main` against the image
+  produced by `eval/Dockerfile`, `n=5` paired tasks (vanilla +
+  treatment), `--parallel 1`, 30-minute budget. Posts a sticky comment
+  on the commit SHA with the headline metrics and uploads
+  `eval/results/` as an artifact (30-day retention). n=5 is descriptive
+  only — power calc forbids ship/kill verdicts at this size.
+- **`eval-full`** is `workflow_dispatch` only, default `n_tasks=100`,
+  6-hour budget, gated by the `eval-full-approved` GitHub environment.
+  Required for any production ship/kill decision.
+
+### Repro
+
+To re-run any single eval result locally (assuming the venv is
+activated and `RC_LIVE=1`, `ANTHROPIC_API_KEY`, and `HF_HOME` are set):
+
+```bash
+# one (task, arm) at a time — control first per the protocol (§4.2)
+bash eval/run_task.sh django__django-11099 control
+bash eval/run_task.sh django__django-11099 treatment
+
+# inspect raw artifacts
+ls eval/results/django__django-11099/{control,treatment}/
+
+# regenerate the cross-arm report
+python3 eval/aggregate.py \
+    --results-dir eval/results \
+    --out eval/results/report --format both
+```
+
+To repro a full smoke from scratch:
+
+```bash
+pip install -r requirements.txt -r eval/requirements-eval.txt
+RC_LIVE=1 S2_FAIL_CLOSED=0 S2_TIMEOUT=30 \
+    python3 eval/run_suite.py --n 5 --arms vanilla,treatment --parallel 1
+python3 eval/aggregate.py --results-dir eval/results \
+    --out eval/results/report --format both
+```
+
+The Docker path (`docker build -f eval/Dockerfile -t reasoning-core-eval
+.`) produces the identical environment the CI workflow uses; see
+[`eval/README.md`](../eval/README.md) for the full operator runbook.

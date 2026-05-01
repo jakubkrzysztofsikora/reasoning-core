@@ -1,0 +1,351 @@
+# eval.yml -- live evaluation gate (Mamba sidecar + paired runs).
+#
+# Two jobs:
+#   eval-smoke -- runs on push to main when src/, eval/, or this file change;
+#                 also on workflow_dispatch when n_tasks <= 5. Default n_tasks
+#                 for push is 2 (per EM reality check on free 2-core / 7 GB
+#                 ubuntu-latest -- n=5 routinely overruns the 30-min budget).
+#                 Budget: 30 minutes.
+#
+#   eval-full  -- workflow_dispatch only, n_tasks > 5. Targets ubuntu-latest-large
+#                 if available; falls back to a 5-way matrix shard on
+#                 ubuntu-latest. Budget: 6 hours total (per shard for matrix).
+#
+# Triggers are deliberately *paths*-filtered on push so unrelated edits (docs,
+# README, board) don't burn 30 minutes of free runner per push. workflow_dispatch
+# is unguarded so any human can trigger a manual smoke or full run.
+#
+# Reality check (EM): free ubuntu-latest is 2 vCPU / 7 GB. Mamba-130m on CPU
+# adds ~3s per /score call; a single SWE-bench-style task at 15 tool calls is
+# ~10-12 min wall clock with the hook on. n=2 fits comfortably; n=5 routinely
+# overruns. For n>=5 prefer ubuntu-latest-large or matrix sharding.
+
+name: eval
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "eval/**"
+      - ".github/workflows/eval.yml"
+  workflow_dispatch:
+    inputs:
+      n_tasks:
+        description: "Number of paired tasks to run (eval-smoke handles n<=5, eval-full handles n>5)."
+        required: false
+        default: "5"
+        type: number
+      arms:
+        description: "Comma-separated arm list passed through to run_suite.py."
+        required: false
+        default: "vanilla,treatment"
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # One eval at a time per ref. Cancel in-progress on superseding push so we
+  # don't waste runner minutes on a stale commit.
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  S2_FAIL_CLOSED: "0"
+  S2_TIMEOUT: "60"
+  RC_LIVE: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  HF_HOME: ${{ github.workspace }}/.cache/huggingface
+  TRANSFORMERS_CACHE: ${{ github.workspace }}/.cache/huggingface/hub
+
+jobs:
+  # --------------------------------------------------------------------------
+  # eval-smoke: the auto-on-push smoke. n<=5. 30 min budget.
+  # --------------------------------------------------------------------------
+  eval-smoke:
+    name: eval-smoke (n<=5)
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' &&
+       fromJSON(github.event.inputs.n_tasks || '5') <= 5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip wheels
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py311-
+
+      - name: Cache Hugging Face Mamba checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          # Re-prefetch only when requirements.txt (=> torch / transformers
+          # pin) changes. Mamba-130m is ~270 MB and the cache cost is well
+          # below the egress budget.
+          key: mamba-130m-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            mamba-130m-
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      - name: Prefetch Mamba checkpoint
+        # Track C owns eval/scripts/prefetch_mamba.sh. Until it lands, this
+        # step warms the HF cache via a one-shot transformers download so a
+        # missing prefetch script does not stall the gate.
+        run: |
+          set -euo pipefail
+          if [[ -x eval/scripts/prefetch_mamba.sh ]]; then
+            bash eval/scripts/prefetch_mamba.sh
+          elif [[ -f eval/scripts/prefetch_mamba.sh ]]; then
+            bash eval/scripts/prefetch_mamba.sh
+          else
+            echo "eval/scripts/prefetch_mamba.sh not present yet (Track C); falling back to a transient transformers download."
+            python3 - <<'PY'
+          import os
+          from transformers import AutoTokenizer, AutoModelForCausalLM
+          ckpt = os.environ.get("S2_SSM_CHECKPOINT", "state-spaces/mamba-130m-hf")
+          AutoTokenizer.from_pretrained(ckpt)
+          AutoModelForCausalLM.from_pretrained(ckpt)
+          PY
+          fi
+
+      - name: Boot sidecar (background) and wait for /health
+        id: sidecar
+        run: |
+          set -euo pipefail
+          export BACKGROUND=1
+          export S2_LOG_FILE=/tmp/reasoning-core-sidecar.log
+          bash scripts/start-sidecar.sh
+          # start-sidecar.sh in BACKGROUND=1 already polls /health and exits 0
+          # only after model_loaded:true -- no extra wait_for_health needed.
+          echo "sidecar_log=$S2_LOG_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Run eval suite
+        id: run
+        env:
+          N_TASKS: ${{ github.event.inputs.n_tasks || '2' }}
+          ARMS: ${{ github.event.inputs.arms || 'vanilla,treatment' }}
+        run: |
+          set -euo pipefail
+          mkdir -p eval/runs
+          RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_dir=eval/runs/$RUN_ID" >> "$GITHUB_OUTPUT"
+          python3 eval/run_suite.py \
+            --n "$N_TASKS" \
+            --arms "$ARMS" \
+            --run-id "$RUN_ID"
+
+      - name: Post headline metrics to commit
+        if: success()
+        uses: actions/github-script@v7
+        env:
+          RUN_DIR: ${{ steps.run.outputs.run_dir }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const runDir = process.env.RUN_DIR;
+            const reportMd = path.join(runDir, 'report.md');
+            let body;
+            if (fs.existsSync(reportMd)) {
+              const lines = fs.readFileSync(reportMd, 'utf8').split('\n').slice(0, 30).join('\n');
+              body = `### eval-smoke results\n\n${lines}\n\n_Full artifact: \`${runDir}\`_`;
+            } else {
+              body = `### eval-smoke results\n\n_No report.md produced at \`${reportMd}\`._`;
+            }
+            if (context.payload.pull_request) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.payload.pull_request.number,
+                body,
+              });
+            } else {
+              await github.rest.repos.createCommitComment({
+                ...context.repo,
+                commit_sha: context.sha,
+                body,
+              });
+            }
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          set +e
+          echo "===== sidecar.log (tail 200) ====="
+          tail -n 200 /tmp/reasoning-core-sidecar.log || true
+          echo "===== last 50 lines of any task .json under eval/runs ====="
+          find eval/runs -maxdepth 5 -type f -name '*.json' -print -exec sh -c 'tail -n 50 "$1"; echo "---"' _ {} \; || true
+          echo "===== audit JSONL tail ====="
+          for f in /tmp/rc-events/*/*.jsonl /tmp/rc-monitor.log /tmp/rc-sidecar-revive.log; do
+            [[ -f "$f" ]] && { echo "--- $f ---"; tail -n 50 "$f"; }
+          done
+
+      - name: Upload run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-smoke-${{ steps.run.outputs.run_id || github.run_id }}
+          path: eval/runs/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # --------------------------------------------------------------------------
+  # eval-full: workflow_dispatch only, n_tasks > 5. 6h budget. Larger runner.
+  # --------------------------------------------------------------------------
+  #
+  # Runner choice (documented for the operator):
+  #   - Default: ubuntu-latest-large (4 vCPU / 16 GB) -- paid, but the only
+  #     way to fit n=100 inside 6 hours without sharding.
+  #   - Fallback: ubuntu-latest with strategy.matrix sharding (5 shards, each
+  #     runs n/5 tasks). The fallback is enabled by setting the input
+  #     `shard` to "true" -- documented in the job comments below. We do not
+  #     auto-detect runner availability; the operator picks.
+  eval-full:
+    name: eval-full (n>5, dispatch-only)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      fromJSON(github.event.inputs.n_tasks || '5') > 5
+    # ubuntu-latest-large requires the org/repo to have the larger-runner
+    # entitlement. If unavailable, change to `ubuntu-latest` and uncomment the
+    # `strategy` block below to shard 5-way.
+    runs-on: ubuntu-latest-large
+    timeout-minutes: 360
+
+    # ------------------------------------------------------------------
+    # OPTIONAL 5-way sharding fallback (uncomment when the larger runner
+    # is not entitled; comment out `runs-on: ubuntu-latest-large` above
+    # and set `runs-on: ubuntu-latest` here).
+    #
+    # strategy:
+    #   fail-fast: false
+    #   matrix:
+    #     shard: [0, 1, 2, 3, 4]
+    # env:
+    #   SHARD_INDEX: ${{ matrix.shard }}
+    #   SHARD_TOTAL: 5
+    # ------------------------------------------------------------------
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip wheels
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py311-
+
+      - name: Cache Hugging Face Mamba checkpoint
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          key: mamba-130m-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            mamba-130m-
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      - name: Prefetch Mamba checkpoint
+        run: |
+          set -euo pipefail
+          if [[ -f eval/scripts/prefetch_mamba.sh ]]; then
+            bash eval/scripts/prefetch_mamba.sh
+          else
+            python3 - <<'PY'
+          import os
+          from transformers import AutoTokenizer, AutoModelForCausalLM
+          ckpt = os.environ.get("S2_SSM_CHECKPOINT", "state-spaces/mamba-130m-hf")
+          AutoTokenizer.from_pretrained(ckpt)
+          AutoModelForCausalLM.from_pretrained(ckpt)
+          PY
+          fi
+
+      - name: Boot sidecar (background) and wait for /health
+        run: |
+          set -euo pipefail
+          export BACKGROUND=1
+          export S2_LOG_FILE=/tmp/reasoning-core-sidecar.log
+          bash scripts/start-sidecar.sh
+
+      - name: Run eval suite (full)
+        id: run
+        env:
+          N_TASKS: ${{ github.event.inputs.n_tasks }}
+          ARMS: ${{ github.event.inputs.arms || 'vanilla,treatment' }}
+        run: |
+          set -euo pipefail
+          mkdir -p eval/runs
+          RUN_ID="full-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "run_dir=eval/runs/$RUN_ID" >> "$GITHUB_OUTPUT"
+          # Sharding hook: if SHARD_TOTAL is set, run_suite.py is expected to
+          # consume SHARD_INDEX/SHARD_TOTAL and slice the task list. The flag
+          # is documented in eval/run_suite.py's --help.
+          python3 eval/run_suite.py \
+            --n "$N_TASKS" \
+            --arms "$ARMS" \
+            --run-id "$RUN_ID"
+
+      - name: Write report to step summary
+        if: always()
+        env:
+          RUN_DIR: ${{ steps.run.outputs.run_dir }}
+        run: |
+          set -euo pipefail
+          if [[ -f "$RUN_DIR/report.md" ]]; then
+            {
+              echo "## eval-full report"
+              echo
+              cat "$RUN_DIR/report.md"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## eval-full report" >> "$GITHUB_STEP_SUMMARY"
+            echo "_No report.md produced at \`$RUN_DIR\`._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Dump diagnostics on failure
+        if: failure()
+        run: |
+          set +e
+          echo "===== sidecar.log (tail 500) ====="
+          tail -n 500 /tmp/reasoning-core-sidecar.log || true
+          find eval/runs -maxdepth 5 -type f -name '*.json' -print -exec sh -c 'tail -n 50 "$1"; echo "---"' _ {} \; || true
+
+      - name: Upload full run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-full-${{ steps.run.outputs.run_id || github.run_id }}
+          path: eval/runs/
+          if-no-files-found: warn
+          retention-days: 90

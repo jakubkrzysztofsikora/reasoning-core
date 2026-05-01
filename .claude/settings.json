@@ -3,6 +3,16 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_plan_guard.py",
+            "timeout": 15000
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
@@ -18,6 +28,16 @@
           {
             "type": "command",
             "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_bash_guard.py",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/pre_task_guard.py",
             "timeout": 5000
           }
         ]

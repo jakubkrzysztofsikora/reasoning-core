@@ -23,7 +23,10 @@ import logging
 import math
 import os
 import sys
+import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
+from threading import Lock
 from typing import Any, Optional
 
 from .grammars import (
@@ -78,9 +81,10 @@ class ImpactReport:
     regression_detected: bool
     human_summary: str
     risk_labels: list[str] = field(default_factory=lambda: list(RISK_LABELS))
+    cumulative_drift: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "architectural_impact_score": float(self.architectural_impact_score),
             "coherence_delta": float(self.coherence_delta),
             "risk_vector": [float(x) for x in self.risk_vector],
@@ -88,6 +92,79 @@ class ImpactReport:
             "regression_detected": bool(self.regression_detected),
             "human_summary": str(self.human_summary),
         }
+        if self.cumulative_drift is not None:
+            out["cumulative_drift"] = float(self.cumulative_drift)
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Per-session baseline registry + /metrics ring buffer
+# ---------------------------------------------------------------------------
+
+# Session id -> mean-pooled torch tensor (CPU). We keep the type loose to avoid
+# importing torch at module load time.
+_BASELINES: dict[str, Any] = {}
+_BASELINES_LOCK = Lock()
+
+# Ring buffer of recent /score latencies in milliseconds. Bounded at 1000.
+_METRICS_LATENCIES: deque = deque(maxlen=1000)
+_METRICS_ERRORS: int = 0
+_METRICS_LOCK = Lock()
+_BOOT_TS: float = time.monotonic()
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    if not sorted_values:
+        return 0.0
+    if pct <= 0:
+        return float(sorted_values[0])
+    if pct >= 100:
+        return float(sorted_values[-1])
+    k = (len(sorted_values) - 1) * (pct / 100.0)
+    lo = int(math.floor(k))
+    hi = int(math.ceil(k))
+    if lo == hi:
+        return float(sorted_values[lo])
+    frac = k - lo
+    return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
+
+
+def _record_latency(latency_ms: float, error: bool = False) -> None:
+    with _METRICS_LOCK:
+        _METRICS_LATENCIES.append(float(latency_ms))
+        if error:
+            global _METRICS_ERRORS
+            _METRICS_ERRORS += 1
+
+
+def _metrics_snapshot() -> dict[str, Any]:
+    with _METRICS_LOCK:
+        latencies = sorted(_METRICS_LATENCIES)
+        errors = _METRICS_ERRORS
+    return {
+        "score_calls": len(latencies),
+        "p50_ms": _percentile(latencies, 50),
+        "p95_ms": _percentile(latencies, 95),
+        "p99_ms": _percentile(latencies, 99),
+        "errors": errors,
+        "uptime_s": float(time.monotonic() - _BOOT_TS),
+    }
+
+
+def _set_session_baseline(session_id: str, vec: Any) -> None:
+    with _BASELINES_LOCK:
+        _BASELINES[session_id] = vec
+
+
+def _get_session_baseline(session_id: str) -> Any:
+    with _BASELINES_LOCK:
+        return _BASELINES.get(session_id)
+
+
+def _clear_session_baselines() -> None:
+    """Test helper — wipe registry between tests."""
+    with _BASELINES_LOCK:
+        _BASELINES.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -607,8 +684,21 @@ def _summarize(
     )
 
 
-def score_change(path: str, before_src: str, after_src: str) -> ImpactReport:
-    """Score a proposed source edit. Hard contract -- see board RC-004."""
+def score_change(
+    path: str,
+    before_src: str,
+    after_src: str,
+    *,
+    session_id: Optional[str] = None,
+) -> ImpactReport:
+    """Score a proposed source edit. Hard contract -- see board RC-004.
+
+    When ``session_id`` is provided AND a baseline has been registered for that
+    session via /baseline, the report includes ``cumulative_drift`` =
+    ``||embed(after_src) - baseline||_2``. This drift never affects
+    ``regression_detected`` (the sidecar exposes the number; consumers decide
+    whether to act on it). The plumbing is opt-in to keep test determinism.
+    """
     # Grammar selection (raises UnsupportedLanguageError to caller).
     lang_id, _ = select_grammar(path)
 
@@ -662,12 +752,22 @@ def score_change(path: str, before_src: str, after_src: str) -> ImpactReport:
     public_lang = PUBLIC_LANGUAGE.get(lang_id, lang_id)
     summary = _summarize(ais, coherence_delta, risk_vector, regression, public_lang)
 
+    cumulative_drift: Optional[float] = None
+    if session_id:
+        baseline_vec = _get_session_baseline(session_id)
+        if baseline_vec is not None:
+            try:
+                cumulative_drift = float(_l2_distance(emb_after, baseline_vec))
+            except Exception:  # noqa: BLE001
+                cumulative_drift = None
+
     return ImpactReport(
         architectural_impact_score=float(ais),
         coherence_delta=float(coherence_delta),
         risk_vector=risk_vector,
         regression_detected=bool(regression),
         human_summary=summary,
+        cumulative_drift=cumulative_drift,
     )
 
 
@@ -715,6 +815,76 @@ def create_app():
 
     @app.post("/score")
     async def score(request: Request):
+        t0 = time.monotonic()
+        try:
+            raw = await request.body()
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception as exc:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=400,
+                content={"error": "bad_request", "detail": f"invalid JSON: {exc}"},
+            )
+        if not isinstance(payload, dict):
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=400,
+                content={"error": "bad_request", "detail": "expected JSON object"},
+            )
+
+        path = payload.get("path")
+        before_src = payload.get("before_src", "")
+        after_src = payload.get("after_src", "")
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str):
+            session_id = None
+        if not isinstance(path, str) or not path:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=400,
+                content={"error": "bad_request", "detail": "missing or invalid 'path'"},
+            )
+        if not isinstance(before_src, str) or not isinstance(after_src, str):
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "bad_request",
+                    "detail": "'before_src' and 'after_src' must be strings",
+                },
+            )
+
+        try:
+            report = score_change(path, before_src, after_src, session_id=session_id)
+        except UnsupportedLanguageError as exc:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=False)
+            return JSONResponse(
+                status_code=415,
+                content={"error": "unsupported_language", "extension": exc.extension},
+            )
+        except BackboneUnavailableError as exc:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=503,
+                content={"error": "backbone_unavailable", "detail": str(exc)},
+            )
+        except Exception as exc:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            logger.exception("scoring failed")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "internal_error", "detail": str(exc)},
+            )
+
+        _record_latency((time.monotonic() - t0) * 1000.0, error=False)
+        return JSONResponse(status_code=200, content=report.to_dict())
+
+    @app.get("/metrics")
+    async def metrics():
+        return JSONResponse(status_code=200, content=_metrics_snapshot())
+
+    @app.post("/baseline")
+    async def baseline(request: Request):
         try:
             raw = await request.body()
             payload = json.loads(raw.decode("utf-8")) if raw else {}
@@ -728,44 +898,66 @@ def create_app():
                 status_code=400,
                 content={"error": "bad_request", "detail": "expected JSON object"},
             )
-
-        path = payload.get("path")
-        before_src = payload.get("before_src", "")
-        after_src = payload.get("after_src", "")
-        if not isinstance(path, str) or not path:
+        session_id = payload.get("session_id")
+        files = payload.get("files")
+        if not isinstance(session_id, str) or not session_id:
             return JSONResponse(
                 status_code=400,
-                content={"error": "bad_request", "detail": "missing or invalid 'path'"},
+                content={"error": "bad_request", "detail": "missing or invalid 'session_id'"},
             )
-        if not isinstance(before_src, str) or not isinstance(after_src, str):
+        if not isinstance(files, list) or not files:
             return JSONResponse(
                 status_code=400,
-                content={
-                    "error": "bad_request",
-                    "detail": "'before_src' and 'after_src' must be strings",
-                },
+                content={"error": "bad_request", "detail": "'files' must be a non-empty list"},
             )
-
         try:
-            report = score_change(path, before_src, after_src)
-        except UnsupportedLanguageError as exc:
-            return JSONResponse(
-                status_code=415,
-                content={"error": "unsupported_language", "extension": exc.extension},
-            )
+            import torch
+
+            vecs = []
+            for f in files:
+                if not isinstance(f, dict):
+                    continue
+                src = f.get("src")
+                fpath = f.get("path") or "/tmp/baseline.txt"
+                if not isinstance(src, str):
+                    continue
+                # Parse for AST tokens when grammar known; else fall back to raw.
+                try:
+                    pr = parse_source(fpath, src)
+                    tokens = ast_to_tokens(pr.tree, src)
+                except UnsupportedLanguageError:
+                    tokens = src
+                except Exception:  # noqa: BLE001
+                    tokens = src
+                vec = embed(tokens)
+                vecs.append(vec)
+            if not vecs:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "bad_request", "detail": "no embeddable files"},
+                )
+            mean = torch.stack(vecs).mean(dim=0)
         except BackboneUnavailableError as exc:
             return JSONResponse(
                 status_code=503,
                 content={"error": "backbone_unavailable", "detail": str(exc)},
             )
-        except Exception as exc:
-            logger.exception("scoring failed")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("baseline failed")
             return JSONResponse(
                 status_code=500,
                 content={"error": "internal_error", "detail": str(exc)},
             )
-
-        return JSONResponse(status_code=200, content=report.to_dict())
+        _set_session_baseline(session_id, mean)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ok",
+                "session_id": session_id,
+                "n_files": len(vecs),
+                "hidden_size": int(mean.shape[0]) if hasattr(mean, "shape") else 0,
+            },
+        )
 
     return app
 

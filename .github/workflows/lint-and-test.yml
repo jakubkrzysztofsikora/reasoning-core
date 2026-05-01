@@ -1,0 +1,121 @@
+# lint-and-test.yml -- always-on offline gate.
+#
+# Runs on every push to main, every pull_request, and on workflow_dispatch.
+# Hard contracts (RC-212):
+#   - Python 3.11
+#   - pip cache keyed on requirements.txt hash
+#   - py_compile every tracked .py file
+#   - pytest -q -m "not live" (no Mamba, no sidecar, no network)
+#   - .claude/settings.json must be valid JSON
+#   - bash -n on shell scripts under scripts/ and eval/ (eval/*.sh may not exist
+#     yet; we guard with compgen -G to keep the gate green during track-build-up)
+#
+# Budget: 10 minutes wall clock. Fail fast, exit non-zero with a clear annotation.
+
+name: lint-and-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-and-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: lint-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Match HARDENING.md runtime recommendation. Offline gate so the sidecar
+      # is never reachable; the env is set so any code that reads it for a
+      # branch decision behaves the same as it would in CI eval jobs.
+      S2_FAIL_CLOSED: "1"
+      RC_LIVE: "0"
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip wheels
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py311-
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      - name: py_compile all tracked .py files
+        run: |
+          set -euo pipefail
+          # `git ls-files '*.py'` is reproducible across runners and excludes
+          # the .venv/ tree that an `find` would otherwise pick up.
+          mapfile -t PY_FILES < <(git ls-files '*.py')
+          if [[ ${#PY_FILES[@]} -eq 0 ]]; then
+            echo "::error::No .py files found under git tracking; refusing to declare success."
+            exit 1
+          fi
+          if ! python3 -m py_compile "${PY_FILES[@]}"; then
+            echo "::error::py_compile failed -- syntax error in tracked Python source."
+            exit 1
+          fi
+
+      - name: pytest (offline gate, exclude live)
+        run: |
+          set -euo pipefail
+          if ! python3 -m pytest -q -m "not live" --maxfail=10 tests/; then
+            echo "::error::pytest offline gate failed."
+            exit 1
+          fi
+
+      - name: Validate .claude/settings.json
+        run: |
+          set -euo pipefail
+          if ! python3 -c "import json; json.load(open('.claude/settings.json'))"; then
+            echo "::error file=.claude/settings.json::settings.json is not valid JSON."
+            exit 1
+          fi
+
+      - name: Bash syntax check on shell scripts
+        run: |
+          set -euo pipefail
+          # scripts/*.sh always exists; eval/*.sh is being authored by Track C
+          # and may not exist yet -- guard with compgen so this step is stable
+          # across the build-up.
+          shopt -s nullglob
+          declare -a TARGETS=()
+          if compgen -G "scripts/*.sh" > /dev/null; then
+            TARGETS+=(scripts/*.sh)
+          fi
+          if compgen -G "eval/*.sh" > /dev/null; then
+            TARGETS+=(eval/*.sh)
+          fi
+          if [[ ${#TARGETS[@]} -eq 0 ]]; then
+            echo "No shell scripts found to syntax-check."
+            exit 0
+          fi
+          echo "Syntax-checking: ${TARGETS[*]}"
+          for f in "${TARGETS[@]}"; do
+            if ! bash -n "$f"; then
+              echo "::error file=$f::bash -n reported a syntax error."
+              exit 1
+            fi
+          done

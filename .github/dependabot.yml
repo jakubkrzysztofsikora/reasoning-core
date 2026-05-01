@@ -1,0 +1,76 @@
+# Dependabot configuration -- weekly cadence, grouped for sane review load.
+#
+# Rationale (per RC-213/214 hardening notes):
+#   - tree-sitter and the per-language grammars (tree-sitter-python, ...-javascript,
+#     ...-typescript, ...-c-sharp, ...-sql, ...-markdown, ...-json, ...-yaml)
+#     all share an ABI version. Bumping one without the others wedges the
+#     grammar loader in src/grammars.py. Grouped into ONE PR so the reviewer
+#     sees the whole ABI bump at once.
+#   - torch / transformers / accelerate / safetensors / sentencepiece / einops
+#     are heavy. A torch minor bump can change CPU determinism and force a
+#     re-run of the eval calibration check (EVAL_DESIGN.md Section 6.4). They
+#     get their own group with a "needs-manual-review" label so a human gates
+#     them.
+#   - Everything else (FastAPI, uvicorn, pydantic, httpx, mcp, pytest family)
+#     ships in a default per-package PR -- low-risk, easy to revert.
+#
+# Auto-merge is intentionally NOT enabled. Every PR requires human review.
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      tree-sitter:
+        applies-to: version-updates
+        patterns:
+          - "tree-sitter"
+          - "tree-sitter-*"
+        update-types:
+          - "minor"
+          - "patch"
+          - "major"
+      ml-stack:
+        applies-to: version-updates
+        patterns:
+          - "torch"
+          - "transformers"
+          - "accelerate"
+          - "safetensors"
+          - "sentencepiece"
+          - "einops"
+        update-types:
+          - "minor"
+          - "patch"
+          - "major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      actions-core:
+        applies-to: version-updates
+        patterns:
+          - "actions/*"

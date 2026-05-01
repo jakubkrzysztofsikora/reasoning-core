@@ -24,10 +24,18 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Hooks dir on sys.path for shared audit_log import.
+_HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _HOOKS_DIR not in sys.path:
+    sys.path.insert(0, _HOOKS_DIR)
+
+import audit_log  # type: ignore  # noqa: E402
 
 SIDECAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDECAR_URL}/score"
@@ -129,9 +137,15 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
     returns a degraded dict matching the bridge contract. On any other non-200
     raises SidecarUnavailable so the caller applies fail-open / fail-closed.
     """
-    body = json.dumps(
-        {"path": file_path, "before_src": before_src, "after_src": after_src}
-    ).encode("utf-8")
+    sid = os.environ.get("CLAUDE_SESSION_ID")
+    payload: Dict[str, Any] = {
+        "path": file_path,
+        "before_src": before_src,
+        "after_src": after_src,
+    }
+    if sid:
+        payload["session_id"] = sid
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         SCORE_ENDPOINT,
         data=body,
@@ -217,10 +231,68 @@ def _exit(code: int, stderr_msg: str = "") -> None:
     sys.exit(code)
 
 
+def _emit_audit(
+    *,
+    tool_name: str,
+    decision: str,
+    file_path: Optional[str],
+    started: float,
+    before_src: str = "",
+    after_src: str = "",
+    report: Optional[Dict[str, Any]] = None,
+    reason: str = "",
+    retry_after_block: bool = False,
+) -> None:
+    """Best-effort audit emit. Never raises."""
+    try:
+        latency_ms = int((time.time() - started) * 1000)
+        ais = None
+        coh = None
+        regression = None
+        risk_vector: List[float] = []
+        cumulative_drift = None
+        language = ""
+        human_summary = ""
+        if isinstance(report, dict):
+            ais = report.get("architectural_impact_score")
+            coh = report.get("coherence_delta")
+            regression = report.get("regression_detected")
+            risk_vector = report.get("risk_vector") or []
+            cumulative_drift = report.get("cumulative_drift")
+            human_summary = report.get("human_summary") or ""
+        ext = Path(file_path or "").suffix.lstrip(".") or ""
+        audit_log.append_event(audit_log.new_event(
+            tool_name=tool_name,
+            decision=decision,
+            file_path=file_path,
+            language=ext,
+            ais=ais,
+            coherence_delta=coh,
+            regression_detected=regression,
+            risk_vector=list(risk_vector) if isinstance(risk_vector, (list, tuple)) else [],
+            cumulative_drift=cumulative_drift,
+            latency_ms=latency_ms,
+            before_bytes=len((before_src or "").encode("utf-8", errors="replace")),
+            after_bytes=len((after_src or "").encode("utf-8", errors="replace")),
+            retry_after_block=retry_after_block,
+            reason=reason or human_summary,
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> None:
+    started = time.time()
     payload = _read_payload()
     if payload is None:
         # Malformed stdin — never block the user on a bad payload.
+        _emit_audit(
+            tool_name="Edit",
+            decision="allowed",
+            file_path=None,
+            started=started,
+            reason="malformed_payload",
+        )
         _exit(0)
 
     tool_name = payload.get("tool_name")
@@ -243,16 +315,30 @@ def main() -> None:
         "/.claude/settings.local.json",
         "/src/hooks/pre_edit_guard.py",
         "/src/hooks/pre_bash_guard.py",
+        "/src/hooks/post_bash_revive.py",
+        "/src/hooks/pre_plan_guard.py",
+        "/src/hooks/pre_task_guard.py",
+        "/src/hooks/audit_log.py",
         "/src/s2_core.py",
         "/src/grammars.py",
         "/src/ssm_backbone.py",
         "/src/mcp_reasoner.py",
         "/scripts/start-sidecar.sh",
     )
+    is_retry = audit_log.is_retry_after_block(file_path)
     if (
         any(g in file_path for g in GUARDED_PATHS)
         and os.environ.get("RC_ALLOW_GUARD_EDIT") != "1"
     ):
+        audit_log.record_block(file_path)
+        _emit_audit(
+            tool_name=tool_name,
+            decision="blocked",
+            file_path=file_path,
+            started=started,
+            reason="guard_file_locked",
+            retry_after_block=is_retry,
+        )
         _exit(
             2,
             "[hybrid-reasoner] BLOCKED: guard-file edits denied.\n"
@@ -270,11 +356,32 @@ def main() -> None:
             report = _post_score(file_path, before_src, after_src)
         except SidecarUnavailable as exc:
             if _fail_closed():
+                _emit_audit(
+                    tool_name=tool_name,
+                    decision="blocked",
+                    file_path=file_path,
+                    started=started,
+                    before_src=before_src,
+                    after_src=after_src,
+                    reason=f"sidecar_unavailable_fail_closed:{exc}",
+                    retry_after_block=is_retry,
+                )
+                audit_log.record_block(file_path)
                 _exit(
                     2,
                     f"[hybrid-reasoner] BLOCKED: sidecar unavailable ({exc}); "
                     "S2_FAIL_CLOSED=1 in effect.",
                 )
+            _emit_audit(
+                tool_name=tool_name,
+                decision="fail-open",
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                reason=f"sidecar_unavailable:{exc}",
+                retry_after_block=is_retry,
+            )
             _exit(
                 0,
                 f"[hybrid-reasoner] sidecar unavailable ({exc}); fail-open.",
@@ -283,6 +390,17 @@ def main() -> None:
 
         if report.get("degraded") and report.get("reason") == "unsupported_language":
             ext = report.get("extension", Path(file_path).suffix)
+            _emit_audit(
+                tool_name=tool_name,
+                decision="unsupported",
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=f"unsupported_language:{ext}",
+                retry_after_block=is_retry,
+            )
             _exit(
                 0,
                 f"[hybrid-reasoner] skipped: unsupported_language ({ext}).",
@@ -290,10 +408,33 @@ def main() -> None:
             return  # pragma: no cover
 
         if report.get("regression_detected") is True:
+            audit_log.record_block(file_path)
+            _emit_audit(
+                tool_name=tool_name,
+                decision="blocked",
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason="regression_detected",
+                retry_after_block=is_retry,
+            )
             _exit(2, _format_block(file_path, report))
             return  # pragma: no cover
 
     # All edits cleared.
+    _emit_audit(
+        tool_name=tool_name,
+        decision="allowed",
+        file_path=file_path,
+        started=started,
+        before_src=pairs[-1][0] if pairs else "",
+        after_src=pairs[-1][1] if pairs else "",
+        report=report if 'report' in locals() else None,
+        reason="ok",
+        retry_after_block=is_retry,
+    )
     _exit(0)
 
 

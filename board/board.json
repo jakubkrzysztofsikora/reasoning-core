@@ -524,8 +524,8 @@
     {
       "id": "RC-200",
       "title": "Plan-time guard: pre_plan_guard.py heuristic + SSM novelty scoring",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-a",
       "role": "fullstack",
       "deliverable": "PHASE2-1",
       "dependencies": [
@@ -554,8 +554,8 @@
     {
       "id": "RC-201",
       "title": "Wire pre_plan_guard.py into .claude/settings.json with path-filtered Write matcher",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-a",
       "role": "fullstack",
       "deliverable": "PHASE2-1",
       "dependencies": [
@@ -578,8 +578,8 @@
     {
       "id": "RC-202",
       "title": "Subagent inheritance audit + Task PreToolUse guard injection",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-a",
       "role": "fullstack",
       "deliverable": "PHASE2-2",
       "dependencies": [
@@ -606,8 +606,8 @@
     {
       "id": "RC-203",
       "title": "Persistent JSONL audit trail in sidecar (per-event records, redaction, ring buffer)",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-a",
       "role": "fullstack",
       "deliverable": "PHASE2-3",
       "dependencies": [
@@ -636,8 +636,8 @@
     {
       "id": "RC-204",
       "title": "Cumulative repo-baseline drift: session-level embedding + new regression rule",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-a",
       "role": "fullstack",
       "deliverable": "PHASE2-4",
       "dependencies": [
@@ -665,8 +665,8 @@
     {
       "id": "RC-205",
       "title": "Eval toolkit: dataset subsample script + 100 stratified SWE-bench Verified Python tasks",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-b",
       "role": "data-eng",
       "deliverable": "PHASE2-5",
       "dependencies": [
@@ -693,8 +693,8 @@
     {
       "id": "RC-206",
       "title": "Eval toolkit: per-task harness run_task.sh",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-b",
       "role": "data-eng",
       "deliverable": "PHASE2-5",
       "dependencies": [
@@ -726,8 +726,8 @@
     {
       "id": "RC-207",
       "title": "Eval toolkit: suite runner run_suite.py with paired task scheduling",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-b",
       "role": "data-eng",
       "deliverable": "PHASE2-5",
       "dependencies": [
@@ -753,8 +753,8 @@
     {
       "id": "RC-208",
       "title": "Eval toolkit: aggregate.py with paired stats + 10-metric report",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-b",
       "role": "data-eng",
       "deliverable": "PHASE2-5",
       "dependencies": [
@@ -781,8 +781,8 @@
     {
       "id": "RC-209",
       "title": "Eval toolkit: pinned env (Dockerfile + requirements-eval.txt) + Mamba checkpoint bake",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-c",
       "role": "data-eng",
       "deliverable": "PHASE2-5",
       "dependencies": [
@@ -811,8 +811,8 @@
     {
       "id": "RC-210",
       "title": "Eval toolkit: AST/cyclomatic helper scripts (ast_edit_distance, cyclomatic_delta)",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-b",
       "role": "data-eng",
       "deliverable": "PHASE2-5",
       "dependencies": [
@@ -836,8 +836,8 @@
     {
       "id": "RC-211",
       "title": "Eval toolkit: README runbook with local + CI invocation matrix",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-c",
       "role": "data-eng",
       "deliverable": "PHASE2-5",
       "dependencies": [
@@ -866,8 +866,8 @@
     {
       "id": "RC-212",
       "title": "GitHub Actions workflow: lint-and-test job (offline pytest gate)",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-d",
       "role": "data-eng",
       "deliverable": "PHASE2-6",
       "dependencies": [
@@ -895,8 +895,8 @@
     {
       "id": "RC-213",
       "title": "GitHub Actions workflow: eval-smoke job (n=5 paired runs, 30-min budget)",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-d",
       "role": "data-eng",
       "deliverable": "PHASE2-6",
       "dependencies": [
@@ -924,8 +924,8 @@
     {
       "id": "RC-214",
       "title": "GitHub Actions workflow: eval-full job (workflow_dispatch, n=100, 6-hr budget)",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-d",
       "role": "data-eng",
       "deliverable": "PHASE2-6",
       "dependencies": [
@@ -950,8 +950,8 @@
     {
       "id": "RC-215",
       "title": "Update requirements.txt + ARCHITECTURE.md for phase-2 surface",
-      "stage": "todo",
-      "owner": null,
+      "stage": "codereview",
+      "owner": "engineer-c",
       "role": "fullstack",
       "deliverable": "PHASE2-3",
       "dependencies": [
