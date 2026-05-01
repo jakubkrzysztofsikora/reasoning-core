@@ -114,7 +114,13 @@ def stub_sidecar() -> Iterator[_StubSidecar]:
 
 def _run_hook(payload: Dict[str, Any], *, env: Optional[Dict[str, str]] = None,
               timeout: float = 15.0) -> subprocess.CompletedProcess:
+    # Scrub guard-relevant env vars by default so CI (which exports
+    # S2_FAIL_CLOSED=1 / RC_ALLOW_GUARD_EDIT etc. at job level) doesn't
+    # contaminate behavior under test. Tests opt-in to those vars
+    # explicitly via the `env` arg.
     real_env = os.environ.copy()
+    for var in ("S2_FAIL_CLOSED", "RC_ALLOW_GUARD_EDIT", "S2_URL", "S2_TIMEOUT"):
+        real_env.pop(var, None)
     if env:
         real_env.update(env)
     return subprocess.run(
@@ -260,6 +266,8 @@ def test_sidecar_offline_fail_closed_blocks(tmp_path):
 def test_malformed_stdin_does_not_block():
     """Garbage stdin must not break the developer flow -- hook exits 0."""
     real_env = os.environ.copy()
+    for var in ("S2_FAIL_CLOSED", "RC_ALLOW_GUARD_EDIT"):
+        real_env.pop(var, None)
     real_env["S2_URL"] = f"http://127.0.0.1:{_free_port()}"
     real_env["S2_TIMEOUT"] = "2"
     result = subprocess.run(
