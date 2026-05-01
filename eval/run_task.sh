@@ -304,7 +304,7 @@ out = {
     "tokens_in": int(usage.get("input_tokens", 0)),
     "tokens_out": int(usage.get("output_tokens", 0)),
     "wall_clock_s": $WALL_CLOCK,
-    "timeout": ($([[ "$TIMED_OUT" == "true" ]] && echo true || echo false)),
+    "timeout": $([[ "$TIMED_OUT" == "true" ]] && echo True || echo False),
     "claude_exit_code": $EXIT_CODE,
 }
 with open("$OUT_DIR/$TASK_ID.$ARM.json", "w", encoding="utf-8") as fh:

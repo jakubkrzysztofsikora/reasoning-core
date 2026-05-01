@@ -1,0 +1,15 @@
+{
+  "task_id": "django__django-13710",
+  "arm": "vanilla",
+  "repo": "django/django",
+  "base_commit": "1bd6a7a0acc11e249fca11c017505ad39f15ebf6",
+  "resolved": false,
+  "regression_introduced": false,
+  "newly_failing_tests": [],
+  "pre_existing_failures": [],
+  "tokens_in": 1000,
+  "tokens_out": 500,
+  "wall_clock_s": 34,
+  "timeout": false,
+  "claude_exit_code": 0
+}

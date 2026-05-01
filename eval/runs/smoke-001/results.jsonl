@@ -1,0 +1,4 @@
+{"task_id": "psf__requests-2317", "arm": "treatment", "ok": true, "returncode": 0, "stdout_tail": "[run_task.sh] wrote eval/runs/smoke-001/psf__requests-2317.treatment.json\n", "stderr_tail": "", "duration_s": 2.633401870727539}
+{"task_id": "psf__requests-2317", "arm": "vanilla", "ok": true, "returncode": 0, "stdout_tail": "[run_task.sh] wrote eval/runs/smoke-001/psf__requests-2317.vanilla.json\n", "stderr_tail": "", "duration_s": 2.575491189956665}
+{"task_id": "django__django-13710", "arm": "vanilla", "ok": true, "returncode": 0, "stdout_tail": "[run_task.sh] wrote eval/runs/smoke-001/django__django-13710.vanilla.json\n", "stderr_tail": "", "duration_s": 34.534284830093384}
+{"task_id": "django__django-13710", "arm": "treatment", "ok": true, "returncode": 0, "stdout_tail": "[run_task.sh] wrote eval/runs/smoke-001/django__django-13710.treatment.json\n", "stderr_tail": "", "duration_s": 33.712767124176025}

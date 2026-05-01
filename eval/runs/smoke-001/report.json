@@ -1,0 +1,134 @@
+{
+  "header": {
+    "run_id": "smoke-001",
+    "generated_at": "2026-05-01T00:36:30.048463+00:00",
+    "n_pairs": 2
+  },
+  "metrics": {
+    "resolved_rate": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 0.0,
+      "mean_vanilla": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "regression_rate": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 0.0,
+      "mean_vanilla": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "ast_edit_distance": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 0.0,
+      "mean_vanilla": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "cyclomatic_delta": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 0.0,
+      "mean_vanilla": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "fan_in_delta": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 0.0,
+      "mean_vanilla": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "fan_out_delta": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 0.0,
+      "mean_vanilla": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "wall_clock_s": {
+      "n": 2,
+      "mean_delta": -0.5,
+      "mean_treatment": 17.5,
+      "mean_vanilla": 18.0,
+      "ci_lo": -1.0,
+      "ci_hi": -0.5,
+      "p_wilcoxon": 1.0,
+      "p_holm": 1.0
+    },
+    "tokens_in": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 1000.0,
+      "mean_vanilla": 1000.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "tokens_out": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 500.0,
+      "mean_vanilla": 500.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    },
+    "novelty_drift": {
+      "n": 2,
+      "mean_delta": 0.0,
+      "mean_treatment": 0.0,
+      "mean_vanilla": 0.0,
+      "ci_lo": 0.0,
+      "ci_hi": 0.0,
+      "p_wilcoxon": NaN,
+      "p_holm": NaN
+    }
+  },
+  "decision": {
+    "n_pairs": 2,
+    "criteria": {
+      "regression_rate_drop_geq_0.15_holm_p_lt_0.05": {
+        "rr_delta": -0.0,
+        "p_holm": NaN,
+        "pass": false
+      },
+      "resolved_rate_no_worse_than_-5pp": {
+        "resr_delta": 0.0,
+        "pass": true
+      },
+      "latency_ratio_leq_1.5": {
+        "latency_ratio": 0.9722222222222222,
+        "pass": true
+      }
+    },
+    "verdict": "inconclusive"
+  },
+  "ops": {
+    "tasks_seen": 2,
+    "complete_pairs": 2,
+    "audit_events": 311,
+    "audit_blocks": 0
+  }
+}

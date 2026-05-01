@@ -1,0 +1,15 @@
+{
+  "task_id": "psf__requests-2317",
+  "arm": "vanilla",
+  "repo": "psf/requests",
+  "base_commit": "091991be0da19de9108dbe5e3752917fea3d7fdc",
+  "resolved": false,
+  "regression_introduced": false,
+  "newly_failing_tests": [],
+  "pre_existing_failures": [],
+  "tokens_in": 1000,
+  "tokens_out": 500,
+  "wall_clock_s": 2,
+  "timeout": false,
+  "claude_exit_code": 0
+}
