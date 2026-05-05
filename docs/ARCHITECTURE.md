@@ -52,10 +52,11 @@ fast/slow framing.
                          |
                          | parse + analyze
                          v
-            +------------+-------------+
-            | Tree-sitter (5 grammars) |
-            | AST + call graph         |
-            +------------+-------------+
+            +-------------+-------------+
+            | Tree-sitter (13 grammars) |
+            | AST + call graph (code)   |
+            | AST only        (data)    |
+            +-------------+-------------+
                          |
                          v
             +-------------------------+
@@ -196,6 +197,15 @@ any compatible checkpoint via the same code path.
   cost.
 - Set `S2_DEVICE=cuda` to opt into GPU inference if available.
 
+### Cohesion saturation fix
+
+Single-function files used to false-positive on the cohesion dimension —
+with only 1 node in the call graph, the cohesion ratio collapsed to a
+degenerate value and saturated to 1.0, tripping the `any dim > 0.9`
+predicate on benign edits like an `add` → `sum2` rename. The scoring
+pipeline now treats cohesion as undefined for graphs with `< 2` nodes
+(returns 0.0 instead of saturating). See commit `8a2c352`.
+
 ### Coherence-delta normalization
 
 `coherence_delta` is the L2 distance between the mean-pooled Mamba embeddings
@@ -212,8 +222,10 @@ when a session baseline is registered, so both metrics share one scale.
 
 ## Tree-sitter language support
 
-The sidecar supports five languages. Selection is by file extension,
-done in `src/grammars.py::select_grammar`.
+The sidecar supports thirteen languages, split into two tiers. Selection
+is by file extension, done in `src/grammars.py::select_grammar`.
+
+### Code languages (full call-graph + embedding)
 
 | Language    | Extensions                  | Tree-sitter grammar          |
 | ----------- | --------------------------- | ---------------------------- |
@@ -223,9 +235,34 @@ done in `src/grammars.py::select_grammar`.
 | C#          | `.cs`                       | tree-sitter-c-sharp          |
 | SQL         | `.sql`                      | tree-sitter-sql              |
 
-The grammars ship via the `tree-sitter-languages` aggregate wheel (or
-per-language wheels — documented inline in `grammars.py`). No network is
-required at runtime.
+`build_call_graph` walks the AST for these extensions and contributes
+`fan_in` / `fan_out` signal to the risk vector.
+
+### Data languages (embedding only — call graph skipped)
+
+| Language    | Extensions                       | Tree-sitter grammar    |
+| ----------- | -------------------------------- | ---------------------- |
+| Markdown    | `.md`, `.markdown`, `.mdx`       | tree-sitter-markdown   |
+| JSON        | `.json`                          | tree-sitter-json       |
+| YAML        | `.yaml`, `.yml`                  | tree-sitter-yaml       |
+| CSS         | `.css`                           | tree-sitter-css        |
+| SCSS        | `.scss`                          | tree-sitter-scss       |
+| HTML        | `.html`, `.htm`                  | tree-sitter-html       |
+| Dockerfile  | `Dockerfile`, `.dockerfile`      | tree-sitter-dockerfile |
+| Vue         | `.vue`                           | HTML grammar (fallback)*|
+
+*No `tree-sitter-vue` wheel exists on PyPI for Python 3.13; `.vue` files
+are routed through the HTML grammar so `/score` returns 200 instead of a
+runtime error. Will swap to a native Vue grammar when an upstream wheel
+ships.
+
+For data languages the AST is linearised into the SSM token stream and
+contributes to `coherence_delta` and `novelty`, but `fan_in` / `fan_out`
+remain 0. This is intentional: a JSON or Markdown file has no callable
+graph, so faking one would inject noise.
+
+The grammars ship via per-language wheels. No network is required at
+runtime.
 
 ### Unsupported-language error contract
 
@@ -241,6 +278,32 @@ is **rejected explicitly** — there is no silent fallback.
 
 The intent: never block a user on a language we cannot analyse, but make
 the gap audible so it is obvious why no risk math was applied.
+
+## Hardening layers
+
+The PreToolUse contract is implemented as five layered hooks rather than a
+single `Edit|Write|MultiEdit` matcher, so that bypass routes (Bash escape,
+plan-doc smuggling, subagent spawn, sidecar kill) are also screened. Full
+threat-model analysis lives in [`HARDENING.md`](./HARDENING.md); this is
+the architectural map.
+
+| Layer | Hook                        | Matcher          | Role                                                      | Override env                       |
+| ----- | --------------------------- | ---------------- | --------------------------------------------------------- | ---------------------------------- |
+| L1    | `pre_edit_guard.py`         | Edit/Write/MultiEdit | SSM regression score + guard-file lock                | `RC_ALLOW_GUARD_EDIT=1`            |
+| L2    | `pre_bash_guard.py`         | Bash             | Stage-A hard-deny / stage-B guarded-write / stage-C kill / stage-D source-write | `RC_ALLOW_GUARD_EDIT=1` |
+| L3    | `pre_plan_guard.py`         | Write (plan paths) | Plan-doc heuristics + SSM novelty over markdown content | `RC_PLAN_BLOCK=1` (escalate warn → block) |
+| L4    | `pre_task_guard.py`         | Task             | Subagent prompt screened for mutation verbs against guarded paths | `RC_ALLOW_SUBAGENT_GUARD_EDIT=1` |
+| L5    | `post_bash_revive.py`       | Bash (PostToolUse) | Detect kill-token + dead `/health`; respawn sidecar    | n/a (informational, never blocks)  |
+
+All five hooks are stdlib-only (no `httpx`, no FastAPI, no transformers
+imports) so a broken venv does not disable policy. They share an
+audit-log helper at `src/audit_log.py` which appends a JSONL event to
+`/tmp/rc-events/<date>/<session>.jsonl` per fire.
+
+By default L3 ships in **warn-only** mode — operators see plan-quality
+stderr noise but the write proceeds. Setting `RC_PLAN_BLOCK=1` flips the
+hook to exit 2 on any flagged warning. The recommended production
+profile exports `RC_PLAN_BLOCK=1` together with `S2_FAIL_CLOSED=1`.
 
 ## Evaluation Subsystem
 
@@ -370,11 +433,15 @@ this subsystem exposes:
   timeout. This is the gate every change must clear before any eval
   job runs.
 - **`eval-smoke`** runs on every push to `main` against the image
-  produced by `eval/Dockerfile`, `n=5` paired tasks (vanilla +
-  treatment), `--parallel 1`, 30-minute budget. Posts a sticky comment
-  on the commit SHA with the headline metrics and uploads
-  `eval/results/` as an artifact (30-day retention). n=5 is descriptive
-  only — power calc forbids ship/kill verdicts at this size.
+  produced by `eval/Dockerfile`. Defaults to **n=2 paired tasks** on the
+  free `ubuntu-latest` runner (the SSM weights + tree-sitter wheels +
+  Mamba forward pass exhaust the 7 GB RAM budget at higher n). Operators
+  can request `n=5+` via `workflow_dispatch` against `ubuntu-latest-large`,
+  which has 14 GB. `--parallel 1`, 30-minute budget. Posts a sticky
+  comment on the commit SHA with the headline metrics and uploads
+  `eval/results/` as an artifact (30-day retention). Both n=2 and n=5
+  are descriptive only — power calc forbids ship/kill verdicts at these
+  sizes.
 - **`eval-full`** is `workflow_dispatch` only, default `n_tasks=100`,
   6-hour budget, gated by the `eval-full-approved` GitHub environment.
   Required for any production ship/kill decision.

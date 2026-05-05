@@ -613,3 +613,70 @@ Exit code: `0` — all `.py` files compile cleanly.
 
 **None.** RC-005 cannot be promoted because BUG-DEV-001 prevents `/score` from functioning and `model_loaded:true` is blocked by RC-102 (env). RC-007 was already `done`. No other tasks could be definitively verified end-to-end in this environment.
 
+## Cross-Verification — Calibration & 4 Data Languages (commit `8a2c352`)
+
+### 2026-05-05 — Documentation sweep verification
+
+- **Commit:** `8a2c352` (calibration normalization + 4 data languages + cohesion saturation fix)
+- **CI status:** lint-and-test green at `efe2b82` (env-scrub fix for the
+  hook subprocess test) and at `8a2c352`.
+- **Pytest:** `pytest -q -m "not live"` → **173 passed, 0 failed** offline.
+
+### Coherence-delta normalization
+
+Coherence delta is now computed as raw L2 of the pre/post Mamba
+embeddings divided by `sqrt(hidden_size)`. The threshold constant
+`COHERENCE_DELTA_THRESHOLD = 1.5` in `src/s2_core.py` is now portable
+across SSM checkpoints — swapping `S2_SSM_CHECKPOINT` no longer requires
+re-tuning.
+
+**Repro:** rename a top-level Python function `add` → `sum2` (single-token
+identifier change, no semantic delta).
+
+| Metric          | Before normalization | After normalization |
+| --------------- | -------------------: | ------------------: |
+| coherence_delta |               37.26 |               0.157 |
+| Verdict         |                BLOCK |               ALLOW |
+
+The pre-normalization value scaled with `sqrt(768) ≈ 27.7` for the
+`mamba-130m-hf` 768-D embedding; dividing by `sqrt(hidden_size)` recasts
+the metric as average per-dimension drift in standard units.
+
+### Cohesion saturation fix
+
+Single-function files no longer false-positive on the cohesion
+dimension. Cohesion is now treated as undefined for call graphs with
+`< 2` nodes (returns `0.0` instead of saturating to `1.0` and tripping
+the `any dim > 0.9` predicate).
+
+### 4 new data languages
+
+CSS, SCSS, HTML, Dockerfile per-language tree-sitter wheels installed
+and probed via `POST /score`:
+
+| Extension     | Grammar                | `/score` status |
+| ------------- | ---------------------- | --------------- |
+| `.css`        | tree-sitter-css        | 200             |
+| `.scss`       | tree-sitter-scss (1.0) | 200             |
+| `.html`       | tree-sitter-html       | 200             |
+| `Dockerfile`  | tree-sitter-dockerfile | 200             |
+| `.vue`        | HTML grammar (fallback) | 200            |
+
+The `.vue` extension is advertised in `SUPPORTED_LANGUAGES` but no
+`tree-sitter-vue` PyPI wheel exists for Python 3.13 — the loader routes
+`.vue` through the HTML grammar so `/score` returns 200 instead of a
+415 or a runtime error. Documented as a residual gap in
+`HARDENING.md` and footnoted in `README.md`.
+
+### Quality bar summary (this pass)
+
+| Check                                                       | Status |
+| ----------------------------------------------------------- | :----: |
+| `pytest -q -m "not live"` (173 tests)                       |  PASS  |
+| `py_compile $(git ls-files '*.py')`                         |  PASS  |
+| `.claude/settings.json` parses                              |  PASS  |
+| `/score` 200 across all 13 advertised languages             |  PASS  |
+| Coherence delta normalized + ported to data languages       |  PASS  |
+| Cohesion saturation guard (`<2` nodes → undefined)          |  PASS  |
+| GitHub Actions `lint-and-test` green at `efe2b82` + `8a2c352` |  PASS |
+

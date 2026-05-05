@@ -22,3 +22,8 @@ hf_cache/
 .cache/
 node_modules/
 .claude/scheduled_tasks.lock
+
+# direnv local overrides — secrets + personal toggles, never committed.
+.envrc.local
+# direnv state cache, per-machine.
+.direnv/

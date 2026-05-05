@@ -3,10 +3,17 @@
 Supports the following languages:
 
     Code:  Python, JavaScript, TypeScript (+TSX), C#, SQL.
-    Data:  Markdown, JSON, YAML, CSS, SCSS, HTML, Vue, Dockerfile.
+    Data:  Markdown, JSON, YAML, CSS, SCSS, HTML, Dockerfile.
 
 "Data" languages skip call-graph extraction (no call semantics) but still
 flow through the embedding-based novelty scoring path.
+
+Vue SFCs (``.vue``) are routed through the HTML grammar as a pragmatic
+fallback: Vue SFC structure (``<template>``, ``<script>``, ``<style>``
+blocks) is HTML-shaped, and no ``tree-sitter-vue`` wheel is published on
+PyPI for Python 3.13. Embedding-based scoring tolerates an inexact AST,
+so the HTML parser provides enough structural signal for novelty
+detection.
 
 Loader strategy:
     1. Prefer the ``tree_sitter_languages`` aggregate wheel which ships
@@ -23,8 +30,8 @@ The two contracts other engineers rely on:
   ``language_name`` is one of the internal language ids (``"python"``,
   ``"javascript"``, ``"typescript"``, ``"tsx"``, ``"csharp"``, ``"sql"``,
   ``"markdown"``, ``"json"``, ``"yaml"``, ``"css"``, ``"scss"``, ``"html"``,
-  ``"vue"``, ``"dockerfile"``). The public surface area collapses ``tsx`` to
-  ``typescript``.
+  ``"dockerfile"``). The public surface area collapses ``tsx`` to
+  ``typescript``. ``.vue`` files resolve to the ``html`` language id.
 * ``UnsupportedLanguageError`` is raised -- never silently fall back -- when
   the extension is not in the supported set.
 
@@ -59,7 +66,6 @@ SUPPORTED_LANGUAGES: tuple[str, ...] = (
     "css",
     "scss",
     "html",
-    "vue",
     "dockerfile",
 )
 
@@ -74,7 +80,6 @@ DATA_LANGUAGES: frozenset[str] = frozenset(
         "css",
         "scss",
         "html",
-        "vue",
         "dockerfile",
     }
 )
@@ -108,7 +113,9 @@ EXTENSION_MAP: dict[str, str] = {
     ".sass": "scss",
     ".html": "html",
     ".htm": "html",
-    ".vue": "vue",
+    # Vue SFCs route through the HTML grammar (no tree-sitter-vue wheel
+    # for Py 3.13; HTML is a structural superset of SFC root layout).
+    ".vue": "html",
     ".dockerfile": "dockerfile",
 }
 
@@ -127,7 +134,6 @@ PUBLIC_LANGUAGE: dict[str, str] = {
     "css": "css",
     "scss": "scss",
     "html": "html",
-    "vue": "vue",
     "dockerfile": "dockerfile",
 }
 
@@ -170,7 +176,6 @@ def _load_via_aggregate(lang_id: str) -> Optional[Any]:
         "css": "css",
         "scss": "scss",
         "html": "html",
-        "vue": "vue",
         "dockerfile": "dockerfile",
     }.get(lang_id)
     if aggregate_name is None:
@@ -187,8 +192,7 @@ def _load_via_per_lang(lang_id: str) -> Optional[Any]:
 
     Each language branch wraps its own ``import`` in its own ``except
     ImportError`` so a missing wheel for one language never breaks the
-    others (e.g. tree-sitter-vue is not on PyPI for Py 3.13 yet — every
-    other grammar must still load).
+    others.
     """
     from tree_sitter import Language  # type: ignore
 
@@ -278,16 +282,6 @@ def _load_via_per_lang(lang_id: str) -> Optional[Any]:
             except ImportError:
                 return None
             return Language(ts_html.language())
-        if lang_id == "vue":
-            # NOTE: tree-sitter-vue has no Py 3.13 wheel on PyPI as of the
-            # time of this change. The loader returns None here when the
-            # import fails; select_grammar will then raise a runtime error
-            # for .vue files until a wheel ships. See requirements.txt.
-            try:
-                import tree_sitter_vue as ts_vue  # type: ignore
-            except ImportError:
-                return None
-            return Language(ts_vue.language())
         if lang_id == "dockerfile":
             try:
                 import tree_sitter_dockerfile as ts_docker  # type: ignore

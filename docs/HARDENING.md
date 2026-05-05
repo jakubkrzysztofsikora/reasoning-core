@@ -4,7 +4,7 @@ The original PreToolUse hook fired only on `Edit | Write | MultiEdit`. A
 sufficiently motivated agent (or a confused one) can route around that
 matcher. This doc is the threat model + countermeasures.
 
-## Threat model — five bypass paths
+## Threat model — six bypass paths
 
 | # | Path | Mitigation layer |
 |---|------|------------------|
@@ -13,6 +13,7 @@ matcher. This doc is the threat model + countermeasures.
 | 3 | Edit `.claude/settings.json` to remove the matcher | L2 — guard-file lock in `pre_edit_guard.py` |
 | 4 | Edit the hook script itself (`pre_edit_guard.py` → no-op) | L2 — same lock applies to `src/hooks/*` |
 | 5 | Sidecar dies for an unrelated reason (OOM, crash) and hook fail-opens | L3 — `post_bash_revive.py` + `S2_FAIL_CLOSED=1` |
+| 6 | Spawn a `Task` subagent with a mutation-verb prompt against guarded paths (subagent's own tool calls do not always re-enter this project's hooks) | L4 — `pre_task_guard.py` |
 
 ## Layers shipped
 
@@ -62,6 +63,35 @@ scripts/start-sidecar.sh
 If matched and `RC_ALLOW_GUARD_EDIT != "1"`, exit 2. Same override env
 as L1 — single toggle for both layers.
 
+### L4 — Task subagent guard (`src/hooks/pre_task_guard.py`)
+
+PreToolUse hook on the `Task` tool — fires before Claude spawns a
+subagent. The subagent's own tool calls do not necessarily re-enter this
+project's hooks (the subagent inherits the parent's `CLAUDE_PROJECT_DIR`
+but a sufficiently motivated prompt can still smuggle a guarded-path
+mutation through), so we screen the prompt itself.
+
+The check is a **regex screen** — not full SSM-based prompt-intent
+scoring. Specifically it looks for:
+
+1. Mutation verbs (`edit|modify|patch|delete|remove|rewrite|overwrite|
+   disable|bypass|...`) AND
+2. Mention of any path under `GUARDED_PATHS` (the same allow-list as L1
+   / L2 — `src/hooks/*`, `.claude/settings.json`, `src/s2_core.py`,
+   etc.).
+
+If both fire, exit 2 with a structured stderr block. If only one fires,
+allow.
+
+> **Scope note.** The original brief implied full SSM-based prompt-intent
+> scoring at this layer. What ships is regex-only. Full SSM scoring of
+> subagent prompt content is tracked as a phase-3 follow-up — the regex
+> closes the obvious-bypass surface without paying the ~3s Mamba forward
+> pass on every subagent spawn.
+
+Override: `RC_ALLOW_SUBAGENT_GUARD_EDIT=1`. Same session-boot capture
+caveat as L1 / L2 — restart Claude after flipping.
+
 ### L3 — Sidecar revival (`src/hooks/post_bash_revive.py`)
 
 PostToolUse hook on `Bash`. After every Bash command, if the command
@@ -84,8 +114,12 @@ Put these in the shell that launches Claude Code:
 ```bash
 export S2_FAIL_CLOSED=1   # sidecar down → block, not fail-open
 export S2_TIMEOUT=60      # CPU Mamba can take ~30s, give headroom
-# Do NOT export RC_ALLOW_GUARD_EDIT unless you intentionally want to
-# allow Claude to edit the guard infrastructure.
+export RC_PLAN_BLOCK=1    # plan-guard escalates warnings to exit 2
+                          # (default is warn-only — stderr noise but
+                          # the plan write still proceeds)
+# Do NOT export RC_ALLOW_GUARD_EDIT or RC_ALLOW_SUBAGENT_GUARD_EDIT
+# unless you intentionally want to allow Claude (or a Task subagent)
+# to edit the guard infrastructure.
 ```
 
 `.claude/settings.json` already wires the three hooks into the matcher
@@ -120,15 +154,26 @@ A future commit will land structured JSONL audit at
 
 ## Known residual gaps
 
-1. **Subagent inheritance.** When Claude spawns a `Task` subagent, the
-   subagent's tool calls do not run through this project's hooks unless
-   the subagent's working dir is also under `CLAUDE_PROJECT_DIR`. Today
-   this is not enforced — open issue.
-2. **Indirect file rewrites.** A `make` target or `npm run build` that
+1. **Indirect file rewrites.** A `make` target or `npm run build` that
    internally writes to source files via codegen will not be caught by
    the Bash regex (the regex sees `make build`, not the codegen output).
    In practice this is rare; flag if observed.
-3. **Plan-time scoring.** The hook scores the *file* at write time. A
-   plan that describes 1 huge file is only caught when Claude tries to
-   write it. Scoring the plan document earlier would shift the gate
-   left. Tracked separately as a roadmap item.
+2. **Vue grammar fallback.** `tree-sitter-vue` has no PyPI wheel for
+   Python 3.13. `.vue` is advertised in `SUPPORTED_LANGUAGES` and
+   `EXTENSION_MAP` but currently routes through the HTML grammar as a
+   fallback so `/score` returns 200 instead of a runtime error. Drop the
+   advertisement or upgrade once an upstream wheel ships.
+3. **Plan→code coherence gate.** L3 catches a plan that describes 1 huge
+   file as a plan-time warning. There is no second pass that
+   cross-checks the *file Claude actually writes* against the *file the
+   plan promised*. Tracked as a phase-3 follow-up.
+4. **Cumulative drift calibration.** The sidecar emits a `cumulative_drift`
+   signal when a session baseline is registered (see
+   `pre_edit_guard.py:253-273`), and the threshold is currently a
+   placeholder `3.0`. There is no documented operator ritual for
+   registering a session baseline. Calibration on a benign-edit corpus
+   plus a runbook entry are needed before this dim can gate
+   production.
+5. **Subagent prompt-intent scoring is partial.** L4 is regex-screened —
+   mutation-verb tokens against guarded-path mentions. Full SSM-based
+   scoring of the prompt content is a phase-3 task.

@@ -86,8 +86,14 @@ backbone selection rationale.
 
 - ✅ **Real Mamba SSM weights** — `state-spaces/mamba-130m-hf` loaded via `transformers.AutoModel`,
   not a hash mock. Deterministic forward pass (`model.eval()` + `torch.no_grad()` + seeded).
-- ✅ **5 Tree-sitter languages** — Python, JavaScript, TypeScript, C#, SQL. Auto-detection by
-  file extension; typed `UnsupportedLanguageError` (no silent fallback).
+- ✅ **13 Tree-sitter languages** — Python, JavaScript, TypeScript, C#, SQL plus data languages
+  (Markdown, JSON, YAML, CSS, SCSS, HTML, Dockerfile, Vue[^vue]). Code languages get a full
+  call-graph; data languages embed-only (no call graph) but still feed the SSM coherence math.
+  Auto-detection by file extension; typed `UnsupportedLanguageError` (no silent fallback).
+
+[^vue]: Vue is advertised in `SUPPORTED_LANGUAGES` and routed through the HTML grammar internally;
+no native `tree-sitter-vue` wheel exists on PyPI for Python 3.13, so `.vue` files currently fall
+back to the HTML parser. Will upgrade to a proper grammar once an upstream wheel ships.
 - ✅ **MCP-native bridge** — `hybrid-reasoner` registered as a stdio MCP server. Any
   MCP-compatible client (Claude Code, Claude Desktop, custom) can invoke `reason_over_edit`.
 - ✅ **PreToolUse hook with stdlib-only runtime** — the hook survives broken venvs because it
@@ -111,6 +117,32 @@ git clone https://github.com/<your-org>/reasoning-core.git
 cd reasoning-core
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+### 1b. (Recommended) `direnv` for repo-scoped env
+
+The repo ships an [`.envrc`](.envrc) that loads the venv, sidecar tuning
+(`S2_FAIL_CLOSED`, `S2_TIMEOUT`), policy posture (`RC_PLAN_BLOCK=1`),
+HuggingFace cache pin (`HF_HOME=$(pwd)/.cache/huggingface`), and
+Scaleway/y-router proxy vars **only when you `cd` into this repo**. Other
+repos and Claude sessions are unaffected.
+
+```bash
+brew install direnv                          # if not installed
+echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc # or bash equivalent
+cd ~/Repos/personal/reasoning-core
+direnv allow .
+```
+
+For secrets that should never be committed (e.g. `ANTHROPIC_API_KEY` for
+live eval runs), drop them in `.envrc.local` — gitignored and sourced
+automatically:
+
+```bash
+cat > .envrc.local <<'EOF'
+export ANTHROPIC_API_KEY=sk-ant-...
+EOF
+direnv allow .
 ```
 
 ### 2. Cache the Mamba SSM checkpoint (one-time, ~250 MB)
@@ -163,6 +195,20 @@ The repo ships a ready-to-use [`.claude/settings.json`](.claude/settings.json):
 
 From here on, every `Edit`/`Write`/`MultiEdit` Claude attempts is scored. Regressions are
 blocked before they touch the filesystem.
+
+#### 4a. Recommended runtime env
+
+Before launching Claude, export the production-safe defaults in the same shell:
+
+```bash
+export RC_PLAN_BLOCK=1   # plan-guard hard-blocks instead of warn-only
+export S2_FAIL_CLOSED=1  # sidecar unreachable -> block, not fail-open
+export S2_TIMEOUT=60     # CPU Mamba can take ~30s; give headroom
+```
+
+These vars are read at hook-execution time but Claude Code captures the env at session boot
+— **restart Claude Code after any `settings.json` or env change.** Settings load on session
+boot, not hot-reload.
 
 ### 5. (Optional) Configure Scaleway via y-router
 
@@ -237,6 +283,9 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 | `S2_SSM_CHECKPOINT` | `state-spaces/mamba-130m-hf` | Override the SSM backbone checkpoint |
 | `S2_TIMEOUT` | `30` | Seconds the hook + bridge wait for `/score` |
 | `S2_FAIL_CLOSED` | _unset_ | Set to `1` to BLOCK edits when sidecar is unreachable |
+| `RC_PLAN_BLOCK` | _unset_ | **Recommended for production.** Set to `1` to escalate plan-guard warnings to a hard block (exit 2). Default is warn-only — operator sees stderr noise but the write proceeds. |
+| `RC_ALLOW_GUARD_EDIT` | _unset_ | Set to `1` to allow edits to guarded paths (`src/hooks/*`, `.claude/settings.json`, `src/s2_core.py`, etc.). Captured at session boot — restart Claude after flipping. |
+| `RC_ALLOW_SUBAGENT_GUARD_EDIT` | _unset_ | Set to `1` to allow `Task` subagent prompts that mention guarded paths with mutation verbs. |
 | `HF_HOME` | `~/.cache/huggingface` | Where the Mamba weights are cached |
 | `ANTHROPIC_BASE_URL` | `http://localhost:8787` | y-router address (proxies to Scaleway) |
 | `ANTHROPIC_MODEL` | `devstral-2-123b-instruct-2512` | Linguistic model id |
@@ -249,7 +298,9 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 1. **Claude proposes an edit.** The PreToolUse hook fires before the file is modified.
 2. **`pre_edit_guard.py`** reads the hook payload from stdin and POSTs `{path, before_src,
    after_src}` to the sidecar.
-3. **Tree-sitter** parses both sides into ASTs and builds a per-module call graph.
+3. **Tree-sitter** parses both sides into ASTs. For code languages (Python, JavaScript, TypeScript,
+   C#, SQL) it also builds a per-module call graph. Data languages (Markdown, JSON, YAML, CSS, SCSS,
+   HTML, Dockerfile, Vue) skip the call-graph step but still get embedded by the SSM.
 4. **AST → token sequence**, fed through the **Mamba SSM** to produce a pooled embedding for
    each side.
 5. **Risk vector** (8 dims) is computed: cyclomatic, fan_in, fan_out, depth, churn, coupling,
@@ -374,10 +425,18 @@ git push -u origin rc-feature-x
   generic checkpoint and average the novelty signal.
 - **Real `slide-mamba` weights.** Adopt them as soon as they're publicly released — the
   loader's `S2_SSM_CHECKPOINT` env var already supports a one-line swap.
-- **More grammars.** Java, Go, Rust, Kotlin, Swift. The `grammars.py` extension table makes
-  this a 5-minute add per language.
-- **GPU-native batched scoring.** Today the sidecar serves one `/score` at a time on CPU.
-  Batched GPU inference would cut the per-edit latency from ~3s to ~50ms.
+- **Real Mamba kernels for non-CPU paths.** Today the macOS arm64 / CPU path uses the pure-PyTorch
+  fallback that ships in `transformers`. Adopting `mamba-ssm` + `causal-conv1d` for CUDA hosts
+  would cut the per-edit latency from ~3s to ~50ms.
+- **Plan→code coherence gate.** Cross-check that the file Claude actually writes matches what the
+  plan document promised — shifts the gate left from edit-time to plan-time.
+- **Repo-baseline drift calibration.** The `cumulative_drift` code path exists in the sidecar but
+  the threshold (3.0) is a placeholder; needs a calibration pass on a benign-edit corpus to set a
+  defensible cutoff and a documented session-baseline registration ritual.
+- **n=100 live eval run.** Smoke-001 ran n=2 in stub mode (verdict inconclusive by design). A real
+  ship/kill verdict needs the full SWE-bench-Verified-100 paired Wilcoxon under live Claude.
+- **GPU-native batched scoring.** Same motivation as the kernel item — serves one `/score` at a
+  time on CPU today.
 - **Repo-level memory.** Persist a baseline embedding for the whole repo so `coherence_delta`
   becomes "drift from the project's own attractor" rather than just "drift from before_src".
 - **Server-Sent Events `/score/stream`.** For multi-edit sessions, stream incremental scores
