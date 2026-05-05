@@ -26,6 +26,7 @@ import sys
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from threading import Lock
 from typing import Any, Optional
 
@@ -670,6 +671,37 @@ _REGRESSION_COHERENCE_THRESHOLD = COHERENCE_DELTA_THRESHOLD
 _REGRESSION_RISK_DIM_THRESHOLD = _env_float("S2_RISK_DIM_THRESHOLD", 0.9)
 
 
+def _file_kind(path: str) -> str:
+    """Classify a path into one of the buckets used by ``_KIND_THRESHOLDS``.
+
+    Plan markdown and prose docs have a wider statistical distribution than
+    source code, so the same coherence_delta threshold over-blocks them.
+    """
+    p = (path or "").lower()
+    if "/plans/" in p or p.endswith(".plan.md"):
+        return "plan_md"
+    if "/test" in p or "/tests/" in p or "_test" in p:
+        return "test_code"
+    ext = Path(p).suffix
+    if ext in (".md", ".markdown", ".mdx"):
+        return "doc_md"
+    if ext in (".json", ".yaml", ".yml", ".toml", ".ini"):
+        return "config"
+    return "source_code"
+
+
+# Per-kind thresholds. ``source_code`` falls back to the env-overridable
+# constants above; the others are intentionally laxer because their content
+# distribution doesn't match the calibrated source-code baseline.
+_KIND_THRESHOLDS: dict[str, dict[str, float]] = {
+    "source_code": {"cd": COHERENCE_DELTA_THRESHOLD, "ais": _REGRESSION_AIS_THRESHOLD},
+    "test_code":   {"cd": 2.0, "ais": 0.3},
+    "plan_md":     {"cd": 3.0, "ais": 0.3},
+    "doc_md":      {"cd": 3.0, "ais": 0.3},
+    "config":      {"cd": 1.2, "ais": 0.5},
+}
+
+
 def _cosine_similarity(a, b) -> float:
     """Compute cosine sim between two 1D torch tensors. Returns float in [-1, 1]."""
     import torch
@@ -804,9 +836,11 @@ def score_change(
         after_src or "",
     )
 
+    kind = _file_kind(path)
+    t = _KIND_THRESHOLDS.get(kind, _KIND_THRESHOLDS["source_code"])
     regression = (
-        ais < _REGRESSION_AIS_THRESHOLD
-        or coherence_delta > _REGRESSION_COHERENCE_THRESHOLD
+        ais < t["ais"]
+        or coherence_delta > t["cd"]
         or any(dim > _REGRESSION_RISK_DIM_THRESHOLD for dim in risk_vector)
     )
 
@@ -834,6 +868,8 @@ def score_change(
         human_summary=summary,
         cumulative_drift=cumulative_drift,
         cold_start=bool(cold_start),
+        file_kind=kind,
+        cd_threshold=float(t["cd"]),
     )
 
 
