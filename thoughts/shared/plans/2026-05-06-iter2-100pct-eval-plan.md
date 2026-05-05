@@ -250,29 +250,35 @@ Requires P0. Optional for P2 (CDGS gracefully degrades) and P3 (Invariant 5 fall
 
 ---
 
-## Phase 6: Iter-2 eval methodology fixes
+## Phase 6: Eval framework operational changes (no methodology / criteria edits)
+
+### Context
+
+Methodology — rubric, prompts, judge prompt template — is frozen by the iter-1
+methodology contract and we cannot influence the criteria. We do not edit T1/T9 prompts,
+the BARS rubric, or `judge_prompt.py`. This phase covers only **operational** params
+already pre-registered in iter-1 §13 as future work for the next iteration: expanding n,
+adding a second judge, enforcing the inter-rater agreement gate.
 
 ### Changes
 
-**File `/Users/jakubsikora/research-claude-code-setup-eval-prompts/T1-*.md`** — Add explicit clause: "The test must drive the cross-workload integration through real HTTP/queue boundaries. Tests that pass against in-process mocks count as `correctness=1` regardless of pass-rate. Stryker mutation testing on boundary adapters will run; surviving mutants on those files will gate."
-
-**File `/Users/jakubsikora/research-claude-code-setup-eval-prompts/T9-*.md`** — Embed sealed reference review (the original PR's reviewer comments) as judge ground truth.
-
-**File `eval/judge_prompt.py`** — For T9, judge prompt must read `judge/T9/run-NN/REFERENCE_REVIEW_SEALED.md` and score the agent's REVIEW.md against it for precision/recall.
-
-**File `eval/spawner.py`** — Add second judge (GPT-5 via API). Enforce inter-rater Krippendorff α ≥ 0.67 before grades aggregate. Bump n=3 per cell.
+**File `eval/spawner.py`** — Bump `n=3` per (setup × task) cell (was 1 in iter-1). Add a
+second judge slot (cross-family, non-Gemini) and enforce inter-rater Krippendorff
+α ≥ 0.67 before grades aggregate. Methodology already pre-registers cross-family
+weighting at 2× — no change to that rule. Second judge is an additional grader, not a
+methodology change.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] T1 prompt grep shows new mock-prohibition clause
-- [ ] `eval/cli decide-all` passes with α ≥ 0.67
-- [ ] n=3 runs all completed within 90-min cap
+- [ ] `eval/cli decide-all` passes with α ≥ 0.67 across the two judges
+- [ ] All n=3 runs per cell completed within 90-min cap
+- [ ] Zero edits to `research-claude-code-setup-eval-prompts/`, `rubric.py`, or `judge_prompt.py` (methodology lockdown)
 
 ### Dependencies
 
-Requires P0 (Setup B wired). Other phases independent.
+Requires P0 (Setup B formalized). Independent of P1-P5.
 
 ---
 
@@ -340,9 +346,6 @@ Requires P4 (labeled corpus must exist). Runs after 4-week shadow-mode window.
 | `scripts/start-gen-sidecar.sh` | P5 | Create |
 | `src/gen_client.py` | P5 | Create |
 | `scripts/start-sidecar.sh` | P5 | Modify |
-| `/Users/jakubsikora/research-claude-code-setup-eval-prompts/T1-*.md` | P6 | Modify |
-| `/Users/jakubsikora/research-claude-code-setup-eval-prompts/T9-*.md` | P6 | Modify |
-| `eval/judge_prompt.py` | P6 | Modify |
 | `src/calibration.py` | P7 | Create |
 | `eval/recalibrate.py` | P7 | Create |
 
