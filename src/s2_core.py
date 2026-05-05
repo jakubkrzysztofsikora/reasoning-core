@@ -82,6 +82,9 @@ class ImpactReport:
     human_summary: str
     risk_labels: list[str] = field(default_factory=lambda: list(RISK_LABELS))
     cumulative_drift: Optional[float] = None
+    cold_start: bool = False
+    file_kind: Optional[str] = None
+    cd_threshold: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -91,9 +94,14 @@ class ImpactReport:
             "risk_labels": list(self.risk_labels),
             "regression_detected": bool(self.regression_detected),
             "human_summary": str(self.human_summary),
+            "cold_start": bool(self.cold_start),
         }
         if self.cumulative_drift is not None:
             out["cumulative_drift"] = float(self.cumulative_drift)
+        if self.file_kind is not None:
+            out["file_kind"] = str(self.file_kind)
+        if self.cd_threshold is not None:
+            out["cd_threshold"] = float(self.cd_threshold)
         return out
 
 
@@ -765,8 +773,15 @@ def score_change(
     # checkpoint-portable: a raw L2 over a 768-D vector dwarfs the same drift
     # over a 256-D vector for the same edit. Dividing by sqrt(D) recasts the
     # value as average per-dimension drift in standard units (see VERIFICATION.md).
+    # Cold-start: an empty/near-empty before_src has no meaningful baseline to
+    # compare against, so the L2-magnitude proxy degenerates. Skip cd entirely
+    # for these cases — the 8-dim risk_vector still flags churn/cyclomatic on bad content.
     hidden_size = _backbone_hidden_size(emb_after)
-    coherence_delta = float(raw_l2) / math.sqrt(max(hidden_size, 1))
+    cold_start = (not before_src.strip()) or (len(before_src) < 32)
+    if cold_start:
+        coherence_delta = 0.0
+    else:
+        coherence_delta = float(raw_l2) / math.sqrt(max(hidden_size, 1))
 
     # novelty in [0, 1]: 1 - max(cos, 0).
     novelty = max(0.0, min(1.0, 1.0 - max(cos, 0.0)))
@@ -810,6 +825,7 @@ def score_change(
         regression_detected=bool(regression),
         human_summary=summary,
         cumulative_drift=cumulative_drift,
+        cold_start=bool(cold_start),
     )
 
 
