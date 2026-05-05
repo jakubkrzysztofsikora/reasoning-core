@@ -36,6 +36,7 @@ if _HOOKS_DIR not in sys.path:
     sys.path.insert(0, _HOOKS_DIR)
 
 import audit_log  # type: ignore  # noqa: E402
+from _block_format import format_block as _format_block  # type: ignore  # noqa: E402
 
 SIDECAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDECAR_URL}/score"
@@ -186,41 +187,6 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
 
 class SidecarUnavailable(Exception):
     """Raised when the sidecar cannot be reached or returned an error status."""
-
-
-def _format_block(file_path: str, report: Dict[str, Any]) -> str:
-    ais = report.get("architectural_impact_score")
-    coh = report.get("coherence_delta")
-    summary = report.get("human_summary") or "(no summary)"
-    risk_vector = report.get("risk_vector") or []
-    risk_labels = report.get("risk_labels") or []
-    dominant = "n/a"
-    try:
-        if (
-            isinstance(risk_vector, list)
-            and isinstance(risk_labels, list)
-            and len(risk_vector) == len(risk_labels)
-            and risk_vector
-        ):
-            idx = max(range(len(risk_vector)), key=lambda i: risk_vector[i])
-            dominant = f"{risk_labels[idx]}={float(risk_vector[idx]):.2f}"
-    except (TypeError, ValueError):
-        dominant = "n/a"
-
-    def _fmt(v: Any) -> str:
-        try:
-            return f"{float(v):.2f}"
-        except (TypeError, ValueError):
-            return "n/a"
-
-    return (
-        "[hybrid-reasoner] BLOCKED: architectural regression detected\n"
-        f"  file: {file_path}\n"
-        f"  AIS: {_fmt(ais)}  (threshold 0.40)\n"
-        f"  coherence_delta: {_fmt(coh)}  (threshold 1.50)\n"
-        f"  dominant_risk: {dominant}\n"
-        f"  summary: {summary}\n"
-    )
 
 
 def _exit(code: int, stderr_msg: str = "") -> None:
@@ -420,7 +386,7 @@ def main() -> None:
                 reason="regression_detected",
                 retry_after_block=is_retry,
             )
-            _exit(2, _format_block(file_path, report))
+            _exit(2, _format_block(file_path, report, is_retry=is_retry))
             return  # pragma: no cover
 
     # All edits cleared.
