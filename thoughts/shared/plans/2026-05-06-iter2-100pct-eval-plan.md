@@ -9,16 +9,15 @@ status: draft
 
 ## Summary
 
-Iteration 1 of the Setup A vs Setup B eval was invalidated mid-stream: the codebase
-audit revealed Setup B's `.envrc` and `settings.local.json` are stubs — the entire
-reasoning-core pipeline was inert during evals. The 6/8 wins are despite reasoning-core
-being off, not because of it. T1 (mock-instead-of-integrate) and T9 (generic plan) lost
-because reasoning-core has no mock-detector and no plan-specificity scorer. E1 was won
-by Setup B per the corrected eval but with quality dimensions that depend on
-language-convention enforcement we don't yet have.
+Iteration 1 of the Setup A vs Setup B eval — Setup B (reasoning-core active) won 6/8.
+T1 (mock-instead-of-integrate) and T9 (generic plan) were real losses: reasoning-core
+ran during the eval but the shipped code has no mock-detector and no plan-specificity
+scorer, so it could not catch either failure mode. E1 was won by Setup B at the
+correctness gate; structural quality is currently flat there because no
+language-convention enforcement exists yet.
 
-This plan ships in 7 phases. P0 is the priority — without it, every other phase is
-academic. After P0–P3, expected verdict: Setup B wins 8/8 with measurable margin.
+This plan ships in 7 phases targeting the three observed gaps. After P1–P3, expected
+verdict: Setup B wins 8/8 with measurable margin.
 
 ## Research References
 
@@ -32,48 +31,62 @@ academic. After P0–P3, expected verdict: Setup B wins 8/8 with measurable marg
 
 | Failure | Root cause |
 |---|---|
-| T1 lost (5/5/5/5/5 vs 1/3/3/1/5) | B wrote `cy.intercept('/**', { fixture })`. No mock-detector hook exists. `build_call_graph` is symbol-name-only. |
-| T9 lost (3 plan vs 1 plan) | B's plan was generic ("Read full diff once"). `pre_plan_guard.py` has zero specificity scoring. |
-| E1 won by gate-pass alone | Setup B passed correctness gate 10/10. No structural quality lift from reasoning-core because pipeline was inert. |
-| Setup B was inert | `.envrc` exports only `EVAL_SETUP_ID="B"`. `settings.local.json` has only allow-list, no `hooks` block, no `mcpServers`. |
+| T1 lost (5/5/5/5/5 vs 1/3/3/1/5) | Reasoning-core ran but shipped code has no mock-detector. B wrote `cy.intercept('/**', { fixture })`. `build_call_graph` is symbol-name-only — can't tell real call from mock. |
+| T9 lost (3 plan vs 1 plan) | Reasoning-core ran but `pre_plan_guard.py` has zero specificity scoring. B's plan was generic ("Read full diff once") and passed all 4 existing checks (LOC budget, phase ratio, boundary prose, novelty drift) with no warning. |
+| E1 won at gate, structural quality flat | Setup B passed correctness 10/10. No language-fingerprint hook exists to detect that an agent might substitute Python for required .NET work in a long session. |
 
 ---
 
-## Phase 0: Wire Setup B to actually use reasoning-core (PREREQUISITE)
+## Phase 0: Verify Setup B wiring + tighten env knobs
+
+### Context
+
+Reasoning-core was active during iter-1 (hooks fired, sidecar served `/score`). This phase
+is a verification + tightening pass on Setup B's existing wiring, not a from-scratch wire-up.
+Goal: confirm every iter-2 hook addition (P1/P2/P3) gets picked up by Setup B and surfaces
+in the audit log; tighten env knobs that were left at defaults.
 
 ### Changes
 
-**File `/Users/jakubsikora/eval-setups/B/.envrc`** — Export reasoning-core env vars so direnv-loaded eval sessions activate the sidecar+hooks:
+**File `/Users/jakubsikora/eval-setups/B/.envrc`** — Verify the file activates reasoning-core
+on session start. Add iter-2 feature flags so P1/P2/P3 hooks become active under Setup B:
 
 ```bash
-export EVAL_SETUP_ID="B"
-export S2_DEVICE="cpu"
-export S2_TIMEOUT=60
-export S2_FAIL_CLOSED=1
-export RC_PLAN_BLOCK=1
-export S2_PORT=8765
-export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
+# Iter-2 additions (defaults to shadow-mode; P4 promotes to enforcement)
+export RC_MOCK_DETECTOR=1
+export RC_PLAN_QUALITY=1
+export RC_LANG_LOCK=1
+export RC_SHADOW_MODE=1   # log decisions, do not enforce, until P4 calibrates
 ```
 
-**File `/Users/jakubsikora/eval-setups/B/settings.local.json`** — Add `hooks` matchers + `mcpServers`. Use absolute paths since worktrees vary. Hooks to wire: PreToolUse(Edit|Write|MultiEdit, Bash, Task) + PostToolUse(Bash) + SessionStart manifest. mcpServers: `hybrid-reasoner` stdio over `python3 -m src.mcp_reasoner` with cwd pointed at the reasoning-core repo.
+**File `/Users/jakubsikora/eval-setups/B/settings.local.json`** — Confirm `hooks` block
+references `${CLAUDE_PROJECT_DIR}/src/hooks/...` paths so iter-2 hook additions land without
+edits to this file. If the existing block hardcodes paths to specific hook scripts, extend
+the matchers with: `pre_test_guard.py` (P1), `session_start_manifest.py` (P3),
+`pre_compact_guard.py` (P3), `post_batch_lang_audit.py` (P3).
 
-**File `eval/spawner.py`** — Pre-flight check that fails fast if Setup B's `settings.local.json` has no `hooks` block while `.envrc` exports `S2_FAIL_CLOSED=1`. Same defensive posture as the existing byte-identical-setup check.
+**File `eval/spawner.py`** — Audit the pre-flight diff check. Add a smoke probe: spawn a
+disposable worktree, execute a synthetic Edit, assert that a row lands in
+`/tmp/rc-events/$(date +%F)/<session>.jsonl` with the expected `decision` field. Refuse to
+run iter-2 evals if the smoke probe fails.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] `direnv exec /tmp/test-worktree-B claude --print "echo ok"` produces a sidecar `/score` call recorded in `/tmp/rc-events/$(date +%F)/`
-- [ ] `cat /Users/jakubsikora/eval-setups/B/settings.local.json | jq '.hooks.PreToolUse | length'` ≥ 3
-- [ ] Sidecar `/health` returns `model_loaded:true` before eval spawn
+- [ ] Smoke probe writes a Cypress test file with `cy.intercept('/**', {fixture})` → P1 mock-detector audit row appears with `mock_score >= 0.5`
+- [ ] Smoke probe writes a plan file with "Read the diff. Verify it works." → P2 plan-quality audit row appears with `cgs <= 0.2`
+- [ ] Smoke probe in a C#-declared session attempts to Write a `.py` file → P3 Invariant 1 audit row appears
+- [ ] All three smoke decisions are logged but not enforced under `RC_SHADOW_MODE=1`
 
 #### Manual
 
-- [ ] Re-run T1 prompt against current code, confirm at least one block stderr appears in transcript
+- [ ] Run a full iter-1 task replay (T1, T9, E1) under updated Setup B, confirm transcripts contain audit references to all three new layers
 
 ### Dependencies
 
-Requires nothing. Blocks P1, P2, P3, P6.
+Requires P1, P2, P3 hook code to exist (else flags are no-ops). Blocks P6 (eval spawn must
+verify wiring before committing to n=3 budget).
 
 ---
 
@@ -329,15 +342,19 @@ Requires P4 (labeled corpus must exist). Runs after 4-week shadow-mode window.
 ## Recommended Sequencing
 
 ```
-Week 1:  P0 (1 day) → re-run iter-1 prompts in shadow-mode to baseline
 Week 1:  P1 + P2 in parallel (2 dev streams, 3 days each)
 Week 2:  P3 (4 days; touches 5 hook files)
 Week 2:  P4 in parallel (validation harness, blocks P7 only)
+Week 3:  P0 (verify wiring + add iter-2 flags) → smoke probe
 Week 3:  P5 (Qwen sidecar) + P6 (eval methodology)
-Week 4:  Shadow-mode collection
+Week 4:  Shadow-mode collection in real Setup B sessions
 Week 5:  Run iter-2 with n=3 + 2 judges
 Week 6+: P7 calibration on shadow data; promote enforcement
 ```
+
+P0 moved to Week 3 because it depends on P1/P2/P3 hook code existing (the iter-2 feature
+flags are no-ops without the hooks). Setup B's existing wiring continues to function for
+the original 5 hooks during P1-P3 development.
 
 ## Expected outcome
 
