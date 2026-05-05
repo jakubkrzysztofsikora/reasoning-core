@@ -390,6 +390,9 @@ def main() -> None:
     if not pairs:
         _exit(0)
 
+    # Track whether ANY pair tripped a shadow_blocked decision so we don't
+    # silently emit a final `allowed` row that double-counts a shadow event.
+    shadow_hit = False
     for before_src, after_src in pairs:
         try:
             report = _post_score(file_path, before_src, after_src)
@@ -446,11 +449,43 @@ def main() -> None:
             )
             return  # pragma: no cover
 
+        # P1 mock-detector: if the SSM didn't flag regression but this is
+        # a test_code path AND the heuristic mock-detector reports likely
+        # mock-instead-of-integrate, raise a flag the same way we'd raise
+        # any other risk dim. Honored under RC_MOCK_DETECTOR=1.
+        try:
+            if (
+                os.environ.get("RC_MOCK_DETECTOR") == "1"
+                and isinstance(report, dict)
+                and report.get("file_kind") == "test_code"
+                and report.get("regression_detected") is not True
+            ):
+                import _mock_detector  # type: ignore
+                from pathlib import Path as _Path
+                project_root = _Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+                if _mock_detector.is_likely_mocked(after_src, project_root):
+                    auth = _mock_detector.integration_authenticity(after_src, project_root)
+                    report = dict(report)
+                    report["regression_detected"] = True
+                    report["mock_detector_triggered"] = True
+                    report["integration_authenticity"] = auth
+                    report["human_summary"] = (
+                        report.get("human_summary", "")
+                        + f" | mock-detector flagged: integration_authenticity={auth:.2f}"
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
         if report.get("regression_detected") is True:
             # RC_SHADOW_MODE=1: log decision but DO NOT enforce. Used during
             # P4 calibration window so shadow-FPR can be measured before
             # promoting any P1-P3 invariant to enforcement.
             if os.environ.get("RC_SHADOW_MODE") == "1":
+                shadow_hit = True
+                # Record-block so retry-detection stays informative even in
+                # shadow — operators want "would-have-blocked-twice" data
+                # during calibration.
+                audit_log.record_block(file_path)
                 _emit_audit(
                     tool_name=tool_name,
                     decision="shadow_blocked",
@@ -462,7 +497,7 @@ def main() -> None:
                     reason="regression_detected_shadow",
                     retry_after_block=is_retry,
                 )
-                continue  # next pair / fall through to allowed
+                continue  # log only; do not enforce
             audit_log.record_block(file_path)
             _emit_audit(
                 tool_name=tool_name,
@@ -479,6 +514,10 @@ def main() -> None:
             return  # pragma: no cover
 
     # All edits cleared.
+    # If any pair landed shadow_blocked, the shadow row has already been
+    # emitted — do NOT also emit `allowed` for the same edit (double-count).
+    if shadow_hit:
+        _exit(0)
     _emit_audit(
         tool_name=tool_name,
         decision="allowed",

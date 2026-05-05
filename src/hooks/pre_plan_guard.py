@@ -281,12 +281,41 @@ def _check_novelty(content: str, project_dir: str) -> List[Dict[str, Any]]:
     return []
 
 
+def _check_specificity(content: str) -> List[Dict[str, Any]]:
+    """P2 plan-quality: composite gate score over heuristic specificity signals.
+
+    Honored under RC_PLAN_QUALITY=1. Adversarial-robustness gate (red-team
+    20 cosmetically-padded plans → CGS<0.5 on >=80%) is a Phase-2 follow-up.
+    """
+    if os.environ.get("RC_PLAN_QUALITY") != "1":
+        return []
+    try:
+        import _plan_quality as pq  # type: ignore
+    except ImportError:
+        return []
+    res = pq.composite_gate_score(content)
+    severity = "block" if res.decision == "reject" else "warn" if res.decision == "warn" else None
+    if severity is None:
+        return []
+    return [{
+        "rule_id": "plan_specificity",
+        "severity": severity,
+        "cgs": res.cgs,
+        "ard": res.ard,
+        "nrd": res.nrd,
+        "gpas": res.gpas,
+        "slr": res.slr,
+        "message": f"Plan specificity below threshold (CGS={res.cgs:.2f}, decision={res.decision}); add file paths, named risks, drop generic checklist phrases.",
+    }]
+
+
 def _gather_warnings(content: str, project_dir: str) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
     warnings.extend(_check_per_file_loc(content))
     warnings.extend(_check_phase_file_ratio(content))
     warnings.extend(_check_boundary_prose(content))
     warnings.extend(_check_novelty(content, project_dir))
+    warnings.extend(_check_specificity(content))
     return warnings
 
 
