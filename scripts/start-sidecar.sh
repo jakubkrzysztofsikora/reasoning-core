@@ -28,12 +28,19 @@ HEALTH_URL="http://${HOST}:${PORT}/health"
 TIMEOUT="${S2_HEALTH_TIMEOUT:-120}"
 LOG_FILE="${S2_LOG_FILE:-/tmp/reasoning-core-sidecar.log}"
 
-PYTHON_BIN="${PYTHON:-python3}"
-
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    echo "ERROR: $PYTHON_BIN not found on PATH" >&2
-    exit 1
-fi
+if [[ -n "${PYTHON:-}" ]]; then                                                                                                                                                       
+      PYTHON_BIN="$PYTHON"
+  elif [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then                                                                                                                                  
+      PYTHON_BIN="${REPO_ROOT}/.venv/bin/python3"                                                                                                                                       
+  else
+      PYTHON_BIN="python3"                                                                                                                                                              
+  fi                                                                                                                                                                                    
+   
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [[ ! -x "$PYTHON_BIN" ]]; then                                                                                                       
+      echo "ERROR: $PYTHON_BIN not found" >&2                     
+      exit 1                                                                                                                                                                            
+  fi                                                              
+echo "Using interpreter: $PYTHON_BIN"
 
 # Ensure the project is importable as the `src` package.
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
