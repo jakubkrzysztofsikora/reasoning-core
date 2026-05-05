@@ -171,6 +171,37 @@ def test_shadow_mode_emits_shadow_blocked_decision():
     assert "shadow_blocked" in src
 
 
+def test_lang_lock_prefix_exemption_top_level_only():
+    """Reviewer fix: substring match silently bypassed src/scripts/, lib/tools/."""
+    import sys
+    sys.path.insert(0, str(_ROOT / "src" / "hooks"))
+    import _session_manifest as sm
+    mani = {"declared_language": "csharp", "lang_allow": []}
+    # Top-level exemption — allowed
+    assert sm.is_path_allowed(mani, "scripts/migrate.py") is True
+    assert sm.is_path_allowed(mani, "tools/cli.py") is True
+    # Substring at depth — NOT allowed (was the security hole)
+    assert sm.is_path_allowed(mani, "src/scripts/evil.py") is False
+    assert sm.is_path_allowed(mani, "lib/tools/x.py") is False
+    # Same-language file regardless of path — allowed
+    assert sm.is_path_allowed(mani, "src/auth/login.cs") is True
+
+
+def test_lang_lock_max_files_cap():
+    """Reviewer fix: detect_initial_language must early-exit on huge worktrees."""
+    import sys, tempfile
+    sys.path.insert(0, str(_ROOT / "src" / "hooks"))
+    import _session_manifest as sm
+    with tempfile.TemporaryDirectory() as td:
+        # Create 100 .py files
+        for i in range(100):
+            (Path(td) / f"f{i}.py").write_text("# x\n")
+        # Cap at 10 → counts should reflect early exit
+        declared, counts = sm.detect_initial_language(td, max_files=10)
+        assert declared == "python"
+        assert sum(counts.values()) <= 10
+
+
 def test_record_shadow_block_separate_namespace():
     """Reviewer fix: shadow blocks must NOT poison is_retry_after_block markers."""
     import importlib

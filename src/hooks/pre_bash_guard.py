@@ -199,11 +199,62 @@ def _is_safe_leading(cmd: str) -> bool:
     return head in SAFE_LEADING_TOKENS
 
 
+_LANG_LOCK_WRITE_RE = re.compile(
+    r"(?:>\s*|>>\s*|tee\b[^|;&]*\s|sed\b[^|;&]*-i\b[^|;&]*|<<\s*[A-Za-z_]+\s+>\s*)"
+    r"['\"]?([^|;&\s]*?\.[A-Za-z]{1,6})\b"
+)
+
+
+def _manifest_disallowed_extension(cmd: str) -> Optional[str]:
+    """If a Bash command writes to a path whose extension is outside the
+    session manifest's declared language family, return the offending path.
+
+    Closes the v2-plan-flagged escape: `Bash(cat > Tests/foo.py <<EOF)`
+    bypasses Layer-3 lang-lock entirely without this check.
+    """
+    if os.environ.get("RC_LANG_LOCK") != "1":
+        return None
+    if os.environ.get("RC_LANG_OVERRIDE") == "1":
+        return None
+    try:
+        # _session_manifest is in the same hooks/ directory.
+        from pathlib import Path as _Path
+        hooks_dir = _Path(__file__).resolve().parent
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        import _session_manifest  # type: ignore
+        cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+        task_spec = os.environ.get("RC_TASK_SPEC") or ""
+        key = _session_manifest.manifest_key(cwd, task_spec)
+        mani = _session_manifest.load(key)
+        if not mani:
+            return None
+        for m in _LANG_LOCK_WRITE_RE.finditer(cmd):
+            target = m.group(1)
+            if not _session_manifest.is_path_allowed(mani, target):
+                return target
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def screen_command(cmd: str) -> tuple[int, str]:
     """Return (exit_code, message). 0 = allow, 2 = block."""
     cmd = cmd.strip()
     if not cmd:
         return 0, ""
+
+    # Layer L3-extension: Bash redirect to a path whose extension is outside
+    # the session manifest's declared language family. Closes the escape
+    # where `cat > Tests/foo.py <<EOF` bypasses pre_edit_guard's Layer-3
+    # lang-lock by going through Bash instead of Edit/Write.
+    bad_ext_path = _manifest_disallowed_extension(cmd)
+    if bad_ext_path:
+        return 2, (
+            "[hybrid-reasoner] BLOCKED: shell write to a path outside "
+            "the session's declared language family.\n"
+            f"  path: {bad_ext_path}"
+        )
 
     # Layer A: hard-deny patterns trump everything except the explicit override.
     deny_reason = _hard_deny_reason(cmd)

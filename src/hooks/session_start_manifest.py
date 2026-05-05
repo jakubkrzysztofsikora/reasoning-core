@@ -50,8 +50,12 @@ def main() -> None:
     _sm.save(manifest)
     if declared:
         sys.stderr.write(
-            f"[hybrid-reasoner] session manifest: declared_language={declared} "
-            f"(override files: # rc:skip-lang or RC_LANG_ALLOW=ext1,ext2)\n"
+            f"[hybrid-reasoner] session manifest: declared_language={declared}\n"
+        )
+    else:
+        sys.stderr.write(
+            "[hybrid-reasoner] session manifest: declared_language=None "
+            "(low-signal worktree; lang-lock will not gate this session)\n"
         )
     sys.exit(0)
 

@@ -89,17 +89,39 @@ def language_for_path(file_path: str) -> Optional[str]:
     return _LANG_FAMILY.get(ext)
 
 
+_DEFAULT_PREFIX_EXEMPTIONS = ("scripts/", "tools/", "bin/")
+
+
+def _matches_prefix_exemption(file_path: str, prefixes: tuple) -> bool:
+    """True if any path component starts with one of the exempt prefixes.
+
+    Reviewer-flagged: substring `prefix in file_path` matches `src/scripts/`,
+    `lib/tools/`, etc. — a silent bypass anywhere in the path. Use path
+    components: only top-level OR repo-relative dirs like `scripts/foo.py`
+    or `tools/x.py` qualify, NOT `src/scripts/evil.py`.
+    """
+    # Normalize: strip leading abs path; check repo-relative parts.
+    norm = file_path.lstrip("/")
+    parts = norm.split("/")
+    for prefix in prefixes:
+        clean = prefix.rstrip("/")
+        # Top-level only (parts[0]) — substring matches at depth=0 only.
+        if parts and parts[0] == clean:
+            return True
+    return False
+
+
 def is_path_allowed(manifest: Optional[dict], file_path: str) -> bool:
     """True if the file_path's language matches manifest's declared language
-    OR is on the allow-list OR sits under a path-prefix exemption."""
+    OR is on the allow-list OR sits under a TOP-LEVEL path-prefix exemption."""
     if not manifest:
         return True
     if not file_path:
         return True
-    # Path-prefix exemptions for polyglot reality (scripts/, tools/)
-    for prefix in ("scripts/", "tools/", "bin/"):
-        if prefix in file_path:
-            return True
+    # Path-prefix exemptions: only top-level dir names. Substring match was a
+    # silent bypass for `src/scripts/evil.py`, `lib/tools/x.cs`, etc.
+    if _matches_prefix_exemption(file_path, _DEFAULT_PREFIX_EXEMPTIONS):
+        return True
     declared = manifest.get("declared_language")
     if not declared:
         return True
@@ -115,23 +137,34 @@ def is_path_allowed(manifest: Optional[dict], file_path: str) -> bool:
     return False
 
 
-def detect_initial_language(cwd: str) -> tuple[Optional[str], dict]:
+def detect_initial_language(cwd: str, max_files: Optional[int] = None) -> tuple[Optional[str], dict]:
     """Walk cwd and report dominant language family + extension distribution.
 
-    O(file count) on the worktree; called once at SessionStart, not per-edit.
+    Bounded by max_files (default RC_LANG_LOCK_MAX_FILES env, fallback 20000)
+    to keep SessionStart latency under control on large monorepos. Excludes
+    .git/node_modules/dist/.venv/etc.
     """
+    if max_files is None:
+        try:
+            max_files = int(os.environ.get("RC_LANG_LOCK_MAX_FILES", "20000"))
+        except ValueError:
+            max_files = 20000
     counts: dict = {}
+    seen = 0
     for root, dirnames, filenames in os.walk(cwd):
-        # Don't descend into common build/cache dirs
         dirnames[:] = [d for d in dirnames if d not in {
             ".git", "node_modules", "dist", "build", ".venv", "venv",
-            "__pycache__", ".cache", "coverage", "target", "obj", "bin",
+            "__pycache__", ".cache", "coverage", "target", "obj",
         }]
         for f in filenames:
             ext = Path(f).suffix.lower()
             if ext:
                 counts[ext] = counts.get(ext, 0) + 1
-    # Aggregate by language family
+            seen += 1
+            if seen >= max_files:
+                break
+        if seen >= max_files:
+            break
     family: dict = {}
     for ext, n in counts.items():
         fam = _LANG_FAMILY.get(ext)
