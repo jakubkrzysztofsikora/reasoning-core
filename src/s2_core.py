@@ -587,28 +587,36 @@ def _compute_risk_vector(
     before_src: str,
     after_src: str,
 ) -> list[float]:
-    # cyclomatic: branch count delta normalised to 20 branches added.
+    # All structural dims measure the DELTA the edit introduces, not the
+    # absolute property of the after-state. A 1-line edit to a busy file
+    # should not saturate fan_out / coupling / depth just because the file
+    # is structurally complex — the edit didn't make it worse.
+
+    # cyclomatic: pure delta (was hybrid with 0.25*b_after absolute leak).
     b_before = _count_branches(parse_before.tree.root_node) if parse_before.tree else 0
     b_after = _count_branches(parse_after.tree.root_node) if parse_after.tree else 0
-    cyclomatic = _norm(max(0, b_after - b_before) + 0.25 * b_after, 20.0)
+    cyclomatic = _norm(float(max(0, b_after - b_before)), 20.0)
 
-    # fan_in / fan_out from call graph.
-    in_counts_after: dict[str, int] = {n: 0 for n in graph_after}
-    for callers in graph_after.values():
-        for callee in callers:
-            if callee in in_counts_after:
-                in_counts_after[callee] = in_counts_after.get(callee, 0) + 1
-    max_fan_in = max(in_counts_after.values(), default=0)
-    max_fan_out = max((len(v) for v in graph_after.values()), default=0)
-    fan_in = _norm(float(max_fan_in), 8.0)
-    fan_out = _norm(float(max_fan_out), 12.0)
+    # fan_in / fan_out: delta of max in/out-degree between before and after graphs.
+    def _max_indeg(graph: dict[str, set[str]]) -> int:
+        counts: dict[str, int] = {n: 0 for n in graph}
+        for callers in graph.values():
+            for callee in callers:
+                if callee in counts:
+                    counts[callee] = counts.get(callee, 0) + 1
+        return max(counts.values(), default=0)
 
-    # depth: max AST depth.
+    fan_in = _norm(float(max(_max_indeg(graph_after) - _max_indeg(graph_before), 0)), 8.0)
+    fan_out_after = max((len(v) for v in graph_after.values()), default=0)
+    fan_out_before = max((len(v) for v in graph_before.values()), default=0)
+    fan_out = _norm(float(max(fan_out_after - fan_out_before, 0)), 12.0)
+
+    # depth: delta of max AST depth (was max(d_before, d_after) — absolute).
     d_before = _max_depth(parse_before.tree.root_node) if parse_before.tree else 0
     d_after = _max_depth(parse_after.tree.root_node) if parse_after.tree else 0
-    depth = _norm(float(max(d_before, d_after)), 40.0)
+    depth = _norm(float(max(d_after - d_before, 0)), 40.0)
 
-    # churn: line-edit-distance (Levenshtein-on-lines simplification = symmetric diff size).
+    # churn: line-edit-distance (already a delta).
     before_lines = (before_src or "").splitlines()
     after_lines = (after_src or "").splitlines()
     set_before = set(before_lines)
@@ -616,23 +624,22 @@ def _compute_risk_vector(
     churn_lines = len(set_before.symmetric_difference(set_after))
     churn = _norm(float(churn_lines), 200.0)
 
-    # coupling: total edges in graph_after (proxy for module-level coupling).
-    edges = sum(len(v) for v in graph_after.values())
-    coupling = _norm(float(edges), 40.0)
+    # coupling: delta of total edges (was absolute on graph_after).
+    edges_after = sum(len(v) for v in graph_after.values())
+    edges_before = sum(len(v) for v in graph_before.values())
+    coupling = _norm(float(max(edges_after - edges_before, 0)), 40.0)
 
-    # cohesion: lack-of-cohesion risk = (isolated nodes / nodes). Cohesion is
-    # undefined when the graph has < 2 nodes (a single function is trivially
-    # "cohesive with itself"; penalising it produces false-positive blocks on
-    # rename / docstring edits to small modules). Treat <2-node graphs as
-    # zero risk and only score cohesion drift when there is structure to
-    # reason about.
-    nodes = len(graph_after)
-    if nodes < 2:
-        cohesion = 0.0
-    else:
-        isolated = sum(1 for v in graph_after.values() if not v)
-        lack_cohesion = _safe_div(float(isolated), float(nodes))
-        cohesion = _norm(lack_cohesion, 1.0)
+    # cohesion: delta of lack-of-cohesion (was absolute). Penalise edits that
+    # *increase* isolated-node ratio, not files that are inherently fragmented.
+    def _lack_cohesion(graph: dict[str, set[str]]) -> float:
+        n = len(graph)
+        if n < 2:
+            return 0.0
+        isolated = sum(1 for v in graph.values() if not v)
+        return _safe_div(float(isolated), float(n))
+
+    cohesion_delta = max(_lack_cohesion(graph_after) - _lack_cohesion(graph_before), 0.0)
+    cohesion = _norm(cohesion_delta, 1.0)
 
     # novelty: cosine-distance of the two pooled embeddings, already in [0,1].
     novelty_dim = _norm(novelty, 1.0)
