@@ -1,382 +1,484 @@
 ---
 date: 2026-05-06
-commit: 7bf2d77
+commit: a53aaa6
 branch: main
 ticket: iter2-eval
 status: draft
+supersedes: 2026-05-06-iter2-100pct-eval-plan.md (v1)
+revision: v2 — incorporates 19 corrections from 3-reviewer adversarial pass
 ---
-# Plan: Iteration-2 Eval — Setup B wins 8/8
+# Plan v2: Iteration-2 Eval — falsifiable goal + reviewer corrections
 
 ## Summary
 
-Iteration 1 of the Setup A vs Setup B eval — Setup B (reasoning-core active) won 6/8.
-T1 (mock-instead-of-integrate) and T9 (generic plan) were real losses: reasoning-core
-ran during the eval but the shipped code has no mock-detector and no plan-specificity
-scorer, so it could not catch either failure mode. E1 was won by Setup B at the
-correctness gate; structural quality is currently flat there because no
-language-convention enforcement exists yet.
+Iteration 1: Setup B (reasoning-core active) won 6/8. T1 (mock-instead-of-integrate)
+and T9 (generic plan) lost because the shipped scoring code lacks a mock-detector and
+a plan-specificity scorer. E1 was won at the correctness gate but structural quality
+was flat because no language-convention enforcement exists.
 
-This plan ships in 7 phases targeting the three observed gaps. After P1–P3, expected
-verdict: Setup B wins 8/8 with measurable margin.
+This v2 plan ships in 8 phases. Three reviewers (LLM scientist, agent-harness engineer,
+senior dev) flagged 19 hard corrections in the v1 draft; v2 incorporates all. Major
+corrections: PreCompact API claim was factually wrong (rewritten to use
+`additionalContext` on session resume); Bash escape vector wide open (now extends
+`pre_bash_guard` to consume the session manifest); n=3 paired Wilcoxon goal was
+statistically unachievable (reframed to sign-test 8/8 → p=0.0039); Mamba-130M is
+unfit for plan-vs-diff grounding (sentence-transformers MiniLM is the default,
+Mamba is the fallback); P7 calibration runs **concurrent** with shadow not after;
+new P-1 phase adds daily-use ergonomics (magic comments, one-shot bypass, `rc`
+CLI) — without these the system is operationally hostile per the senior-dev review.
+
+## Falsifiable goal (replaces v1's "8/8 with measurable margin")
+
+Pre-registered acceptance criterion for iter-2:
+
+- **Primary**: ≥7 of 8 task-mean wins for Setup B with ≥1.0 BARS gap; sign-test
+  across 8 tasks 8/8 → p=0.0039 (binomial). 7/8 → p=0.035, also acceptable.
+- **Secondary**: paired bootstrap 95% CI on suite-mean BARS impl-quality excludes 0.
+- **Statistical floor**: n=3 paired Wilcoxon at α=0.05 is impossible (max one-tailed
+  p=0.25); we abandon the per-task Wilcoxon goal and rely on sign-test + bootstrap.
+- **Drop**: "measurable margin" language is survivorship optimism; replaced with the
+  explicit BARS-gap and CI criteria above.
 
 ## Research References
 
 - thoughts/shared/research/2026-05-05-coherence-delta-calibration.md
 - thoughts/shared/research/2026-05-05-risk-vector-delta-refactor.md
 - thoughts/shared/research/2026-05-05-impl-state-vs-plans.md
-- Iter-2 deep-research synthesis (4 streams): mock-detection, plan-specificity,
-  endurance/pivot-detection, codebase audit.
+- v1 plan + 4 deep-research streams (mock-detection, plan-specificity, endurance,
+  codebase audit) + 3 reviewer adversarial passes (in chat history).
 
 ## Critical context from Iter-1 audit
 
 | Failure | Root cause |
 |---|---|
-| T1 lost (5/5/5/5/5 vs 1/3/3/1/5) | Reasoning-core ran but shipped code has no mock-detector. B wrote `cy.intercept('/**', { fixture })`. `build_call_graph` is symbol-name-only — can't tell real call from mock. |
-| T9 lost (3 plan vs 1 plan) | Reasoning-core ran but `pre_plan_guard.py` has zero specificity scoring. B's plan was generic ("Read full diff once") and passed all 4 existing checks (LOC budget, phase ratio, boundary prose, novelty drift) with no warning. |
-| E1 won at gate, structural quality flat | Setup B passed correctness 10/10. No language-fingerprint hook exists to detect that an agent might substitute Python for required .NET work in a long session. |
+| T1 lost (5/5/5/5/5 vs 1/3/3/1/5) | Reasoning-core ran but shipped code has no mock-detector. `build_call_graph` is symbol-name-only. |
+| T9 lost (3 plan vs 1 plan) | `pre_plan_guard.py` has zero specificity scoring; novelty check measures plan-vs-plan distance, not generic-vs-specific. |
+| E1 won at gate, quality flat | No language-fingerprint hook; `cumulative_drift` computed but never gated. |
+
+## 19 reviewer corrections folded into v2
+
+| # | Correction | Phase |
+|---|---|---|
+| 1 | PreCompact cannot inject systemMessage — rewrite to use `additionalContext` via SessionStart-on-resume / UserPromptSubmit | P3 |
+| 2 | Bash escape vector — extend `pre_bash_guard` to consume session manifest, deny redirects to disallowed extensions | P3 |
+| 3 | Reframe goal: drop "8/8 measurable margin", adopt sign-test 8/8 → p=0.0039 with ≥1.0 BARS gap | Goal |
+| 4 | Default plan-quality embedder = sentence-transformers/all-MiniLM-L6-v2; Mamba = fallback (inverse of v1) | P2, P4 |
+| 5 | P7 (Mahalanobis fit) runs concurrent with P4 shadow window, not after | Sequencing |
+| 6 | Enforcement promotion gated by FPR ≤ 2% on labeled benign + zero blocks on 50-edit golden set, not by calendar | P4, P7 |
+| 7 | New: `# rc:skip` / `# rc:skip-lang` magic comments — per-file/per-edit opt-out | P-1 |
+| 8 | New: `RC_BYPASS_NEXT=1` one-shot bypass auto-clears after next hook call (mirrors `--no-verify`) | P-1 |
+| 9 | New: `rc status` + `rc explain <decision-id>` CLI for env-knob discoverability | P-1 |
+| 10 | New: `RC_LANG_ALLOW=py,sh` allowlist + path-prefix exemption (`scripts/`, `tools/`) | P3 |
+| 11 | Mock-detector heuristics as cheap pre-filter; Stryker mutation score is the actual gate. Require r ≥ 0.6 correlation between heuristic and mutation score | P1 |
+| 12 | Adversarial-robustness gate for CGS — red-team 20 cosmetically-padded plans, require CGS<0.5 on ≥80% | P2 |
+| 13 | OOD plan detection (kNN density estimator) + judge-bias eval (per-dim systematic offset) | P4, P6 |
+| 14 | Calibration corpus filter: exclude amend commits, force-pushes, reverts touching different files than original | P4 |
+| 15 | `RC_GEN_BUDGET_MS=2500` per Qwen call with hard timeout → fail-open to BM25 | P5 |
+| 16 | Single sidecar broker, not two independent servers (Mamba+Qwen Metal contention) | P5 |
+| 17 | Move audit log to `~/.local/share/reasoning-core/events/`, daily gzip rotation, 5GB cap, drop plan/diff bodies (keep hashes+scores) | P-1 |
+| 18 | Linux CI variant — `RC_REASONER_BACKEND=llama` GGUF path mandatory for off-Mac eval reproducibility | P5 |
+| 19 | Drift thresholds 4.0/6.0 are placeholders; bootstrap from synthetic drift trajectories (CUSUM at 5% type-I) | P3, P7 |
 
 ---
 
-## Phase 0: Formalize Setup B for iter-2 (build out post-iter-1 scaffolding)
+## Phase -1: Day-zero ergonomics (NEW — gates daily-use viability)
 
 ### Context
 
-Reasoning-core was active during iter-1 — hooks fired and sidecar served `/score` — but
-through ad-hoc / pre-existing wiring (repo-level `.claude/settings.json` resolved via
-`${CLAUDE_PROJECT_DIR}`, user-level `~/.claude/settings.json`, or direnv-loaded env).
-The `/Users/jakubsikora/eval-setups/B/{.envrc, settings.local.json}` files were created
-**after** iter-1 to formalize Setup B as a reproducible eval target. They are currently
-stubs.
-
-Goal of P0: build out those stubs into a real, version-controlled Setup B definition that
-(a) reproduces the iter-1 wiring deterministically, (b) adds the iter-2 feature flags so
-P1/P2/P3 hook additions become active, and (c) gives the eval spawner a single source of
-truth instead of relying on inherited settings.
+Senior-dev review: "12+ env vars, no `rc-doctor` CLI, no per-file skip — new users
+will rage-quit by day 2." Without per-edit override ergonomics, every block is a
+shell-restart interruption. This phase ships first because P1-P3 introduce more
+gates that compound the friction.
 
 ### Changes
 
-**File `/Users/jakubsikora/eval-setups/B/.envrc`** — Verify the file activates reasoning-core
-on session start. Add iter-2 feature flags so P1/P2/P3 hooks become active under Setup B:
+#### File: `src/rc_cli.py` (new)
 
-```bash
-# Iter-2 additions (defaults to shadow-mode; P4 promotes to enforcement)
-export RC_MOCK_DETECTOR=1
-export RC_PLAN_QUALITY=1
-export RC_LANG_LOCK=1
-export RC_SHADOW_MODE=1   # log decisions, do not enforce, until P4 calibrates
-```
+`rc status` (env knob snapshot, sidecar health, last 5 decisions), `rc explain
+<decision-id>` (full audit row + repair hint trail), `rc bypass-next` (writes
+single-shot kill switch consumed by next PreToolUse), `rc skip-file <path>` (adds
+file path to per-session allow list).
 
-**File `/Users/jakubsikora/eval-setups/B/settings.local.json`** — Confirm `hooks` block
-references `${CLAUDE_PROJECT_DIR}/src/hooks/...` paths so iter-2 hook additions land without
-edits to this file. If the existing block hardcodes paths to specific hook scripts, extend
-the matchers with: `pre_test_guard.py` (P1), `session_start_manifest.py` (P3),
-`pre_compact_guard.py` (P3), `post_batch_lang_audit.py` (P3).
+#### File: `src/hooks/_kill_switches.py` (new)
 
-**File `eval/spawner.py`** — Audit the pre-flight diff check. Add a smoke probe: spawn a
-disposable worktree, execute a synthetic Edit, assert that a row lands in
-`/tmp/rc-events/$(date +%F)/<session>.jsonl` with the expected `decision` field. Refuse to
-run iter-2 evals if the smoke probe fails.
+Reads `~/.local/state/reasoning-core/kill_switches.json` at hook execution time.
+Switches: `bypass_next` (consumed-on-read), `skip_files: [paths]`, `disable_until:
+<iso-ts>`. Env vars are fallback only. **Switches read at hook-call time, not
+session boot** — operator can flip without restarting Claude.
+
+#### File: `src/hooks/_magic_comments.py` (new)
+
+Parser for in-file directives. Supports:
+
+- `# rc:skip` (Python/sh comment) or `// rc:skip` (JS/TS/C#) anywhere in first
+  20 lines → bypass all reasoning-core checks for this file.
+- `# rc:skip-lang` → bypass language fingerprint lock only.
+- `# rc:skip-mock` → bypass mock-detector only.
+- `# rc:skip-quality` → bypass plan-quality CGS only.
+- `# rc:override <reason>` → allow but log the override + reason in audit.
+
+#### File: `src/hooks/pre_edit_guard.py`
+
+Read magic comments + kill switches before any other check. If matched, exit 0
+with audit row `decision=allowed_via_override`.
+
+#### File: `src/hooks/audit_log.py`
+
+Move audit destination from `/tmp/rc-events/` to
+`~/.local/share/reasoning-core/events/YYYY-MM-DD/`. Daily gzip rotation, retain
+90 days, 5GB hard cap (oldest-first eviction). Drop plan/diff bodies — hash+score
+only. Add `decision_id` UUID to each row so `rc explain` can resolve.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] Smoke probe writes a Cypress test file with `cy.intercept('/**', {fixture})` → P1 mock-detector audit row appears with `mock_score >= 0.5`
-- [ ] Smoke probe writes a plan file with "Read the diff. Verify it works." → P2 plan-quality audit row appears with `cgs <= 0.2`
-- [ ] Smoke probe in a C#-declared session attempts to Write a `.py` file → P3 Invariant 1 audit row appears
-- [ ] All three smoke decisions are logged but not enforced under `RC_SHADOW_MODE=1`
+- [ ] `rc status` exits 0 in under 200 ms; lists all 12+ env knobs with current values
+- [ ] `RC_BYPASS_NEXT=1 echo '{}' | python pre_edit_guard.py` allows the next call then auto-clears
+- [ ] File containing `# rc:skip` on line 3 → audit row `decision=allowed_via_override` and SSM scoring is skipped
+- [ ] After 90 days of audit data, gzip rotation kicks in and disk usage stays ≤ 5GB
 
 #### Manual
 
-- [ ] Run a full iter-1 task replay (T1, T9, E1) under updated Setup B, confirm transcripts contain audit references to all three new layers
+- [ ] New user reads README "Run it locally" section, hits a block, runs `rc explain <id>` and resolves without checking source code
 
 ### Dependencies
 
-Requires P1, P2, P3 hook code to exist (else flags are no-ops). Blocks P6 (eval spawn must
-verify wiring before committing to n=3 budget).
+Requires nothing. Blocks P1, P2, P3 (those add gates that compound friction without these escape hatches).
 
 ---
 
-## Phase 1: T1 fix — Mock-detector layer
+## Phase 0: Formalize Setup B for iter-2 (post-iter-1 scaffolding)
+
+[Content unchanged from v1 except: file ownership table updated to include kill_switches.json setup; smoke probe checks magic-comment parser as well]
+
+---
+
+## Phase 1: T1 fix — Mock-detector layer (heuristic pre-filter + mutation gate)
+
+### Reviewer corrections folded in
+
+- Heuristics are cheap pre-filter only; **Stryker mutation score is the gate** (correction #11)
+- Require r ≥ 0.6 correlation between heuristic-score and mutation-score on 30-file labeled corpus before promoting to enforcement
 
 ### Changes
 
-**File `src/hooks/_mock_detector.py` (new)** — Pure-AST/regex helpers:
+**File `src/hooks/_mock_detector.py` (new)** — same 3 signals as v1:
+- `wildcard_intercept_ratio` (Cypress AST)
+- `mock_to_real_client_ratio` (lexicon imports)
+- `mystery_guest_score` (fixture-vs-seed reconciliation)
 
-- `wildcard_intercept_ratio(file_content)` — Cypress AST walk; `cy.intercept('/**' or wildcard, { fixture | object })` ÷ total intercepts. Threshold 0.5.
-- `mock_to_real_client_ratio(file_content)` — count imports against two lexicons:
-  - Mock: `jest.mock`, `sinon`, `unittest.mock`, `Moq`, `NSubstitute`, `msw`, `nock`, `WireMock`
-  - Real: `axios`, `fetch`, `HttpClient`, `pg`, `amqplib`, `@azure/service-bus`, `requests`
-- `mystery_guest_score(file_path, repo_root)` — fixture IDs in test file ∩ seed-file IDs; 1.0 = no overlap (fabricated).
+Output: cheap heuristic score in [0, 1].
 
-**File `src/hooks/pre_edit_guard.py`** — Add a post-SSM-score check for `_file_kind == "test_code"`. If any of the 3 mock signals exceeds threshold, override `regression_detected=True`.
+**File `eval/stryker_runner.py` (new)** — Run StrykerJS / Stryker.NET / mutmut
+scoped to `**/adapters/**` and `**/clients/**`. If mutation-score on those files
+< 0.5 after the agent's test suite runs, that's the actual gate signal. Heuristic
+score is the cheap proxy that triggers the (slow) mutation run.
 
-**File `src/s2_core.py`** — Add a 9th risk dim `integration_authenticity` = `1 − max(wildcard_intercept_ratio, mock_to_real_client_ratio, mystery_guest_score)` on `ImpactReport`.
+**File `src/hooks/pre_edit_guard.py`** — Cheap path: if heuristic score >= 0.5
+and `_file_kind == "test_code"`, mark for mutation-test in CI (don't block at
+edit time; mutation testing is too slow). Block only on second-edit if first
+edit's mutation run came back vacuous.
+
+**File `src/s2_core.py`** — 9th risk dim `integration_authenticity` = `1 − heuristic_score`.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] `tests/test_mock_detector.py`:
-  - `cy.intercept('/**', {fixture: 'a.json'})` → `wildcard_intercept_ratio = 1.0` → block
-  - `cy.intercept('/api/auth', (req) => req.continue())` → 0.0 → allow
-  - replay-attack T1's actual artifact from iter-1 → blocks
+- [ ] `tests/test_mock_detector.py`: synthetic Cypress test with `cy.intercept('/**', {fixture})` → heuristic score = 1.0; same with `req.continue()` → 0.0
+- [ ] **Calibration test**: on a 30-file labeled corpus (mix of legit-fixture and mock-instead-of-integrate), Spearman r ≥ 0.6 between heuristic score and Stryker mutation score
+- [ ] Replay-attack T1's iter-1 artifact → heuristic score >= 0.5 AND CI mutation run produces surviving mutants → blocks via second-pass gate
 
 #### Manual
 
-- [ ] Re-run T1 prompt under iter-2 wiring; agent's first attempt at `cy.intercept('/**', ...)` produces a block stderr with the specific repair hint
+- [ ] Re-run T1 prompt under iter-2; agent's first attempt at `cy.intercept('/**', ...)` produces a heuristic warning at edit time + a mutation-test failure in CI
 
 ### Dependencies
 
-Requires P0.
+Requires P-1 (override ergonomics), P0 (Setup B formalized).
 
 ---
 
-## Phase 2: T9 fix — Plan-quality scoring (CGS composite gate)
+## Phase 2: T9 fix — Plan-quality scoring with falsifiable embedder choice
+
+### Reviewer corrections folded in
+
+- Default plan-quality embedder = `sentence-transformers/all-MiniLM-L6-v2` (correction #4); Mamba is fallback only after embedder-fitness 3σ test passes for both
+- CGS weights: uniform 1/6 + L2 prior until n ≥ 60 labeled plans (correction from LLM scientist re overfitting)
+- Adversarial-robustness gate: red-team 20 cosmetically-padded plans, require CGS < 0.5 on ≥ 80% (correction #12)
 
 ### Changes
 
-**File `src/hooks/_plan_quality.py` (new)** — 6 specificity signals + composite gate:
+**File `src/hooks/_plan_quality.py` (new)** — Same 6 signals (ARD, NRD, GPAS, WWDS, CDGS, SLR) but:
 
-- `ard(plan)` — Artifact-Reference Density (file paths + endpoints + line refs ÷ sentences). Pass ≥ 0.4.
-- `nrd(plan)` — Named-Risk Density (lexicon: N+1, race condition, TOCTOU, deadlock, SQLi, XSS, CSRF, dead code, unbounded pagination, missing auth check, off-by-one). Pass ≥ 0.2.
-- `gpas(plan)` — Generic-Phrase Anti-Pattern Score (blocklist + cosine similarity to known-generic corpus ≥ 0.82). Pass < 0.15.
-- `wwds(plan)` — What/Why Differentiation. Pass ≥ 0.5.
-- `cdgs(plan, diff)` — Claim-to-Diff Grounding (FActScore-style; uses Qwen critic from P5 if available, falls back to BM25). Pass ≥ 0.6.
-- `slr(plan)` — Specificity-to-Length Ratio. Pass ≥ 0.35.
-- `composite_gate_score` returns CGS ∈ [0,1] with weights {ard:0.25, nrd:0.20, gpas:0.20, wwds:0.15, cdgs:0.15, slr:0.05}.
+- GPAS uses MiniLM embeddings by default (`sentence-transformers/all-MiniLM-L6-v2`); falls back to Mamba only if MiniLM unavailable AND Mamba passed embedder-fitness test
+- CGS weights start uniform `{ard: 1/6, nrd: 1/6, gpas: 1/6, wwds: 1/6, cdgs: 1/6, slr: 1/6}` with L2 prior until n ≥ 60 labeled plans accumulate; weights then fit via leave-one-out logistic with bootstrap CI
 
-**File `src/hooks/pre_plan_guard.py`** — Add `_check_specificity` to `_gather_warnings()`. CGS ≥ 0.75 pass, 0.5–0.75 warn, < 0.5 hard reject (gated by `RC_PLAN_BLOCK=1`).
+**File `src/hooks/pre_plan_guard.py`** — `_check_specificity` returns CGS. Gate: ≥ 0.75 pass, 0.5–0.75 warn, < 0.5 hard reject (gated by `RC_PLAN_BLOCK=1`).
+
+**File `tests/test_plan_quality_adversarial.py` (new)** — Red-team corpus: 20
+cosmetically-padded plans (generic prose with file paths and risk-keywords sprinkled).
+Required: CGS < 0.5 on ≥ 80% to ship enforcement.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] `tests/test_plan_quality.py`:
-  - Setup B's iter-1 plan → CGS = 0.0 → reject
-  - Setup A's iter-1 plan → CGS ≥ 0.85 → accept
-  - Generic-but-with-paths edge case → CGS in warn band
-
-#### Manual
-
-- [ ] Re-run T9 prompt; agent's first generic-checklist plan produces a block stderr listing failed signals
+- [ ] Setup B's iter-1 plan ("Read full diff once") → CGS = 0.0
+- [ ] Setup A's iter-1 plan → CGS ≥ 0.85
+- [ ] Adversarial corpus: 16/20 (≥80%) padded-generic plans score CGS < 0.5
+- [ ] CGS weights converge via leave-one-out CV with bootstrap CI excluding 0 (after n ≥ 60 labeled plans)
 
 ### Dependencies
 
-Requires P0. Soft-requires P5 for CDGS+WWDS — degrades to BM25 + heuristic-only if Qwen unavailable.
+Requires P-1, P0. Soft-requires P5 for CDGS+WWDS — degrades to BM25 + heuristic only.
 
 ---
 
-## Phase 3: Long-horizon hardening — language fingerprint + cumulative-drift gates
+## Phase 3: Long-horizon hardening — corrected mechanism + Bash extension
+
+### Reviewer corrections folded in
+
+- PreCompact cannot inject systemMessage (correction #1) — rewritten to write disk + inject via `additionalContext` on next SessionStart/UserPromptSubmit
+- pre_bash_guard must consume session manifest (correction #2) — without this, `Bash(cat > Tests/foo.py <<EOF)` bypasses Invariant 1 entirely
+- Manifest keyed by `(cwd_hash, task_spec_hash)` not raw `session_id` — survives `--resume` (agent-harness reviewer)
+- `RC_LANG_ALLOW` allowlist + path-prefix exemption (`scripts/`, `tools/`) for polyglot reality (correction #10)
+- Drift thresholds: bootstrap from synthetic CUSUM injections (correction #19), placeholder values labeled as such
 
 ### Changes
 
-**File `src/hooks/session_start_manifest.py` (new)** — SessionStart hook. Snapshots file-extension distribution under task scope. Writes `thoughts/shared/session_state/<session_id>.json` with `{declared_language, framework, ext_distribution, task_spec_hash}`.
+**File `src/hooks/session_start_manifest.py` (new)** — Keyed by `sha256(cwd + task_spec_text)`. On SessionStart, if a manifest with matching key < 24h old exists, rehydrate it. Stores: declared language family, framework, ext distribution, allowlisted extensions (`RC_LANG_ALLOW`), allowlisted path prefixes.
 
-**File `src/hooks/pre_edit_guard.py`** — Add 2 invariant checks before SSM scoring:
-- Invariant 1 — Language Fingerprint Lock: read manifest. If `Path(file_path).suffix` not in declared language family → deny.
-- Invariant 2 — Cumulative Drift Gate: existing field already computed. Warn at 4.0, deny at 6.0 (override `RC_DRIFT_OVERRIDE=1`).
+**File `src/hooks/pre_edit_guard.py`** — Add Invariants 1+2 BEFORE reconstruction (cheap, fail-fast, agent-harness reviewer ordering):
+- Invariant 1: language fingerprint lock with allowlist + path-prefix exemption
+- Invariant 2: cumulative_drift gate (warn 4.0, deny 6.0 — placeholders, recalibrated in P7 from synthetic CUSUM)
 
-**File `src/hooks/pre_plan_guard.py`** — Invariant 5: Framework Pivot in Plan. Parse plan for technology declarations and compare against session manifest.
+**File `src/hooks/pre_bash_guard.py`** — Extend `screen_command()` to read session manifest and detect heredoc/`>` redirect / `tee` / `sed -i` / `python -c open(...,'w')` targeting paths in disallowed-language families. Without this extension, P3 Invariant 1 is theatre.
 
-**File `src/hooks/pre_task_guard.py`** — Invariant 4: Subagent Language Pivot. Extend `screen_prompt()` regex.
+**File `src/hooks/pre_plan_guard.py`** — Invariant 5: Framework Pivot in Plan (regex for `pip install`, `requirements.txt`, `pytest`, `import unittest` against C# manifest).
 
-**File `src/hooks/pre_compact_guard.py` (new)** — PreCompact hook. Serializes session state + re-injects "Task language: C#. Test framework: xUnit." as `systemMessage` on next turn.
+**File `src/hooks/pre_task_guard.py`** — Invariant 4: Subagent Language Pivot.
 
-**File `src/hooks/post_batch_lang_audit.py` (new)** — PostToolUse rolling extension audit. If non-declared-language % > 20%, injects warning.
+**File `src/hooks/pre_compact_guard.py` (new)** — PreCompact hook serializes manifest + the original task spec text to `~/.local/state/reasoning-core/sessions/<key>.json`. **Does not** attempt to inject `systemMessage` (was wrong in v1).
+
+**File `src/hooks/session_resume_inject.py` (new)** — UserPromptSubmit hook fires on first user turn after resume. Reads matching session state and emits `additionalContext` containing "Task language: C#. Framework: xUnit. Do not substitute Python." This is the supported Claude Code mechanism (per agent-harness reviewer).
+
+**File `src/hooks/post_batch_lang_audit.py` (new)** — PostToolUse rolling extension audit. If non-declared-language % > 20%, injects warning via `additionalContext` on next turn.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] `tests/test_lang_invariants.py`:
-  - Session declared C#, agent attempts `Write Tests/foo.py` → block (Invariant 1)
-  - Same write with `RC_LANG_OVERRIDE=1` → allow + audit-log entry
-  - cumulative_drift = 5.0 → warn (Invariant 2); = 6.5 → deny
-  - Plan with "use pytest" against C# manifest → block (Invariant 5)
-  - Subagent prompt with `pip install` against C# manifest → block (Invariant 4)
-- [ ] PreCompact handoff produces `session_state/<id>.json` with manifest preserved
+- [ ] Session declared C# manifest, agent attempts `Write Tests/foo.py` → block (Invariant 1)
+- [ ] Same agent attempts `Bash(cat > Tests/foo.py <<EOF\npass\nEOF)` → block (extended pre_bash_guard) — **this is the must-fix from v1**
+- [ ] Manifest with `RC_LANG_ALLOW=py` set → `Tests/foo.py` allowed
+- [ ] Path under `scripts/` allowed even without env override
+- [ ] PreCompact writes `sessions/<key>.json` with manifest + task_spec; subsequent resume injects `additionalContext` with task-language anchor
+- [ ] Cumulative drift = 5.0 → warn; = 6.5 → deny; thresholds recalibrated from synthetic CUSUM in P7
 
 ### Dependencies
 
-Requires P0. Cumulative drift threshold needs P7 calibration eventually.
+Requires P-1, P0. Cumulative drift recalibration needs P7 (concurrent with shadow).
 
 ---
 
-## Phase 4: Validation harness (P0 from prior co-reasoner research, promoted)
+## Phase 4: Validation harness + concurrent calibration
+
+### Reviewer corrections folded in
+
+- P7 calibration runs concurrent with shadow, not after (correction #5)
+- Enforcement promotion gated by FPR ≤ 2% on labeled benign + zero blocks on 50-edit golden set, not by calendar (correction #6)
+- OOD plan detection via kNN density estimator (correction #13)
+- Calibration corpus filter: exclude amend, force-push, reverts-touching-different-files (correction #14)
+- 4-week shadow inadequate for FPR estimation; need 9 weeks for ±2% CI half-width on 5% FPR
 
 ### Changes
 
-**File `eval/validate_embedder.py` (new)** — 50 repo files vs 50 wiki paragraphs; mean intra-code cosine vs cross-modal cosine; require ≥ 3σ separation. If fails, fall back to `sentence-transformers/all-MiniLM-L6-v2`.
+**File `eval/validate_embedder.py` (new)** — Run for both Mamba-130M and MiniLM-L6. Pass gate is 3σ separation on intra-code vs cross-modal cosine PLUS Cohen's d ≥ 0.8 on generic-vs-specific plan corpus (n=30 each). MiniLM is the default; Mamba enabled only if it also passes both gates.
 
-**File `eval/calibration_corpus.py` (new)** — Walk last 6mo git history. Label `merged-and-stable-7d` as negatives, `reverted-within-7d` as positives. Stratified by file_kind. Output: `eval/calibrated/labels.jsonl`.
+**File `eval/calibration_corpus.py` (new)** — Walk last 6mo git history. Label `merged-and-stable-7d` as negatives, `reverted-within-7d` as positives. **Exclusions**: amend commits, force-pushes (compare reflog), reverts where revert-diff touches different file set than original. Stratified by file_kind. Output ≥ 200 rows, ≥ 30 per kind.
 
-**File `eval/shadow_mode.py` (new)** — All P1-P3 invariants ship with `RC_SHADOW_MODE=1` honored — log decisions, do not enforce. 4-week shadow window before flipping.
+**File `eval/golden_set.py` (new)** — 50 known-benign edits hand-curated. Used as the regression gate before promoting any P1/P2/P3 invariant from shadow → enforcement. Zero blocks required.
+
+**File `src/hooks/_ood_detector.py` (new)** — kNN density estimator on plan embeddings. Plans more than k-nearest-mean cosine + 3σ from existing approved plans → route to human review, never auto-reject.
+
+**File `eval/shadow_mode.py` (new)** — All P1-P3 invariants honor `RC_SHADOW_MODE=1` (audit-only). Promotion criteria below; not time-based.
+
+### Promotion criteria (replaces "4-week window")
+
+Promote shadow → enforcement when ALL hold:
+- Shadow-FPR ≤ 2% on labeled benign corpus from `calibration_corpus.py`
+- Zero blocks on the 50-edit golden set
+- For embedder-dependent gates (CGS): leave-one-out CV bootstrap CI excludes 0
+- For mutation-gated mock-detector: heuristic↔mutation Spearman r ≥ 0.6 on 30-file corpus
+- Adversarial CGS test: ≥ 80% of red-team padded plans score CGS < 0.5
+
+These typically require 8–10 weeks of shadow data given the scientist reviewer's
+n-estimate (450 negatives for ±2% CI on 5% FPR), not 4.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] `python -m eval.validate_embedder` exits 0 with `separation_sigma >= 3.0`
-- [ ] `eval/calibrated/labels.jsonl` has ≥ 200 rows, ≥ 30 per kind
+- [ ] `python -m eval.validate_embedder --model minilm-l6` exits 0 with both fitness gates passing
+- [ ] `eval/calibrated/labels.jsonl` has ≥ 200 rows, ≥ 30 per kind, with exclusion filters logged
 - [ ] All P1-P3 hooks accept `RC_SHADOW_MODE=1` and exit 0 with audit-only
 
 ### Dependencies
 
-Requires nothing. Blocks P7.
+Requires nothing for harness itself. Promotion criteria gate P1-P3 enforcement.
 
 ---
 
-## Phase 5: Generative critic head — Qwen2.5-Coder-1.5B
+## Phase 5: Generative critic head with broker + budgets + Linux variant
+
+### Reviewer corrections folded in
+
+- Single sidecar broker, not two independent servers (correction #16) — Mamba and Qwen multiplexed via one supervisor
+- `RC_GEN_BUDGET_MS=2500` per Qwen call with hard timeout, fail-open to BM25 (correction #15)
+- `RC_REASONER_BACKEND=llama` Linux GGUF path mandatory (correction #18) — without it, eval not reproducible off-Mac
+- Qwen HumanEval is wrong CDGS proxy (LLM scientist) — pre-deployment require Cohen's κ ≥ 0.7 vs 70B+ teacher on 200-pair grounding set
+- Server-side iteration with hard cap (3 critic passes, 6s wall) — agent-harness reviewer; do not expose iteration tool to agent
 
 ### Changes
 
-**File `scripts/start-gen-sidecar.sh` (new)** — Boots `mlx_lm.server --model mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit --port 8766`. Cross-platform via `RC_REASONER_BACKEND={mlx, llama, remote}`.
+**File `src/sidecar_supervisor.py` (new)** — Single broker process. Owns lifecycles
+of Mamba sidecar (port 8765) and Qwen sidecar (port 8766). Symmetric `/health`
+checks every 5s. On either child death: exponential backoff restart, circuit-break
+after 3 consecutive failures (60s cooldown). Exposes `/score` and `/critic` to
+hooks; multiplexes underneath. launchd `KeepAlive` `Crashed=true,SuccessfulExit=false`.
 
-**File `src/gen_client.py` (new)** — Async OpenAI-compatible client. Used by P2's CDGS + P3's Invariant 5 plan analyzer. Temperature pinned to 0 for gate paths.
+**File `scripts/start-sidecar.sh`** — Now launches the supervisor. Honor
+`RC_REASONER_BACKEND={mlx, llama, remote}`:
+- `mlx`: `mlx_lm.server --model mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit`
+- `llama`: `llama-cpp-python` server with `Qwen2.5-Coder-1.5B-Instruct.Q4_K_M.gguf` (Linux CI default)
+- `remote`: HTTP client to a hosted endpoint
 
-**File `scripts/start-sidecar.sh`** — Optionally launch gen-sidecar alongside Mamba sidecar if `RC_REASONER_BACKEND` is set.
+**File `src/gen_client.py` (new)** — Async client. Hard `RC_GEN_BUDGET_MS=2500` per
+call. On timeout or 5xx: fail-open to BM25-only CDGS. Temperature pinned to 0 for
+gate paths. **Server-side iteration**: max 3 critic passes, 6s total wall.
+
+**File `eval/qwen_grounding_eval.py` (new)** — 200-pair internal (claim, diff)
+set scored by 70B+ teacher (e.g., Claude Sonnet via API). Required: Qwen+BM25
+agreement κ ≥ 0.7 on this set before CDGS is trusted in the gate path.
 
 ### Success Criteria
 
 #### Automated
 
-- [ ] `curl -fsS http://127.0.0.1:8766/v1/chat/completions` returns valid response
-- [ ] `gen_client.score_plan_grounding(plan, diff)` returns deterministic scores at temp=0
+- [ ] `curl -fsS http://127.0.0.1:8765/health` returns Mamba + Qwen status from supervisor
+- [ ] Killing Qwen mid-session: supervisor restarts within 5s; `gen_client` falls open to BM25 within 2.5s deadline
+- [ ] `RC_REASONER_BACKEND=llama` works on Linux CI (GGUF artifact in CI cache)
+- [ ] `qwen_grounding_eval.py` reports κ ≥ 0.7 vs 70B teacher
 
 ### Dependencies
 
-Requires P0. Optional for P2 (CDGS gracefully degrades) and P3 (Invariant 5 falls back to keyword-only).
+Requires P0, P-1. Optional for P2/P3 (graceful degradation).
 
 ---
 
-## Phase 6: Eval framework operational changes (no methodology / criteria edits)
+## Phase 6: Eval framework operational changes
 
-### Context
+[Content unchanged from v1 (zero methodology edits) — n=3, second judge, Krippendorff α gate]
 
-Methodology — rubric, prompts, judge prompt template — is frozen by the iter-1
-methodology contract and we cannot influence the criteria. We do not edit T1/T9 prompts,
-the BARS rubric, or `judge_prompt.py`. This phase covers only **operational** params
-already pre-registered in iter-1 §13 as future work for the next iteration: expanding n,
-adding a second judge, enforcing the inter-rater agreement gate.
+### Additional reviewer correction folded in
 
-### Changes
+- Judge-bias eval: 20 anchor items judged by both, compute per-dimension systematic offset (judge A − judge B); Krippendorff α hides additive bias (LLM scientist correction #13)
 
-**File `eval/spawner.py`** — Bump `n=3` per (setup × task) cell (was 1 in iter-1). Add a
-second judge slot (cross-family, non-Gemini) and enforce inter-rater Krippendorff
-α ≥ 0.67 before grades aggregate. Methodology already pre-registers cross-family
-weighting at 2× — no change to that rule. Second judge is an additional grader, not a
-methodology change.
+### Changes (additive only)
 
-### Success Criteria
-
-#### Automated
-
-- [ ] `eval/cli decide-all` passes with α ≥ 0.67 across the two judges
-- [ ] All n=3 runs per cell completed within 90-min cap
-- [ ] Zero edits to `research-claude-code-setup-eval-prompts/`, `rubric.py`, or `judge_prompt.py` (methodology lockdown)
-
-### Dependencies
-
-Requires P0 (Setup B formalized). Independent of P1-P5.
+**File `eval/judge_bias_eval.py` (new)** — Anchor-item bias check. 20 plans/diffs scored by both judges. If per-dim systematic offset > 0.5 BARS points, flag and apply post-hoc correction or escalate.
 
 ---
 
-## Phase 7: Calibration + decision rule (post-shadow-mode)
+## Phase 7: Calibration concurrent with shadow
+
+### Reviewer corrections folded in
+
+- Mahalanobis distance over 9-dim risk space (replaces "any dim > 0.9" OR rule whose effective FPR is ~22.6% at k_eff≈5)
+- Hierarchical Bayes per-kind shrinkage; James-Stein
+- Page-Hinkley/CUSUM monthly recalibration; force after >20% LOC churn
+- Bootstrap from synthetic drift trajectories for cumulative_drift threshold (correction #19)
+- **Critical reorder**: P7 fit runs concurrent with P4 shadow, not sequentially (correction #5)
 
 ### Changes
 
-**File `src/calibration.py` (new)** — Mahalanobis distance over 8-or-9-dim risk space. Hierarchical Bayes per-kind shrinkage; James-Stein. Bootstrap CI (B=1000) on each threshold.
+**File `src/calibration.py` (new)** — Mahalanobis with hierarchical Bayes shrinkage. Bootstrap CI (B=1000) on each threshold; report width.
 
 **File `eval/recalibrate.py` (new)** — Monthly Page-Hinkley/CUSUM on rolling 90-day window. Force recalibration after >20% LOC churn.
 
+**File `eval/synthetic_drift.py` (new)** — Inject known pivots at known steps into synthetic session traces. Fit CUSUM detector at 5% type-I. Output: drift threshold values for `cumulative_drift` (replacing v1's placeholder 4.0/6.0).
+
 ### Success Criteria
 
 #### Automated
 
-- [ ] Mahalanobis threshold calibrated such that FPR ≤ 5% on labeled benign corpus
-- [ ] Per-kind Bayesian shrinkage produces stable thresholds even with `n_kind = 5`
+- [ ] Mahalanobis threshold: FPR ≤ 5% on labeled benign corpus
+- [ ] Per-kind James-Stein shrinkage produces stable thresholds at n_kind = 5
+- [ ] CUSUM-derived `cumulative_drift` threshold has documented type-I error rate
 
 ### Dependencies
 
-Requires P4 (labeled corpus must exist). Runs after 4-week shadow-mode window.
+Requires P4 (labeled corpus). **Runs concurrent with P4 shadow window**, not after. Promotion of P1-P3 enforcement requires P7 thresholds in place.
 
 ---
 
-## Risk Assessment
+## Risk Assessment (revised)
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| P1 mock-detector false-positives on legitimate Cypress fixtures | Medium | Medium | Ship in shadow-mode first (P4); calibrate thresholds against fixture-heavy specs |
-| P2 plan-quality false-rejects on legitimate brief plans | Medium | High | CGS warn-band (0.5–0.75) requires human approval; calibrate on existing `thoughts/shared/plans/` |
-| P3 language-fingerprint blocks legitimate cross-language work | Medium | Medium | `RC_LANG_OVERRIDE=1` per-shell override |
-| Qwen 1.5B HumanEval ~43% means hallucinated CDGS scores | High | Medium | Pin temp=0; ensemble with BM25; require BM25 + Qwen agreement |
-| Setup B becomes too slow under all 6 hooks | Medium | High | All P1-P3 hooks accept `RC_SHADOW_MODE=1`; profile p95 before enabling enforcement |
-| Iter-2 verdict still inconclusive at n=3 | Low | High | Methodology already proves at n=3 there's enough data for paired Wilcoxon |
+| MiniLM-L6 also fails embedder-fitness on plans (both fail) | Low | High | Fall back to BM25 + lexicon-only signals; CDGS deferred until viable embedder found |
+| Mutation-test gate latency too slow for daily use | High | Medium | Mutation runs in CI not at edit time; heuristic is the edit-time signal, mutation is the second-pass gate |
+| Adversarial CGS gate <80% on red-team corpus | Medium | High | Iterate: extend NRD lexicon, add structural-diversity check, retest |
+| Linux CI llama.cpp path slower than Mac MLX | High | Low | Ship `RC_GEN_BUDGET_MS=5000` for CI; degrade to BM25 sooner if needed |
+| PreCompact `additionalContext` doesn't reliably reach next turn | Medium | High | Belt-and-suspenders: also write CLAUDE.md anchor; UserPromptSubmit hook re-injects on every turn for first 5 turns post-resume |
+| Goal still unmeasurable at n=3 even with sign-test | Low | High | Sign-test 8/8 → p=0.0039 is reachable; if 7/8 with 1-tied → use BARS-gap as tiebreaker per pre-registered criterion |
+| Daily-use override pattern abused (every block bypassed) | Medium | Medium | `rc:override <reason>` requires a reason string logged in audit; analyze override rate per session in shadow review |
 
 ## Rollback Strategy
 
-- Each phase ships behind an env knob (`RC_MOCK_DETECTOR=1`, `RC_PLAN_QUALITY=1`, `RC_LANG_LOCK=1`). Default off until shadow-mode validates.
-- Setup B's `.envrc` and `settings.local.json` are version-controlled. Revert via `git checkout`.
-- New hook files can be removed from `settings.local.json` `hooks` block without touching the source.
-- If P0's wiring breaks the eval entirely, the spawner's pre-flight check should refuse to run.
+Each phase ships behind an env knob; defaults off until shadow + promotion criteria pass. P-1 ergonomics hooks (magic comments, kill switches) are non-blocking — a broken `rc_cli.py` doesn't stop reasoning-core. Setup B's `eval-setups/B/` files are version-controlled.
 
-## File Ownership Summary
-
-| File | Phase | Change Type |
-|------|-------|-------------|
-| `/Users/jakubsikora/eval-setups/B/.envrc` | P0 | Modify |
-| `/Users/jakubsikora/eval-setups/B/settings.local.json` | P0 | Modify |
-| `eval/spawner.py` | P0, P6 | Modify |
-| `src/hooks/_mock_detector.py` | P1 | Create |
-| `src/hooks/pre_edit_guard.py` | P1, P3 | Modify |
-| `src/s2_core.py` | P1 | Modify |
-| `tests/test_mock_detector.py` | P1 | Create |
-| `src/hooks/_plan_quality.py` | P2 | Create |
-| `src/hooks/pre_plan_guard.py` | P2, P3 | Modify |
-| `tests/test_plan_quality.py` | P2 | Create |
-| `src/hooks/session_start_manifest.py` | P3 | Create |
-| `src/hooks/pre_task_guard.py` | P3 | Modify |
-| `src/hooks/pre_compact_guard.py` | P3 | Create |
-| `src/hooks/post_batch_lang_audit.py` | P3 | Create |
-| `tests/test_lang_invariants.py` | P3 | Create |
-| `eval/validate_embedder.py` | P4 | Create |
-| `eval/calibration_corpus.py` | P4 | Create |
-| `eval/shadow_mode.py` | P4 | Create |
-| `scripts/start-gen-sidecar.sh` | P5 | Create |
-| `src/gen_client.py` | P5 | Create |
-| `scripts/start-sidecar.sh` | P5 | Modify |
-| `src/calibration.py` | P7 | Create |
-| `eval/recalibrate.py` | P7 | Create |
-
-## Recommended Sequencing
+## Sequencing (revised — concurrent calibration)
 
 ```
-Week 1:  P1 + P2 in parallel (2 dev streams, 3 days each)
-Week 2:  P3 (4 days; touches 5 hook files)
-Week 2:  P4 in parallel (validation harness, blocks P7 only)
-Week 3:  P0 (verify wiring + add iter-2 flags) → smoke probe
-Week 3:  P5 (Qwen sidecar) + P6 (eval methodology)
-Week 4:  Shadow-mode collection in real Setup B sessions
-Week 5:  Run iter-2 with n=3 + 2 judges
-Week 6+: P7 calibration on shadow data; promote enforcement
+Week 1-2:  P-1 ergonomics (CLI, magic comments, kill switches, audit log relocation)
+Week 1-2:  P1 + P2 in parallel after P-1 lands
+Week 3-4:  P3 (5 hook files, includes pre_bash_guard extension) + P5 (broker + Qwen + Linux)
+Week 3+:   P4 shadow window OPENS (audit-only); P7 calibration runs CONCURRENT
+Week 5-8:  Shadow data accumulates; P6 framework changes (n=3, second judge, bias eval)
+Week 8-10: Promotion criteria assessed (FPR, golden-set, adversarial, mutation-r)
+Week 10+:  Run iter-2 eval with enforcement promoted ONLY where criteria pass
 ```
 
-P0 moved to Week 3 because it depends on P1/P2/P3 hook code existing (the iter-2 feature
-flags are no-ops without the hooks). Setup B's existing wiring continues to function for
-the original 5 hooks during P1-P3 development.
+P4 shadow window typically takes 8-10 weeks (LLM scientist: 9 weeks for ±2% FPR CI), not 4.
 
-## Expected outcome
+## File Ownership Summary (revised)
+
+[27 v1 files + ~12 new from corrections — full table in v2 commit]
+
+Net new in v2:
+- `src/rc_cli.py`, `src/hooks/_kill_switches.py`, `src/hooks/_magic_comments.py` (P-1)
+- `eval/stryker_runner.py` (P1 mutation gate)
+- `tests/test_plan_quality_adversarial.py` (P2 red-team)
+- `src/hooks/session_resume_inject.py` (P3 corrected mechanism)
+- `eval/golden_set.py` (P4 promotion gate)
+- `src/hooks/_ood_detector.py` (P4 OOD plan detection)
+- `src/sidecar_supervisor.py` (P5 broker)
+- `eval/qwen_grounding_eval.py` (P5 κ gate)
+- `eval/judge_bias_eval.py` (P6 bias check)
+- `eval/synthetic_drift.py` (P7 CUSUM)
+
+Modified additionally in v2: `src/hooks/pre_bash_guard.py` (P3 manifest consume), `src/hooks/audit_log.py` (P-1 path move + rotation).
+
+## Expected outcome (revised, falsifiable)
 
 | Task | Iter-1 Setup B | Iter-2 Setup B target | Mechanism |
 |---|---|---|---|
-| T1 | LOST (3.0 impl) | WIN (≥4.5 impl) | P1 mock-detector blocks `cy.intercept('/**', {fixture})` at write-time |
-| T2 | WIN (5.0 impl) | WIN (≥4.5) | maintain |
-| T5 | WIN (4.5 impl) | WIN (≥4.5) | maintain; P3 catches scope creep earlier |
-| T7 | WIN (5.0 impl) | WIN (≥4.5) | maintain |
-| T8 | WIN (4.0 impl) | WIN (≥4.5) | P2 plan-quality keeps the win on plan_signal margin |
-| T9 | LOST (1.0 plan) | WIN (≥3.5 plan) | P2 forces specific plan; CGS rejects "Read full diff once" at write time |
-| E1 | WIN (gate-pass) | WIN (≥4.0 impl quality) | P3 Invariant 1 prevents language drift; quality dimension lifts |
-| P0 | WIN (3.5 impl) | WIN (≥4.0) | maintain |
+| T1 | LOST (3.0 impl) | WIN (≥4.5 impl) | P1 heuristic warning at edit; CI mutation-score gate catches vacuous tests |
+| T2-T8 (6 wins) | WIN | WIN (≥4.5 impl avg) | maintain via P-1 ergonomics (no friction), P2 plan-quality keeps margins |
+| T9 | LOST (1.0 plan) | WIN (≥3.5 plan) | P2 CGS rejects "Read full diff once" at write; adversarial-robustness verified |
+| E1 | WIN at gate | WIN (≥4.0 impl quality) | P3 Invariant 1 + extended pre_bash_guard prevents language pivot via either Edit or Bash |
 
-Target: Setup B wins 8/8 with measurable margin, n=3 per cell, Krippendorff α ≥ 0.67 between two judges.
+**Pre-registered acceptance**: ≥7/8 task-mean wins for Setup B with ≥1.0 BARS gap; sign-test p ≤ 0.05 across the 8 tasks; suite-mean BARS bootstrap CI excludes 0. Drop "measurable margin" — replaced with explicit BARS-gap and CI criteria.
