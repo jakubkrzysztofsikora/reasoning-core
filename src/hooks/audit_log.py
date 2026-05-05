@@ -28,15 +28,23 @@ only need to add hook-specific fields.
 from __future__ import annotations
 
 import datetime as _dt
+import gzip
 import hashlib
 import json
 import os
 import re
+import shutil
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-_AUDIT_ROOT = "/tmp/rc-events"
+# Audit log lives under XDG state per v2 plan; falls back to /tmp on legacy
+# operators. Override via RC_AUDIT_ROOT for tests.
+_DEFAULT_ROOT = os.path.expanduser("~/.local/share/reasoning-core/events")
+_AUDIT_ROOT = os.environ.get("RC_AUDIT_ROOT", _DEFAULT_ROOT)
+_RETENTION_DAYS = int(os.environ.get("RC_AUDIT_RETENTION_DAYS", "90"))
+_DISK_CAP_BYTES = int(os.environ.get("RC_AUDIT_CAP_BYTES", str(5 * 1024 * 1024 * 1024)))  # 5 GB
 
 # Filename / basename patterns that mark a path as containing secrets.
 _SECRET_PATH_PATTERNS = (
@@ -143,6 +151,7 @@ def new_event(
     """
     base: Dict[str, Any] = {
         "ts": _now_iso(),
+        "decision_id": uuid.uuid4().hex[:12],
         "session_id": _session_id(),
         "project_dir": _project_dir(),
         "tool_name": tool_name,
@@ -171,12 +180,18 @@ def append_event(event: Dict[str, Any]) -> None:
         return
 
     try:
-        day_dir = Path(_AUDIT_ROOT) / _today()
+        today = _today()
+        day_dir = Path(_AUDIT_ROOT) / today
         day_dir.mkdir(parents=True, exist_ok=True)
         path = day_dir / f"{_session_id()}.jsonl"
         line = json.dumps(redacted, ensure_ascii=False, sort_keys=True)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
+        try:
+            from _audit_rotation import rotate  # type: ignore
+            rotate(_AUDIT_ROOT, today)
+        except Exception:  # noqa: BLE001
+            pass
     except OSError as exc:
         try:
             sys.stderr.write(

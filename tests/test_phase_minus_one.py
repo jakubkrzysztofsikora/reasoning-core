@@ -1,0 +1,93 @@
+"""Phase -1 day-zero ergonomics tests."""
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "src" / "hooks"))
+
+
+def test_magic_comments_basic():
+    import _magic_comments as mc
+
+    assert mc.parse("") is None
+    assert mc.parse("nothing here") is None
+    assert mc.parse("# rc:skip").name == "skip"
+    assert mc.parse("// rc:skip-lang").name == "skip-lang"
+    assert mc.parse("<!-- rc:skip-quality -->").name == "skip-quality"
+    d = mc.parse("# rc:override one-line typo fix")
+    assert d.name == "override" and "typo" in d.reason
+
+
+def test_magic_comments_only_first_20_lines():
+    import _magic_comments as mc
+
+    payload = "\n".join(["x"] * 30 + ["# rc:skip"])
+    assert mc.parse(payload) is None
+
+
+def test_magic_comments_bypass_helpers():
+    import _magic_comments as mc
+
+    assert mc.bypasses_all(mc.parse("# rc:skip")) is True
+    assert mc.bypasses_all(mc.parse("// rc:skip-mock")) is False
+    assert mc.bypasses(mc.parse("# rc:skip-lang"), "lang") is True
+    assert mc.bypasses(mc.parse("# rc:skip-lang"), "mock") is False
+    assert mc.bypasses(mc.parse("# rc:override fix"), "lang") is True
+
+
+def test_kill_switches_bypass_next_consumed():
+    import importlib
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["RC_STATE_DIR"] = td
+        os.environ.pop("RC_BYPASS_NEXT", None)
+        import _kill_switches as ks
+        importlib.reload(ks)
+        assert ks.consume_bypass_next() is False
+        ks.set_bypass_next(True)
+        assert ks.consume_bypass_next() is True
+        assert ks.consume_bypass_next() is False
+
+
+def test_kill_switches_env_fallback():
+    import importlib
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["RC_STATE_DIR"] = td
+        os.environ["RC_BYPASS_NEXT"] = "1"
+        import _kill_switches as ks
+        importlib.reload(ks)
+        try:
+            assert ks.consume_bypass_next() is True
+        finally:
+            os.environ.pop("RC_BYPASS_NEXT", None)
+
+
+def test_kill_switches_skip_files():
+    import importlib
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["RC_STATE_DIR"] = td
+        import _kill_switches as ks
+        importlib.reload(ks)
+        ks.add_skip_file("/foo/bar.py")
+        assert ks.is_file_skipped("/foo/bar.py") is True
+        assert ks.is_file_skipped("/foo/other.py") is False
+        ks.remove_skip_file("/foo/bar.py")
+        assert ks.is_file_skipped("/foo/bar.py") is False
+
+
+def test_audit_log_decision_id_present():
+    import audit_log
+    e = audit_log.new_event(tool_name="Edit", decision="allowed")
+    assert "decision_id" in e
+    assert len(e["decision_id"]) == 12
+    assert e["decision"] == "allowed"
+
+
+def test_audit_rotation_no_op_on_missing_dir():
+    import _audit_rotation
+    _audit_rotation.rotate("/tmp/_rc_definitely_missing_dir", "2026-05-06")

@@ -279,6 +279,43 @@ def main() -> None:
     if not file_path:
         _exit(0)
 
+    # Layer 0: day-zero override check. Magic comments and kill switches let
+    # the operator bypass scoring without restarting Claude. Read at hook
+    # call time, not session boot. Allow path emits an audit row tagged
+    # `decision=allowed_via_override` so the override is observable.
+    try:
+        import _kill_switches  # type: ignore
+        import _magic_comments  # type: ignore
+    except ImportError:
+        _kill_switches = None  # type: ignore
+        _magic_comments = None  # type: ignore
+    if _kill_switches is not None:
+        if _kill_switches.is_disabled_globally() or _kill_switches.consume_bypass_next() or _kill_switches.is_file_skipped(file_path):
+            _emit_audit(
+                tool_name=tool_name,
+                decision="allowed_via_override",
+                file_path=file_path,
+                started=started,
+                reason="kill_switch_or_bypass_next",
+            )
+            _exit(0)
+    if _magic_comments is not None:
+        content_for_directive = ""
+        if tool_name == "Write":
+            content_for_directive = tool_input.get("content") or ""
+        elif tool_name in ("Edit", "MultiEdit"):
+            content_for_directive = _read_before_src(file_path)
+        directive = _magic_comments.parse(content_for_directive)
+        if _magic_comments.bypasses_all(directive):
+            _emit_audit(
+                tool_name=tool_name,
+                decision="allowed_via_override",
+                file_path=file_path,
+                started=started,
+                reason=f"magic_comment:{directive.name}:{directive.reason}",
+            )
+            _exit(0)
+
     # Layer 2: lock guard-files. Edits to the hook scripts, settings.json,
     # sidecar source, or grammar loader are denied unless the user explicitly
     # set RC_ALLOW_GUARD_EDIT=1 in the shell that started Claude. This stops
