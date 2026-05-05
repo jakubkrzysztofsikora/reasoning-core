@@ -169,3 +169,20 @@ def test_shadow_mode_emits_shadow_blocked_decision():
     src = (_ROOT / "src/hooks/pre_edit_guard.py").read_text()
     assert "RC_SHADOW_MODE" in src
     assert "shadow_blocked" in src
+
+
+def test_record_shadow_block_separate_namespace():
+    """Reviewer fix: shadow blocks must NOT poison is_retry_after_block markers."""
+    import importlib
+    with tempfile.TemporaryDirectory() as td:
+        # Point both retry-marker file and shadow-marker dir into td
+        os.environ["HOME"] = td
+        os.environ["RC_AUDIT_ROOT"] = td
+        import audit_log as al
+        importlib.reload(al)
+        al.record_shadow_block("/foo/bar.py")
+        # is_retry_after_block reads the MAIN markers, not shadow ones
+        assert al.is_retry_after_block("/foo/bar.py") is False
+        # And the shadow marker file lives separately under HOME state dir
+        shadow_path = Path(td) / ".local/state/reasoning-core/shadow_markers.json"
+        assert shadow_path.exists()

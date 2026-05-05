@@ -78,6 +78,34 @@ def test_gpas_blocklist_hits():
     assert pq.gpas(plan_clean) == 0.0
 
 
+def test_skip_quality_magic_comment_bypasses_check():
+    """# rc:skip-quality at top of plan must bypass _check_specificity."""
+    import os, sys, importlib
+    sys.path.insert(0, str(_ROOT / "src" / "hooks"))
+    os.environ["RC_PLAN_QUALITY"] = "1"
+    try:
+        import pre_plan_guard as ppg
+        importlib.reload(ppg)
+        # Generic plan that would normally fail CGS
+        plan_blocked = "Read the diff. Verify it works."
+        plan_skipped = "# rc:skip-quality\nRead the diff. Verify it works."
+        ws_blocked = ppg._check_specificity(plan_blocked)
+        ws_skipped = ppg._check_specificity(plan_skipped)
+        assert any(w["rule_id"] == "plan_specificity" for w in ws_blocked)
+        assert ws_skipped == [], f"expected magic-comment skip, got {ws_skipped}"
+    finally:
+        os.environ.pop("RC_PLAN_QUALITY", None)
+
+
+def test_plan_quality_disabled_when_flag_unset():
+    import os, sys, importlib
+    sys.path.insert(0, str(_ROOT / "src" / "hooks"))
+    os.environ.pop("RC_PLAN_QUALITY", None)
+    import pre_plan_guard as ppg
+    importlib.reload(ppg)
+    assert ppg._check_specificity("Read the diff. Verify it works.") == []
+
+
 def test_slr_specificity_to_length():
     import _plan_quality as pq
     plan = """

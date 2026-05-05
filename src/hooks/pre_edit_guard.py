@@ -397,7 +397,9 @@ def main() -> None:
         try:
             report = _post_score(file_path, before_src, after_src)
         except SidecarUnavailable as exc:
-            if _fail_closed():
+            # SHADOW=1 honored at sidecar-unavailable too. Calibration window
+            # must not produce hard-blocks on infra flake. (Reviewer #7.)
+            if _fail_closed() and os.environ.get("RC_SHADOW_MODE") != "1":
                 _emit_audit(
                     tool_name=tool_name,
                     decision="blocked",
@@ -451,11 +453,21 @@ def main() -> None:
 
         # P1 mock-detector: if the SSM didn't flag regression but this is
         # a test_code path AND the heuristic mock-detector reports likely
-        # mock-instead-of-integrate, raise a flag the same way we'd raise
-        # any other risk dim. Honored under RC_MOCK_DETECTOR=1.
+        # mock-instead-of-integrate, raise a flag (heuristic, not SSM).
+        # Honored under RC_MOCK_DETECTOR=1. Operator can bypass per-file
+        # via # rc:skip-mock magic comment. Audit row carries
+        # signal_source=mock_heuristic so FPR analysis can separate it
+        # from SSM-driven blocks.
         try:
+            mock_skip = False
+            if _magic_comments is not None:
+                # before_for_directive captured earlier in Layer-2 logic
+                pre_directive = _magic_comments.parse(_read_before_src(file_path))
+                if _magic_comments.bypasses(pre_directive, "mock"):
+                    mock_skip = True
             if (
-                os.environ.get("RC_MOCK_DETECTOR") == "1"
+                not mock_skip
+                and os.environ.get("RC_MOCK_DETECTOR") == "1"
                 and isinstance(report, dict)
                 and report.get("file_kind") == "test_code"
                 and report.get("regression_detected") is not True
@@ -468,10 +480,11 @@ def main() -> None:
                     report = dict(report)
                     report["regression_detected"] = True
                     report["mock_detector_triggered"] = True
+                    report["signal_source"] = "mock_heuristic"
                     report["integration_authenticity"] = auth
                     report["human_summary"] = (
                         report.get("human_summary", "")
-                        + f" | mock-detector flagged: integration_authenticity={auth:.2f}"
+                        + f" | mock-detector flagged: integration_authenticity={auth:.2f}. Override: '# rc:skip-mock'."
                     )
         except Exception:  # noqa: BLE001
             pass
@@ -482,10 +495,11 @@ def main() -> None:
             # promoting any P1-P3 invariant to enforcement.
             if os.environ.get("RC_SHADOW_MODE") == "1":
                 shadow_hit = True
-                # Record-block so retry-detection stays informative even in
-                # shadow — operators want "would-have-blocked-twice" data
-                # during calibration.
-                audit_log.record_block(file_path)
+                # Record into shadow-marker namespace, NOT the main retry
+                # marker. Otherwise legit operator retries after a shadow
+                # block get tagged retry_after_block=True misclassifying
+                # audit data. Reviewer-flagged shadow retry-misfire fix.
+                audit_log.record_shadow_block(file_path)
                 _emit_audit(
                     tool_name=tool_name,
                     decision="shadow_blocked",

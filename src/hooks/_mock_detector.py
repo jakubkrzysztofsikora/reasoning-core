@@ -120,37 +120,97 @@ def _extract_ids(text: str) -> set:
     return set(_ID_LITERAL_RE.findall(text))
 
 
-_SEED_GLOBS = (
-    "seeds", "fixtures/db", "test_data", "factories", "Migrations",
-    "prisma/migrations", "db/seeds", "supabase", "knex/seeds",
-    "alembic/versions", "flyway/sql", "__fixtures__", "tests/fixtures",
-    "test/fixtures", "spec/fixtures",
-)
+_SEED_DIR_NAMES = {
+    "seeds", "fixtures", "test_data", "factories", "Migrations",
+    "migrations", "supabase", "__fixtures__",
+}
 _EXCLUDE_DIRS = {".git", "node_modules", "dist", "build", ".venv", "venv",
                  "__pycache__", ".cache", "coverage", "target", "obj", "bin"}
 
 
-@functools.lru_cache(maxsize=4)
-def _gather_seed_ids(repo_root_str: str) -> frozenset:
-    """Memoized — first call walks the tree, subsequent calls O(1).
+def _persisted_cache_path(repo_root: Path) -> Path:
+    """Disk-persistent cache lives at .rc/seed_ids.<repo_hash>.json so it
+    survives the per-hook fresh-process problem (lru_cache alone is dead
+    weight; each Edit hook is a new Python process)."""
+    import hashlib
+    digest = hashlib.sha1(str(repo_root).encode("utf-8")).hexdigest()[:12]
+    state_dir = Path.home() / ".local" / "state" / "reasoning-core"
+    return state_dir / f"seed_ids.{digest}.json"
 
-    Excludes .git/node_modules/dist/build/.venv/etc. so the glob is bounded.
+
+def _read_seed_cache(cache_path: Path, repo_root: Path) -> frozenset | None:
+    """Return cached frozenset if cache is fresh (<24h, repo HEAD unchanged)."""
+    import json as _json
+    import subprocess as _sp
+    if not cache_path.exists():
+        return None
+    try:
+        meta = _json.loads(cache_path.read_text(encoding="utf-8"))
+        if not isinstance(meta, dict):
+            return None
+        head = _sp.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+        if head and head == meta.get("head") and isinstance(meta.get("ids"), list):
+            return frozenset(meta["ids"])
+    except (OSError, ValueError, _sp.TimeoutExpired, _sp.SubprocessError):
+        pass
+    return None
+
+
+def _write_seed_cache(cache_path: Path, repo_root: Path, ids: frozenset) -> None:
+    import json as _json
+    import subprocess as _sp
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        head = _sp.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+        cache_path.write_text(
+            _json.dumps({"head": head, "ids": sorted(ids)}),
+            encoding="utf-8",
+        )
+    except (OSError, _sp.TimeoutExpired, _sp.SubprocessError):
+        pass
+
+
+def _walk_seed_files(repo_root: Path) -> set:
+    """os.walk with in-place dirnames filtering — does NOT descend into
+    _EXCLUDE_DIRS. Path.glob doesn't honor exclusions; this does.
     """
-    repo_root = Path(repo_root_str)
+    import os as _os
     seed_ids: set = set()
-    for glob_dir in _SEED_GLOBS:
-        for path in repo_root.glob(f"{glob_dir}/**/*"):
-            if not path.is_file():
-                continue
-            if any(part in _EXCLUDE_DIRS for part in path.parts):
-                continue
+    for dirpath, dirnames, filenames in _os.walk(repo_root):
+        # Filter dirnames in place so os.walk doesn't recurse into them
+        dirnames[:] = [d for d in dirnames if d not in _EXCLUDE_DIRS]
+        # Only scan if any segment of dirpath ends with a seed-dir name
+        rel_parts = Path(dirpath).relative_to(repo_root).parts if Path(dirpath) != repo_root else ()
+        if not any(p in _SEED_DIR_NAMES for p in rel_parts):
+            continue
+        for fname in filenames:
+            fpath = Path(dirpath) / fname
             try:
-                if path.stat().st_size > 256_000:
+                if fpath.stat().st_size > 256_000:
                     continue
-                seed_ids.update(_extract_ids(path.read_text(encoding="utf-8", errors="replace")))
+                seed_ids.update(_extract_ids(fpath.read_text(encoding="utf-8", errors="replace")))
             except OSError:
                 continue
-    return frozenset(seed_ids)
+    return seed_ids
+
+
+@functools.lru_cache(maxsize=4)
+def _gather_seed_ids(repo_root_str: str) -> frozenset:
+    """In-process memoization + disk-persistent cache keyed by git HEAD."""
+    repo_root = Path(repo_root_str)
+    cache_path = _persisted_cache_path(repo_root)
+    cached = _read_seed_cache(cache_path, repo_root)
+    if cached is not None:
+        return cached
+    ids = frozenset(_walk_seed_files(repo_root))
+    _write_seed_cache(cache_path, repo_root, ids)
+    return ids
 
 
 def mystery_guest_score(content: str, repo_root: Path) -> float:

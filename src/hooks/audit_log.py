@@ -270,9 +270,49 @@ def record_block(file_path: str, *, now: Optional[float] = None) -> None:
     _save_retry_markers(markers)
 
 
+def record_shadow_block(file_path: str, *, now: Optional[float] = None) -> None:
+    """Like record_block but lives in a separate namespace.
+
+    Reviewer fix: shadow-mode blocks must NOT poison is_retry_after_block,
+    otherwise legit operator retries after a shadow-block get tagged as
+    retry_after_block=True misclassifying audit data. Shadow-block markers
+    live in shadow_markers.json; consumers that want the shadow-retry
+    signal can read it explicitly.
+    """
+    if not file_path:
+        return
+    import json as _json
+    import os as _os
+    import time as _time
+
+    now_ts = now if now is not None else _time.time()
+    state_dir = _os.path.expanduser("~/.local/state/reasoning-core")
+    try:
+        _os.makedirs(state_dir, exist_ok=True)
+    except OSError:
+        return
+    path = _os.path.join(state_dir, "shadow_markers.json")
+    markers: dict = {}
+    try:
+        if _os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                markers = _json.loads(fh.read() or "{}")
+    except (OSError, ValueError):
+        markers = {}
+    markers[file_path] = float(now_ts)
+    cutoff = now_ts - 3600
+    markers = {k: v for k, v in markers.items() if isinstance(v, (int, float)) and v >= cutoff}
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_json.dumps(markers))
+    except OSError:
+        pass
+
+
 __all__ = [
     "append_event",
     "is_retry_after_block",
     "new_event",
     "record_block",
+    "record_shadow_block",
 ]

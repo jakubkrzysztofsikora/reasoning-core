@@ -424,6 +424,43 @@ Requires P4 (labeled corpus). **Runs concurrent with P4 shadow window**, not aft
 
 ---
 
+## Deferred Items Tracker
+
+Items intentionally not shipped in P-1/P0/P1/P2 because they depend on the
+shadow-window corpus, P5 generative critic, or are nice-to-haves that follow
+the must-haves. Tracked here so promotion gates remain honest.
+
+| # | Item | Blocked by | Lands in |
+|---|---|---|---|
+| 1 | Stryker mutation-score correlation gate (require Spearman r ≥ 0.6 between heuristic and mutation score on 30-file corpus) | Labeled corpus (P4) | P4 / P7 |
+| 2 | Adversarial-robustness CGS gate (red-team 20 cosmetically-padded plans, require CGS<0.5 on ≥80%) | Adversarial corpus (P4) | P4 |
+| 3 | WWDS (What/Why Differentiation) signal | P5 generative critic | P5 |
+| 4 | CDGS (Claim-to-Diff Grounding) signal | P5 Qwen critic + 200-pair grounding eval | P5 |
+| 5 | `python -c "os.environ['RC_BYPASS_NEXT']=1; ..."` Bash-escape closure | regex extension on pre_bash_guard | P3 |
+| 6 | `bash -c "rc bypass-next"`, base64-decoded eval, etc. — escape-vector hardening | regex + AST screen on pre_bash_guard | P3 |
+| 7 | SHADOW vs FAIL_CLOSED priority — when sidecar is down + SHADOW=1 + S2_FAIL_CLOSED=1, currently fail-closed wins | requires deciding shadow semantics for sidecar-unavailable | P3 / P4 |
+| 8 | (session_id, tool_use_id) audit dedup on hook re-fire | follow-up to P-1 audit-log | P3 |
+| 9 | `${RC_REPO:?...}` fail-loud fallback in Setup B settings paths | follow-up to P0 | P3 |
+| 10 | `rc tail` / `rc decisions --since=1h` CLI for shadow-audit inspection | follow-up to P-1 CLI | P3 / P4 |
+| 11 | `.rc-ignore` file alternative to in-source `# rc:skip` magic comments | follow-up to P-1 | P4 |
+| 12 | Glob allowlist for legit msw/Cypress mock patterns (e.g. `**/*.component.test.*` exempt) | calibration corpus | P4 |
+| 13 | Mystery-guest "no seeds" audit breadcrumb (currently silent zero) | trivial follow-up | P3 |
+| 14 | CGS weight fitting via leave-one-out logistic | n ≥ 60 labeled plans | P7 |
+| 15 | Per-kind risk-dim env knobs (`S2_KIND_THRESHOLDS` JSON) | follow-up to P-1 calibration | P7 |
+| 16 | `RC_AUDIT_LEGACY_FALLBACK` reader (was dropped from .envrc; legacy `/tmp/rc-events` paths get no data) | scope decision: re-add or accept silent loss | P4 |
+| 17 | Cosine-distance refactor for coherence_delta (replace `raw_l2 / sqrt(hidden)` with `1 − cos_sim`) | full re-tune of per-kind cd thresholds | P7+ |
+| 18 | Docs-drift sweep: 11 stale `/tmp/rc-events/` references in README/ARCHITECTURE/board.json | follow-up | P3 / P4 |
+| 19 | Mock-detector lexicon coverage gaps (responses, vi.mock CallExpression vs setupServer false-pos) | corpus + adversarial calibration | P4 |
+| 20 | Lexicon-Goodhart hardening for NRD (fixed list invites buzzword-stuffing) | adversarial CGS corpus | P4 |
+
+Promotion criteria (already in §P4): an enforcement flip from shadow → real
+block requires (a) labeled-corpus FPR ≤ 2%, (b) zero blocks on the 50-edit
+golden set, (c) for mock-detector: heuristic↔mutation Spearman r ≥ 0.6, (d)
+adversarial CGS test passes ≥80%. Items #1, #2, #5–#9 must land before any
+P1/P2/P3 enforcement promotion.
+
+---
+
 ## Risk Assessment (revised)
 
 | Risk | Likelihood | Impact | Mitigation |

@@ -284,15 +284,26 @@ def _check_novelty(content: str, project_dir: str) -> List[Dict[str, Any]]:
 def _check_specificity(content: str) -> List[Dict[str, Any]]:
     """P2 plan-quality: composite gate score over heuristic specificity signals.
 
-    Honored under RC_PLAN_QUALITY=1. Adversarial-robustness gate (red-team
-    20 cosmetically-padded plans → CGS<0.5 on >=80%) is a Phase-2 follow-up.
+    Honored under RC_PLAN_QUALITY=1. Magic comments # rc:skip / # rc:skip-quality
+    bypass this check (operator-authored opt-out for legitimately terse plans).
     """
     if os.environ.get("RC_PLAN_QUALITY") != "1":
         return []
     try:
+        import _magic_comments  # type: ignore
+        directive = _magic_comments.parse(content)
+        if _magic_comments.bypasses(directive, "quality"):
+            return []
+    except ImportError:
+        pass
+    try:
         import _plan_quality as pq  # type: ignore
     except ImportError:
         return []
+    # Length cap: composite_gate_score scans full text via regex. 256KB is a
+    # generous spec-doc ceiling; truncate to avoid worst-case backtracking.
+    if len(content) > 256_000:
+        content = content[:256_000]
     res = pq.composite_gate_score(content)
     severity = "block" if res.decision == "reject" else "warn" if res.decision == "warn" else None
     if severity is None:
@@ -305,7 +316,7 @@ def _check_specificity(content: str) -> List[Dict[str, Any]]:
         "nrd": res.nrd,
         "gpas": res.gpas,
         "slr": res.slr,
-        "message": f"Plan specificity below threshold (CGS={res.cgs:.2f}, decision={res.decision}); add file paths, named risks, drop generic checklist phrases.",
+        "message": f"Plan specificity below threshold (CGS={res.cgs:.2f}, decision={res.decision}); add file paths, named risks, drop generic checklist phrases. Override: '# rc:skip-quality' on first 20 lines.",
     }]
 
 
