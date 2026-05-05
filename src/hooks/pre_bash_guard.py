@@ -73,6 +73,15 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bchmod\b[^|;&]*-x[^|;&]*src/hooks/"),
     # unset of the safety env var
     re.compile(r"\bunset\s+(?:S2_FAIL_CLOSED|RC_ALLOW_GUARD_EDIT)\b"),
+    # Agent self-arming `rc bypass-next` / direct kill-switch JSON edit.
+    # Reviewer-flagged P0 vuln: agent could shell out to arm a one-shot
+    # bypass and immediately follow with a guarded edit. Block both the
+    # shim and the underlying python invocation.
+    re.compile(r"\brc\s+bypass-next\b"),
+    re.compile(r"\bsrc\.rc_cli\b.*bypass-next\b"),
+    re.compile(r"kill_switches\.json"),
+    # RC_BYPASS_NEXT=1 set on the same command line counts too.
+    re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
 )
 
 # Source-write patterns: shell-level writes that target source files inside

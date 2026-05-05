@@ -447,6 +447,22 @@ def main() -> None:
             return  # pragma: no cover
 
         if report.get("regression_detected") is True:
+            # RC_SHADOW_MODE=1: log decision but DO NOT enforce. Used during
+            # P4 calibration window so shadow-FPR can be measured before
+            # promoting any P1-P3 invariant to enforcement.
+            if os.environ.get("RC_SHADOW_MODE") == "1":
+                _emit_audit(
+                    tool_name=tool_name,
+                    decision="shadow_blocked",
+                    file_path=file_path,
+                    started=started,
+                    before_src=before_src,
+                    after_src=after_src,
+                    report=report,
+                    reason="regression_detected_shadow",
+                    retry_after_block=is_retry,
+                )
+                continue  # next pair / fall through to allowed
             audit_log.record_block(file_path)
             _emit_audit(
                 tool_name=tool_name,

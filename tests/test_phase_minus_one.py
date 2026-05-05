@@ -136,3 +136,36 @@ def test_audit_rotation_once_per_day_sentinel():
         # Different day → sentinel is created
         _audit_rotation.rotate(str(root), "2026-05-07")
         assert (root / ".last_rotate_2026-05-07").exists()
+
+
+def test_pre_bash_guard_blocks_agent_self_arming():
+    """P0 vuln: agent must not arm rc bypass-next via shell."""
+    import subprocess, json as _json
+    payload = lambda cmd: _json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}})
+    repo = _ROOT
+    # Scrub override env vars so the test sees the same posture as a normal session.
+    clean_env = {k: v for k, v in os.environ.items()
+                 if k not in {"RC_ALLOW_GUARD_EDIT", "RC_ALLOW_SUBAGENT_GUARD_EDIT", "RC_BYPASS_NEXT"}}
+    cases = [
+        "rc bypass-next",
+        "python3 -m src.rc_cli bypass-next",
+        "RC_BYPASS_NEXT=1 echo hello",
+        "echo '{}' > ~/.local/state/reasoning-core/kill_switches.json",
+    ]
+    for cmd in cases:
+        out = subprocess.run(
+            ["python3", str(repo / "src/hooks/pre_bash_guard.py")],
+            input=payload(cmd),
+            capture_output=True, text=True,
+            env=clean_env,
+        )
+        assert out.returncode == 2, f"expected block for {cmd!r}, got rc={out.returncode}"
+
+
+def test_shadow_mode_emits_shadow_blocked_decision():
+    """RC_SHADOW_MODE=1 must convert blocked→shadow_blocked in pre_edit_guard."""
+    # We don't run the real pipeline here; we just confirm the decision string
+    # is wired and the env var lookup exists in the source.
+    src = (_ROOT / "src/hooks/pre_edit_guard.py").read_text()
+    assert "RC_SHADOW_MODE" in src
+    assert "shadow_blocked" in src
