@@ -15,8 +15,11 @@ import re
 from typing import NamedTuple, Optional
 
 
+# Anchored to start-of-line (with optional leading whitespace). Without this
+# anchor the directive matches inside string literals / docstrings / trailing
+# code comments — a 1-token Goodhart attack vector. Reviewer-flagged G1.
 _DIRECTIVE_RE = re.compile(
-    r"(?:#|//|<!--)\s*rc:(skip-lang|skip-mock|skip-quality|override|skip)\b[ \t]*([^\n]*?)(?:\s*-->)?\s*$",
+    r"^[ \t]*(?:#|//|<!--)[ \t]*rc:(skip-lang|skip-mock|skip-quality|override|skip)\b[ \t]*([^\n]*?)(?:[ \t]*-->)?[ \t]*$",
     re.MULTILINE,
 )
 _SCAN_LINES = 20

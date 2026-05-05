@@ -91,3 +91,48 @@ def test_audit_log_decision_id_present():
 def test_audit_rotation_no_op_on_missing_dir():
     import _audit_rotation
     _audit_rotation.rotate("/tmp/_rc_definitely_missing_dir", "2026-05-06")
+
+
+def test_magic_comment_anchored_to_line_start():
+    """Reviewer G1: directive in string literal / trailing comment must NOT match."""
+    import _magic_comments as mc
+
+    # Trailing on code — must NOT match
+    assert mc.parse('foo()  # rc:skip') is None
+    # Inside a string literal — must NOT match
+    assert mc.parse('x = "# rc:skip"') is None
+    assert mc.parse("'''# rc:skip'''") is None
+    # Indented comment on its own line — IS valid
+    d = mc.parse("    # rc:skip")
+    assert d is not None and d.name == "skip"
+
+
+def test_kill_switches_disable_until_utc():
+    """Reviewer G5: disable_until must parse as UTC, not local."""
+    import importlib
+    import _kill_switches as ks
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["RC_STATE_DIR"] = td
+        importlib.reload(ks)
+        # Past timestamp → not disabled
+        ks.set_disable_until("2000-01-01T00:00:00Z")
+        assert ks.is_disabled_globally() is False
+        # Far-future timestamp → disabled
+        ks.set_disable_until("2099-01-01T00:00:00Z")
+        assert ks.is_disabled_globally() is True
+
+
+def test_audit_rotation_once_per_day_sentinel():
+    """Reviewer G7: rotation must skip if today's sentinel exists."""
+    import _audit_rotation
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        sentinel = root / ".last_rotate_2026-05-06"
+        sentinel.touch()
+        before_mtime = sentinel.stat().st_mtime
+        _audit_rotation.rotate(str(root), "2026-05-06")
+        # Sentinel mtime unchanged → rotate short-circuited
+        assert sentinel.stat().st_mtime == before_mtime
+        # Different day → sentinel is created
+        _audit_rotation.rotate(str(root), "2026-05-07")
+        assert (root / ".last_rotate_2026-05-07").exists()

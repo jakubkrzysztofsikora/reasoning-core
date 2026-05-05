@@ -300,7 +300,14 @@ def aggregate(run_dir: Path, audit_dir: Path | None = None) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("run_dir", type=str)
-    p.add_argument("--audit-dir", type=str, default="/tmp/rc-events")
+    p.add_argument(
+        "--audit-dir",
+        type=str,
+        default=os.environ.get(
+            "RC_AUDIT_ROOT",
+            os.path.expanduser("~/.local/share/reasoning-core/events"),
+        ),
+    )
     p.add_argument("--no-md", action="store_true")
     args = p.parse_args(argv)
 

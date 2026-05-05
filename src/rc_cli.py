@@ -71,26 +71,45 @@ def cmd_status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _open_log(path: Path):
+    """Open .jsonl or .jsonl.gz transparently. Returns text-mode handle."""
+    import gzip
+    if path.suffix == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return open(path, encoding="utf-8")
+
+
+def _scan_log(path: Path, target: str):
+    try:
+        with _open_log(path) as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get("decision_id") == target:
+                    return row
+    except OSError:
+        return None
+    return None
+
+
 def cmd_explain(args: argparse.Namespace) -> int:
     target = args.decision_id
-    today = _today_dir()
-    if not today.exists():
-        sys.stderr.write(f"no audit dir for today at {today}\n")
+    root = _audit_root()
+    if not root.exists():
+        sys.stderr.write(f"no audit root at {root}\n")
         return 1
-    for jf in today.glob("*.jsonl"):
-        try:
-            with open(jf, encoding="utf-8") as fh:
-                for line in fh:
-                    try:
-                        row = json.loads(line)
-                    except ValueError:
-                        continue
-                    if row.get("decision_id") == target:
-                        sys.stdout.write(json.dumps(row, indent=2) + "\n")
-                        return 0
-        except OSError:
+    # Walk newest-day-first so today's hits return fast.
+    for day_dir in sorted(root.iterdir(), reverse=True):
+        if not day_dir.is_dir():
             continue
-    sys.stderr.write(f"decision_id {target} not found in {today}\n")
+        for log in list(day_dir.glob("*.jsonl")) + list(day_dir.glob("*.jsonl.gz")):
+            row = _scan_log(log, target)
+            if row is not None:
+                sys.stdout.write(json.dumps(row, indent=2) + "\n")
+                return 0
+    sys.stderr.write(f"decision_id {target} not found under {root}\n")
     return 1
 
 

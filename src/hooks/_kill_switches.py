@@ -74,8 +74,13 @@ def is_disabled_globally() -> bool:
     until = state.get("disable_until")
     if not until:
         return False
+    # Parse as UTC. `time.mktime` interprets struct_time as LOCAL — operator in
+    # non-UTC tz would get a bypass window shifted by their offset (G5).
     try:
-        return time.time() < time.mktime(time.strptime(until, "%Y-%m-%dT%H:%M:%SZ"))
+        from datetime import datetime, timezone
+        s = until[:-1] if until.endswith("Z") else until
+        dt = datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+        return time.time() < dt.timestamp()
     except (TypeError, ValueError):
         return False
 

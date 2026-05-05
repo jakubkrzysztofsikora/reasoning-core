@@ -67,10 +67,17 @@ def _enforce_cap(survivors: list) -> None:
 
 
 def rotate(audit_root: str, today: str) -> None:
-    """Gzip prior days, evict expired, enforce disk cap. Never raises."""
+    """Gzip prior days, evict expired, enforce disk cap. Never raises.
+
+    Gated by a once-per-day sentinel file so we don't iterate the whole tree
+    on every audit append (reviewer G7 — p99 latency under append load).
+    """
     try:
         root = Path(audit_root)
         if not root.exists():
+            return
+        sentinel = root / f".last_rotate_{today}"
+        if sentinel.exists():
             return
         for sub in root.iterdir():
             if sub.is_dir() and sub.name != today:
@@ -79,5 +86,9 @@ def rotate(audit_root: str, today: str) -> None:
         cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=_RETENTION_DAYS)
         survivors = _evict_old(root, cutoff)
         _enforce_cap(survivors)
+        try:
+            sentinel.touch()
+        except OSError:
+            pass
     except Exception:  # noqa: BLE001
         pass

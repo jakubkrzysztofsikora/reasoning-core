@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# rc — short shim for `python3 -m src.rc_cli`. Put bin/ on PATH.
+exec python3 -m src.rc_cli "$@"

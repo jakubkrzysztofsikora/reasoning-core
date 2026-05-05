@@ -279,47 +279,12 @@ def main() -> None:
     if not file_path:
         _exit(0)
 
-    # Layer 0: day-zero override check. Magic comments and kill switches let
-    # the operator bypass scoring without restarting Claude. Read at hook
-    # call time, not session boot. Allow path emits an audit row tagged
-    # `decision=allowed_via_override` so the override is observable.
-    try:
-        import _kill_switches  # type: ignore
-        import _magic_comments  # type: ignore
-    except ImportError:
-        _kill_switches = None  # type: ignore
-        _magic_comments = None  # type: ignore
-    if _kill_switches is not None:
-        if _kill_switches.is_disabled_globally() or _kill_switches.consume_bypass_next() or _kill_switches.is_file_skipped(file_path):
-            _emit_audit(
-                tool_name=tool_name,
-                decision="allowed_via_override",
-                file_path=file_path,
-                started=started,
-                reason="kill_switch_or_bypass_next",
-            )
-            _exit(0)
-    if _magic_comments is not None:
-        content_for_directive = ""
-        if tool_name == "Write":
-            content_for_directive = tool_input.get("content") or ""
-        elif tool_name in ("Edit", "MultiEdit"):
-            content_for_directive = _read_before_src(file_path)
-        directive = _magic_comments.parse(content_for_directive)
-        if _magic_comments.bypasses_all(directive):
-            _emit_audit(
-                tool_name=tool_name,
-                decision="allowed_via_override",
-                file_path=file_path,
-                started=started,
-                reason=f"magic_comment:{directive.name}:{directive.reason}",
-            )
-            _exit(0)
-
-    # Layer 2: lock guard-files. Edits to the hook scripts, settings.json,
-    # sidecar source, or grammar loader are denied unless the user explicitly
-    # set RC_ALLOW_GUARD_EDIT=1 in the shell that started Claude. This stops
-    # a runaway agent from rewriting the very file that polices it.
+    # Layer 1: lock guard-files FIRST (before any override path). Without this
+    # ordering, kill_switches.bypass_next or a `# rc:skip` magic comment becomes
+    # a guard-bypass primitive — an agent could rewrite the hooks themselves.
+    # Edits to the hook scripts, settings.json, sidecar source, or grammar
+    # loader are denied unless the operator explicitly set RC_ALLOW_GUARD_EDIT=1
+    # in the shell that started Claude.
     GUARDED_PATHS = (
         "/.claude/settings.json",
         "/.claude/settings.local.json",
@@ -356,6 +321,70 @@ def main() -> None:
             "  override: set RC_ALLOW_GUARD_EDIT=1 in your shell, restart Claude.",
         )
         return  # pragma: no cover
+
+    # Layer 2: day-zero override check. Magic comments and kill switches let
+    # the operator bypass scoring without restarting Claude. Read at hook call
+    # time. Allow path emits decision=allowed_via_override so the override is
+    # observable. Hardening:
+    #   - Magic comments are honored ONLY from the on-disk file (operator
+    #     authored). Agent-introduced directives via Write/new_string content
+    #     do not bypass scoring.
+    #   - If the directive is being newly introduced by THIS edit (not present
+    #     before but present after), tag self_introduced and decline override.
+    try:
+        import _kill_switches  # type: ignore
+        import _magic_comments  # type: ignore
+    except ImportError:
+        _kill_switches = None  # type: ignore
+        _magic_comments = None  # type: ignore
+    if _kill_switches is not None:
+        if _kill_switches.is_disabled_globally() or _kill_switches.consume_bypass_next() or _kill_switches.is_file_skipped(file_path):
+            _emit_audit(
+                tool_name=tool_name,
+                decision="allowed_via_override",
+                file_path=file_path,
+                started=started,
+                reason="kill_switch_or_bypass_next",
+            )
+            _exit(0)
+    if _magic_comments is not None:
+        before_for_directive = _read_before_src(file_path)  # operator-authored only
+        directive_before = _magic_comments.parse(before_for_directive)
+        # Build candidate after_src to detect agent self-introduction
+        after_for_directive = before_for_directive
+        if tool_name == "Write":
+            after_for_directive = tool_input.get("content") or ""
+        elif tool_name == "Edit":
+            old_s = tool_input.get("old_string", "") or ""
+            new_s = tool_input.get("new_string", "") or ""
+            if old_s and old_s in before_for_directive:
+                after_for_directive = before_for_directive.replace(old_s, new_s, 1)
+        directive_after = _magic_comments.parse(after_for_directive)
+        self_introduced = (
+            directive_before is None and directive_after is not None
+        ) or (
+            directive_before is not None
+            and directive_after is not None
+            and directive_before.name != directive_after.name
+        )
+        if self_introduced and directive_after is not None:
+            _emit_audit(
+                tool_name=tool_name,
+                decision="override_declined",
+                file_path=file_path,
+                started=started,
+                reason=f"magic_comment_self_introduced:{directive_after.name}",
+            )
+            # Do not bypass; fall through to normal scoring path.
+        elif _magic_comments.bypasses_all(directive_before):
+            _emit_audit(
+                tool_name=tool_name,
+                decision="allowed_via_override",
+                file_path=file_path,
+                started=started,
+                reason=f"magic_comment:{directive_before.name}:{directive_before.reason}",
+            )
+            _exit(0)
 
     pairs = _extract_changes(tool_name, tool_input)
     if not pairs:
