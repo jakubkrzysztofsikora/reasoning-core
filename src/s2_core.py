@@ -611,12 +611,19 @@ def _compute_risk_vector(
     edges = sum(len(v) for v in graph_after.values())
     coupling = _norm(float(edges), 40.0)
 
-    # cohesion: 1 - (isolated nodes / nodes). Higher = more cohesive (-> risk dim
-    # represents LACK of cohesion, so we invert).
-    nodes = max(1, len(graph_after))
-    isolated = sum(1 for v in graph_after.values() if not v)
-    lack_cohesion = _safe_div(float(isolated), float(nodes))
-    cohesion = _norm(lack_cohesion, 1.0)
+    # cohesion: lack-of-cohesion risk = (isolated nodes / nodes). Cohesion is
+    # undefined when the graph has < 2 nodes (a single function is trivially
+    # "cohesive with itself"; penalising it produces false-positive blocks on
+    # rename / docstring edits to small modules). Treat <2-node graphs as
+    # zero risk and only score cohesion drift when there is structure to
+    # reason about.
+    nodes = len(graph_after)
+    if nodes < 2:
+        cohesion = 0.0
+    else:
+        isolated = sum(1 for v in graph_after.values() if not v)
+        lack_cohesion = _safe_div(float(isolated), float(nodes))
+        cohesion = _norm(lack_cohesion, 1.0)
 
     # novelty: cosine-distance of the two pooled embeddings, already in [0,1].
     novelty_dim = _norm(novelty, 1.0)
@@ -638,7 +645,12 @@ def _compute_risk_vector(
 # ---------------------------------------------------------------------------
 
 _REGRESSION_AIS_THRESHOLD = 0.4
-_REGRESSION_COHERENCE_THRESHOLD = 1.5
+# Threshold applied to the *normalized* coherence_delta (raw L2 / sqrt(hidden_size)).
+# Surfaced as a module constant so it can be tuned without re-reading the inline
+# comparison. Value is checkpoint-portable: it represents average per-dimension
+# embedding drift in standard units, not a raw L2 norm of a hidden_size-D vector.
+COHERENCE_DELTA_THRESHOLD = 1.5
+_REGRESSION_COHERENCE_THRESHOLD = COHERENCE_DELTA_THRESHOLD
 _REGRESSION_RISK_DIM_THRESHOLD = 0.9
 
 
@@ -661,6 +673,26 @@ def _l2_distance(a, b) -> float:
     if a is None or b is None:
         return 0.0
     return float(torch.linalg.norm(a - b))
+
+
+def _backbone_hidden_size(fallback_vec: Any = None) -> int:
+    """Return the embedding dimension. Prefers BACKBONE_INFO; falls back to the
+    last dim of an embedding tensor; returns 1 as a last resort to avoid
+    divide-by-zero in the coherence_delta normalization.
+    """
+    h = BACKBONE_INFO.get("hidden_size") if isinstance(BACKBONE_INFO, dict) else None
+    try:
+        h_int = int(h) if h is not None else 0
+    except (TypeError, ValueError):
+        h_int = 0
+    if h_int > 0:
+        return h_int
+    if fallback_vec is not None:
+        try:
+            return int(fallback_vec.shape[-1])
+        except Exception:  # noqa: BLE001
+            pass
+    return 1
 
 
 def _summarize(
@@ -717,7 +749,7 @@ def score_change(
         emb_before = embed(before_tokens)
         emb_after = embed(after_tokens)
         cos = _cosine_similarity(emb_before, emb_after)
-        l2 = _l2_distance(emb_before, emb_after)
+        raw_l2 = _l2_distance(emb_before, emb_after)
     except BackboneUnavailableError:
         # We propagate this -- the sidecar should fail loudly rather than
         # silently degrade scoring quality.
@@ -728,7 +760,13 @@ def score_change(
 
     # AIS in [0, 1]: 1.0 == identical embeddings. Map cos in [-1,1] -> [0,1].
     ais = max(0.0, min(1.0, (cos + 1.0) / 2.0))
-    coherence_delta = float(l2)
+
+    # Normalize coherence_delta by sqrt(hidden_size) so the threshold is
+    # checkpoint-portable: a raw L2 over a 768-D vector dwarfs the same drift
+    # over a 256-D vector for the same edit. Dividing by sqrt(D) recasts the
+    # value as average per-dimension drift in standard units (see VERIFICATION.md).
+    hidden_size = _backbone_hidden_size(emb_after)
+    coherence_delta = float(raw_l2) / math.sqrt(max(hidden_size, 1))
 
     # novelty in [0, 1]: 1 - max(cos, 0).
     novelty = max(0.0, min(1.0, 1.0 - max(cos, 0.0)))
@@ -757,7 +795,11 @@ def score_change(
         baseline_vec = _get_session_baseline(session_id)
         if baseline_vec is not None:
             try:
-                cumulative_drift = float(_l2_distance(emb_after, baseline_vec))
+                # Same normalization as coherence_delta — keep both metrics on
+                # the same scale so the threshold semantics are consistent.
+                cumulative_drift = float(_l2_distance(emb_after, baseline_vec)) / math.sqrt(
+                    max(hidden_size, 1)
+                )
             except Exception:  # noqa: BLE001
                 cumulative_drift = None
 

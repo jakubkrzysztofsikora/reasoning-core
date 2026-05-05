@@ -1,27 +1,37 @@
 """Tree-sitter grammar loader for the System 2 sidecar.
 
-Supports exactly five languages (per RC-003 / PLAN.md D2):
+Supports the following languages:
 
-    Python, JavaScript, TypeScript (+TSX), C#, SQL.
+    Code:  Python, JavaScript, TypeScript (+TSX), C#, SQL.
+    Data:  Markdown, JSON, YAML, CSS, SCSS, HTML, Vue, Dockerfile.
+
+"Data" languages skip call-graph extraction (no call semantics) but still
+flow through the embedding-based novelty scoring path.
 
 Loader strategy:
     1. Prefer the ``tree_sitter_languages`` aggregate wheel which ships
        compiled grammars for ~40 languages. This is the path of least
        friction and avoids per-grammar build steps on macOS arm64.
-    2. Fall back to the per-language wheels declared in requirements.txt:
-       ``tree_sitter_python``, ``tree_sitter_javascript``,
-       ``tree_sitter_typescript`` (exposes both ``language_typescript`` and
-       ``language_tsx``), ``tree_sitter_c_sharp``, ``tree_sitter_sql``.
+    2. Fall back to the per-language wheels declared in requirements.txt.
+       Each per-language ``import`` is wrapped in its own ``except
+       ImportError`` so a missing wheel for one language never breaks the
+       others.
 
 The two contracts other engineers rely on:
 
 * ``select_grammar(path)`` returns a ``(language_name, Language)`` tuple where
-  ``language_name`` is one of ``"python"``, ``"javascript"``, ``"typescript"``,
-  ``"tsx"``, ``"csharp"``, ``"sql"`` (the names in the public board API map
-  ``"tsx"`` as a sub-language of TypeScript, but for parsing we keep them
-  distinct so the right grammar is used).
+  ``language_name`` is one of the internal language ids (``"python"``,
+  ``"javascript"``, ``"typescript"``, ``"tsx"``, ``"csharp"``, ``"sql"``,
+  ``"markdown"``, ``"json"``, ``"yaml"``, ``"css"``, ``"scss"``, ``"html"``,
+  ``"vue"``, ``"dockerfile"``). The public surface area collapses ``tsx`` to
+  ``typescript``.
 * ``UnsupportedLanguageError`` is raised -- never silently fall back -- when
   the extension is not in the supported set.
+
+Dockerfile note: ``EXTENSION_MAP`` is keyed on file extension, but Dockerfiles
+canonically have *no* extension. ``select_grammar`` therefore special-cases
+files whose basename is ``Dockerfile`` (case-insensitive) or whose name ends
+in ``.dockerfile`` and routes them to the ``dockerfile`` grammar.
 """
 
 from __future__ import annotations
@@ -34,9 +44,9 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 # Public language identifiers. The HTTP /health response advertises these.
-# Code languages get full call-graph extraction; structured-data languages
-# (markdown / json / yaml) are parsed for embedding-based novelty scoring
-# only — call_graph is a no-op for them.
+# Code languages get full call-graph extraction; structured-data / markup
+# languages are parsed for embedding-based novelty scoring only — the call
+# graph is a no-op for them.
 SUPPORTED_LANGUAGES: tuple[str, ...] = (
     "python",
     "javascript",
@@ -46,17 +56,37 @@ SUPPORTED_LANGUAGES: tuple[str, ...] = (
     "markdown",
     "json",
     "yaml",
+    "css",
+    "scss",
+    "html",
+    "vue",
+    "dockerfile",
 )
 
-# Languages where build_call_graph returns {} by design (structured data,
-# no call semantics). score_change still runs the Mamba embedding pass so
-# semantic drift is detected.
-DATA_LANGUAGES: frozenset[str] = frozenset({"markdown", "json", "yaml"})
+# Languages where build_call_graph returns {} by design (structured data /
+# markup / config — no call semantics). score_change still runs the Mamba
+# embedding pass so semantic drift is detected.
+DATA_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "markdown",
+        "json",
+        "yaml",
+        "css",
+        "scss",
+        "html",
+        "vue",
+        "dockerfile",
+    }
+)
 
 # Extension -> internal language id used for grammar selection. Note that
 # ``.tsx`` is mapped to a separate parser even though the public surface area
 # advertises only "typescript" -- this keeps the JSX-aware grammar in play
 # without leaking implementation detail.
+#
+# Dockerfile has no canonical extension; ``select_grammar`` handles the
+# basename-based routing for plain ``Dockerfile`` files. ``.dockerfile`` is
+# included here for IDE-style suffix conventions.
 EXTENSION_MAP: dict[str, str] = {
     ".py": "python",
     ".js": "javascript",
@@ -73,6 +103,13 @@ EXTENSION_MAP: dict[str, str] = {
     ".jsonc": "json",
     ".yaml": "yaml",
     ".yml": "yaml",
+    ".css": "css",
+    ".scss": "scss",
+    ".sass": "scss",
+    ".html": "html",
+    ".htm": "html",
+    ".vue": "vue",
+    ".dockerfile": "dockerfile",
 }
 
 # Public-facing language label for a given internal id (collapses tsx ->
@@ -87,6 +124,11 @@ PUBLIC_LANGUAGE: dict[str, str] = {
     "markdown": "markdown",
     "json": "json",
     "yaml": "yaml",
+    "css": "css",
+    "scss": "scss",
+    "html": "html",
+    "vue": "vue",
+    "dockerfile": "dockerfile",
 }
 
 
@@ -125,6 +167,11 @@ def _load_via_aggregate(lang_id: str) -> Optional[Any]:
         "markdown": "markdown",
         "json": "json",
         "yaml": "yaml",
+        "css": "css",
+        "scss": "scss",
+        "html": "html",
+        "vue": "vue",
+        "dockerfile": "dockerfile",
     }.get(lang_id)
     if aggregate_name is None:
         return None
@@ -136,39 +183,60 @@ def _load_via_aggregate(lang_id: str) -> Optional[Any]:
 
 
 def _load_via_per_lang(lang_id: str) -> Optional[Any]:
-    """Try the per-language wheel."""
+    """Try the per-language wheel.
+
+    Each language branch wraps its own ``import`` in its own ``except
+    ImportError`` so a missing wheel for one language never breaks the
+    others (e.g. tree-sitter-vue is not on PyPI for Py 3.13 yet — every
+    other grammar must still load).
+    """
     from tree_sitter import Language  # type: ignore
 
     try:
         if lang_id == "python":
-            import tree_sitter_python as ts_python  # type: ignore
-
+            try:
+                import tree_sitter_python as ts_python  # type: ignore
+            except ImportError:
+                return None
             return Language(ts_python.language())
         if lang_id == "javascript":
-            import tree_sitter_javascript as ts_js  # type: ignore
-
+            try:
+                import tree_sitter_javascript as ts_js  # type: ignore
+            except ImportError:
+                return None
             return Language(ts_js.language())
         if lang_id == "typescript":
-            import tree_sitter_typescript as ts_ts  # type: ignore
-
+            try:
+                import tree_sitter_typescript as ts_ts  # type: ignore
+            except ImportError:
+                return None
             return Language(ts_ts.language_typescript())
         if lang_id == "tsx":
-            import tree_sitter_typescript as ts_ts  # type: ignore
-
+            try:
+                import tree_sitter_typescript as ts_ts  # type: ignore
+            except ImportError:
+                return None
             return Language(ts_ts.language_tsx())
         if lang_id == "csharp":
             try:
                 import tree_sitter_c_sharp as ts_cs  # type: ignore
             except ImportError:
-                import tree_sitter_csharp as ts_cs  # type: ignore
+                try:
+                    import tree_sitter_csharp as ts_cs  # type: ignore
+                except ImportError:
+                    return None
             return Language(ts_cs.language())
         if lang_id == "sql":
-            import tree_sitter_sql as ts_sql  # type: ignore
-
+            try:
+                import tree_sitter_sql as ts_sql  # type: ignore
+            except ImportError:
+                return None
             return Language(ts_sql.language())
         if lang_id == "markdown":
-            import tree_sitter_markdown as ts_md  # type: ignore
-
+            try:
+                import tree_sitter_markdown as ts_md  # type: ignore
+            except ImportError:
+                return None
             # tree-sitter-markdown ships two grammars (block + inline);
             # we use the block grammar — sufficient for novelty scoring.
             try:
@@ -176,13 +244,56 @@ def _load_via_per_lang(lang_id: str) -> Optional[Any]:
             except AttributeError:
                 return Language(ts_md.language_block())
         if lang_id == "json":
-            import tree_sitter_json as ts_json  # type: ignore
-
+            try:
+                import tree_sitter_json as ts_json  # type: ignore
+            except ImportError:
+                return None
             return Language(ts_json.language())
         if lang_id == "yaml":
-            import tree_sitter_yaml as ts_yaml  # type: ignore
-
+            try:
+                import tree_sitter_yaml as ts_yaml  # type: ignore
+            except ImportError:
+                return None
             return Language(ts_yaml.language())
+        if lang_id == "css":
+            try:
+                import tree_sitter_css as ts_css  # type: ignore
+            except ImportError:
+                return None
+            return Language(ts_css.language())
+        if lang_id == "scss":
+            try:
+                import tree_sitter_scss as ts_scss  # type: ignore
+            except ImportError:
+                # SCSS sometimes ships as part of tree-sitter-css; fall back.
+                try:
+                    import tree_sitter_css as ts_css_fallback  # type: ignore
+                except ImportError:
+                    return None
+                return Language(ts_css_fallback.language())
+            return Language(ts_scss.language())
+        if lang_id == "html":
+            try:
+                import tree_sitter_html as ts_html  # type: ignore
+            except ImportError:
+                return None
+            return Language(ts_html.language())
+        if lang_id == "vue":
+            # NOTE: tree-sitter-vue has no Py 3.13 wheel on PyPI as of the
+            # time of this change. The loader returns None here when the
+            # import fails; select_grammar will then raise a runtime error
+            # for .vue files until a wheel ships. See requirements.txt.
+            try:
+                import tree_sitter_vue as ts_vue  # type: ignore
+            except ImportError:
+                return None
+            return Language(ts_vue.language())
+        if lang_id == "dockerfile":
+            try:
+                import tree_sitter_dockerfile as ts_docker  # type: ignore
+            except ImportError:
+                return None
+            return Language(ts_docker.language())
     except Exception as exc:
         logger.debug("per-language wheel miss for %s: %s", lang_id, exc)
         return None
@@ -211,8 +322,20 @@ def select_grammar(path: str) -> tuple[str, Any]:
     """Return ``(language_id, Language)`` for the given path.
 
     Raises ``UnsupportedLanguageError`` for any extension not in
-    ``EXTENSION_MAP``.
+    ``EXTENSION_MAP`` and not matched by the Dockerfile filename special-case.
+
+    Dockerfile files have no canonical extension. This routes the bare
+    filename ``Dockerfile`` (case-insensitive) and ``foo.dockerfile``-style
+    suffixed names to the ``dockerfile`` grammar.
     """
+    # Dockerfile basename detection — must run before the extension lookup
+    # because os.path.splitext('Dockerfile') returns ('Dockerfile', '') and
+    # an empty extension is not in EXTENSION_MAP.
+    basename = os.path.basename(path or "").lower()
+    if basename == "dockerfile" or basename.endswith(".dockerfile"):
+        lang = _load_language("dockerfile")
+        return "dockerfile", lang
+
     ext = _ext_of(path)
     lang_id = EXTENSION_MAP.get(ext)
     if lang_id is None:
@@ -263,6 +386,7 @@ def get_parser(lang_id: str) -> Any:
 
 
 __all__ = [
+    "DATA_LANGUAGES",
     "EXTENSION_MAP",
     "PUBLIC_LANGUAGE",
     "SUPPORTED_LANGUAGES",

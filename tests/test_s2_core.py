@@ -130,13 +130,20 @@ SQL_FIXTURE = (
 )
 
 
-PY_BAD = "def f(n):\n    return n + f(n + 1)\n"
 PY_GOOD = (
     "def f(n):\n"
     "    if not n:\n"
     "        return 0\n"
     "    return n + f(n - 1)\n"
 )
+# PY_BAD: drops the guard clause and explodes cyclomatic complexity with a
+# long chain of branches. Designed to trip the cyclomatic risk-dim threshold
+# (>0.9) under the normalized coherence_delta scale (raw L2 / sqrt(D)) added
+# after the calibration fix — a tiny one-line refactor no longer crosses any
+# threshold by itself.
+PY_BAD = "def f(n):\n" + "".join(
+    f"    if n == {i}:\n        return {i}\n" for i in range(25)
+) + "    return n + f(n + 1)\n"
 
 
 # ---------------------------------------------------------------------------

@@ -196,6 +196,20 @@ any compatible checkpoint via the same code path.
   cost.
 - Set `S2_DEVICE=cuda` to opt into GPU inference if available.
 
+### Coherence-delta normalization
+
+`coherence_delta` is the L2 distance between the mean-pooled Mamba embeddings
+of the pre- and post-edit AST-token streams, **normalized by
+`sqrt(hidden_size)`**. The raw L2 of two `hidden_size`-D vectors scales with
+the embedding dimension (a 768-D `mamba-130m` checkpoint produces drift values
+~30–40 on benign edits, while a hypothetical 256-D checkpoint would produce
+~17–23 for the same semantic delta). Dividing by `sqrt(hidden_size)` recasts
+the metric as average per-dimension drift in standard units, making the
+`COHERENCE_DELTA_THRESHOLD = 1.5` constant in `src/s2_core.py` portable across
+checkpoints — swapping `S2_SSM_CHECKPOINT` no longer requires re-tuning the
+regression threshold. The same normalization is applied to `cumulative_drift`
+when a session baseline is registered, so both metrics share one scale.
+
 ## Tree-sitter language support
 
 The sidecar supports five languages. Selection is by file extension,

@@ -63,7 +63,7 @@ sidecar sets that flag when **any** of the following hold:
 | Condition                                  | Meaning                              |
 | ------------------------------------------ | ------------------------------------ |
 | `architectural_impact_score < 0.4`         | Post-edit code far from pre-edit.    |
-| `coherence_delta > 1.5`                    | Embedding drift exceeds budget.      |
+| `coherence_delta > 1.5`                    | Embedding drift exceeds budget. Scale-invariant: raw L2 normalized by `sqrt(hidden_size)`, so the threshold is portable across SSM checkpoints. |
 | `any risk_vector[i] > 0.9`                 | One dim in critical zone.            |
 
 If **two or more** conditions trigger simultaneously, treat as

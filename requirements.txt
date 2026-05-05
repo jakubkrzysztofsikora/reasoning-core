@@ -21,6 +21,15 @@ tree-sitter-sql>=0.3
 tree-sitter-markdown>=0.3
 tree-sitter-json>=0.23
 tree-sitter-yaml>=0.7
+# Data / markup grammars — embedding-only scoring, no call graph.
+# Each is wrapped in `except ImportError` in src/grammars.py so a missing
+# wheel for one of these doesn't break the others.
+tree-sitter-css>=0.20
+tree-sitter-html>=0.20
+tree-sitter-vue>=0.2
+tree-sitter-dockerfile>=0.2
+# tree-sitter-scss not consistently available on PyPI for Py 3.13; loader
+# falls back gracefully. Add here if a wheel becomes available.
 
 # --- Real Mamba SSM backbone ---
 transformers>=4.39,<5.0
