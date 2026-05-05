@@ -92,11 +92,12 @@ def _extract_changes(
 ) -> List[Tuple[str, str]]:
     """Return a list of (before_src, after_src) pairs to score.
 
-    For Edit: one pair using new_string against the file contents on disk.
+    For Edit: reconstructs the post-edit file by applying old_string→new_string
+      to the disk content, so the SSM scores actual before/after rather than
+      (whole_file, new_string) which would inflate churn to ~1.0 on every edit.
     For Write: one pair using `content` against on-disk contents (or "").
-    For MultiEdit: a pair per edits[*].new_string, scored sequentially against
-      the same before-state on disk (the sidecar is stateless; sequential
-      compounding would require mutating the file which we must not do here).
+    For MultiEdit: applies each edit sequentially in-memory, scoring the final
+      reconstructed content against the original disk state.
     """
     file_path = _extract_file_path(tool_input)
     if not file_path:
@@ -110,23 +111,29 @@ def _extract_changes(
         return [(before, after)]
 
     if tool_name == "Edit":
-        after = tool_input.get("new_string")
-        if not isinstance(after, str):
+        new_str = tool_input.get("new_string")
+        old_str = tool_input.get("old_string", "")
+        if not isinstance(new_str, str) or not isinstance(old_str, str):
             return []
+        if old_str and old_str in before:
+            after = before.replace(old_str, new_str, 1)
+        else:
+            after = before
         return [(before, after)]
 
     if tool_name == "MultiEdit":
         edits = tool_input.get("edits")
         if not isinstance(edits, list):
             return []
-        pairs: List[Tuple[str, str]] = []
+        working = before
         for edit in edits:
             if not isinstance(edit, dict):
                 continue
-            after = edit.get("new_string")
-            if isinstance(after, str):
-                pairs.append((before, after))
-        return pairs
+            old_s = edit.get("old_string", "")
+            new_s = edit.get("new_string", "")
+            if isinstance(old_s, str) and isinstance(new_s, str) and old_s and old_s in working:
+                working = working.replace(old_s, new_s, 1)
+        return [(before, working)]
 
     return []
 
