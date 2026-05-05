@@ -652,14 +652,22 @@ def _compute_risk_vector(
 # Scoring
 # ---------------------------------------------------------------------------
 
-_REGRESSION_AIS_THRESHOLD = 0.4
+def _env_float(name: str, default: float) -> float:
+    """Parse a float from os.environ, falling back to ``default`` on missing/bad."""
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+# Thresholds are env-overridable so the operator can tune without a code edit.
+# Defaults match the calibrated values; see .envrc § "Sidecar tuning".
+_REGRESSION_AIS_THRESHOLD = _env_float("S2_AIS_THRESHOLD", 0.4)
 # Threshold applied to the *normalized* coherence_delta (raw L2 / sqrt(hidden_size)).
-# Surfaced as a module constant so it can be tuned without re-reading the inline
-# comparison. Value is checkpoint-portable: it represents average per-dimension
-# embedding drift in standard units, not a raw L2 norm of a hidden_size-D vector.
-COHERENCE_DELTA_THRESHOLD = 1.5
+# Value is checkpoint-portable: average per-dimension embedding drift in standard units.
+COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 1.5)
 _REGRESSION_COHERENCE_THRESHOLD = COHERENCE_DELTA_THRESHOLD
-_REGRESSION_RISK_DIM_THRESHOLD = 0.9
+_REGRESSION_RISK_DIM_THRESHOLD = _env_float("S2_RISK_DIM_THRESHOLD", 0.9)
 
 
 def _cosine_similarity(a, b) -> float:
