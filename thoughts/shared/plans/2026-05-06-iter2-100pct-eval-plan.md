@@ -37,14 +37,21 @@ verdict: Setup B wins 8/8 with measurable margin.
 
 ---
 
-## Phase 0: Verify Setup B wiring + tighten env knobs
+## Phase 0: Formalize Setup B for iter-2 (build out post-iter-1 scaffolding)
 
 ### Context
 
-Reasoning-core was active during iter-1 (hooks fired, sidecar served `/score`). This phase
-is a verification + tightening pass on Setup B's existing wiring, not a from-scratch wire-up.
-Goal: confirm every iter-2 hook addition (P1/P2/P3) gets picked up by Setup B and surfaces
-in the audit log; tighten env knobs that were left at defaults.
+Reasoning-core was active during iter-1 — hooks fired and sidecar served `/score` — but
+through ad-hoc / pre-existing wiring (repo-level `.claude/settings.json` resolved via
+`${CLAUDE_PROJECT_DIR}`, user-level `~/.claude/settings.json`, or direnv-loaded env).
+The `/Users/jakubsikora/eval-setups/B/{.envrc, settings.local.json}` files were created
+**after** iter-1 to formalize Setup B as a reproducible eval target. They are currently
+stubs.
+
+Goal of P0: build out those stubs into a real, version-controlled Setup B definition that
+(a) reproduces the iter-1 wiring deterministically, (b) adds the iter-2 feature flags so
+P1/P2/P3 hook additions become active, and (c) gives the eval spawner a single source of
+truth instead of relying on inherited settings.
 
 ### Changes
 
