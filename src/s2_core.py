@@ -843,12 +843,15 @@ def score_change(
         after_src or "",
     )
 
-    # Cold-start: every line of the new file is "new" by definition; churn
-    # saturates legitimately but unhelpfully. Zero it for cold-start writes.
-    # Other dims (cyclomatic etc.) are deltas and stay informative.
-    if cold_start and len(risk_vector) > 4:
+    # Cold-start: with empty before_src, every structural delta (cyclomatic,
+    # fan_in, fan_out, depth, churn, coupling, cohesion) reduces to the
+    # absolute after-state — the metric loses its delta meaning. Zero them
+    # for cold-start writes; novelty (cosine of pooled embeddings) and the
+    # AIS / coherence_delta paths still reason about content quality.
+    if cold_start and len(risk_vector) >= 7:
         risk_vector = list(risk_vector)
-        risk_vector[4] = 0.0
+        for i in range(7):
+            risk_vector[i] = 0.0
 
     kind = _file_kind(path)
     t = _KIND_THRESHOLDS.get(kind, _KIND_THRESHOLDS["source_code"])
