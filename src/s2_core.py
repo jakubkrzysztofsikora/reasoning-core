@@ -701,11 +701,11 @@ def _file_kind(path: str) -> str:
 # constants above; the others are intentionally laxer because their content
 # distribution doesn't match the calibrated source-code baseline.
 _KIND_THRESHOLDS: dict[str, dict[str, float]] = {
-    "source_code": {"cd": COHERENCE_DELTA_THRESHOLD, "ais": _REGRESSION_AIS_THRESHOLD},
-    "test_code":   {"cd": 2.0, "ais": 0.3},
-    "plan_md":     {"cd": 3.0, "ais": 0.3},
-    "doc_md":      {"cd": 3.0, "ais": 0.3},
-    "config":      {"cd": 1.2, "ais": 0.5},
+    "source_code": {"cd": COHERENCE_DELTA_THRESHOLD, "ais": _REGRESSION_AIS_THRESHOLD, "dim": _REGRESSION_RISK_DIM_THRESHOLD},
+    "test_code":   {"cd": 2.0, "ais": 0.3, "dim": 0.95},
+    "plan_md":     {"cd": 3.0, "ais": 0.3, "dim": 1.0},
+    "doc_md":      {"cd": 3.0, "ais": 0.3, "dim": 1.0},
+    "config":      {"cd": 1.2, "ais": 0.5, "dim": 0.9},
 }
 
 
@@ -843,12 +843,20 @@ def score_change(
         after_src or "",
     )
 
+    # Cold-start: every line of the new file is "new" by definition; churn
+    # saturates legitimately but unhelpfully. Zero it for cold-start writes.
+    # Other dims (cyclomatic etc.) are deltas and stay informative.
+    if cold_start and len(risk_vector) > 4:
+        risk_vector = list(risk_vector)
+        risk_vector[4] = 0.0
+
     kind = _file_kind(path)
     t = _KIND_THRESHOLDS.get(kind, _KIND_THRESHOLDS["source_code"])
+    dim_ceiling = t.get("dim", _REGRESSION_RISK_DIM_THRESHOLD)
     regression = (
         ais < t["ais"]
         or coherence_delta > t["cd"]
-        or any(dim > _REGRESSION_RISK_DIM_THRESHOLD for dim in risk_vector)
+        or any(dim > dim_ceiling for dim in risk_vector)
     )
 
     public_lang = PUBLIC_LANGUAGE.get(lang_id, lang_id)
