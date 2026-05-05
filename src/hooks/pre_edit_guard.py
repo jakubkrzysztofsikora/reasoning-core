@@ -215,6 +215,7 @@ def _emit_audit(
     report: Optional[Dict[str, Any]] = None,
     reason: str = "",
     retry_after_block: bool = False,
+    signal_source: str = "",
 ) -> None:
     """Best-effort audit emit. Never raises."""
     try:
@@ -249,6 +250,9 @@ def _emit_audit(
             after_bytes=len((after_src or "").encode("utf-8", errors="replace")),
             retry_after_block=retry_after_block,
             reason=reason or human_summary,
+            signal_source=signal_source or (
+                "mock_heuristic" if (isinstance(report, dict) and report.get("mock_detector_triggered")) else "ssm"
+            ),
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -317,8 +321,7 @@ def main() -> None:
         _exit(
             2,
             "[hybrid-reasoner] BLOCKED: guard-file edits denied.\n"
-            f"  file: {file_path}\n"
-            "  override: set RC_ALLOW_GUARD_EDIT=1 in your shell, restart Claude.",
+            f"  file: {file_path}",
         )
         return  # pragma: no cover
 
@@ -385,6 +388,53 @@ def main() -> None:
                 reason=f"magic_comment:{directive_before.name}:{directive_before.reason}",
             )
             _exit(0)
+
+    # Layer 3: Language fingerprint lock (P3 Invariant 1). Deny edits whose
+    # extension doesn't match the session manifest's declared language family
+    # — agent abandoning .NET for Python in a long session no longer slips
+    # past as quality-flat. Operator override: # rc:skip-lang magic comment
+    # OR RC_LANG_ALLOW=py,sh OR RC_LANG_OVERRIDE=1.
+    if (
+        os.environ.get("RC_LANG_LOCK") == "1"
+        and os.environ.get("RC_LANG_OVERRIDE") != "1"
+    ):
+        try:
+            import _session_manifest  # type: ignore
+            cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+            task_spec = os.environ.get("RC_TASK_SPEC") or ""
+            key = _session_manifest.manifest_key(cwd, task_spec)
+            mani = _session_manifest.load(key)
+            lang_skip = (
+                _magic_comments is not None
+                and _magic_comments.bypasses(
+                    _magic_comments.parse(_read_before_src(file_path)),
+                    "lang",
+                )
+            )
+            if mani and not lang_skip and not _session_manifest.is_path_allowed(mani, file_path):
+                shadow = os.environ.get("RC_SHADOW_MODE") == "1"
+                decision = "shadow_blocked" if shadow else "blocked"
+                _emit_audit(
+                    tool_name=tool_name,
+                    decision=decision,
+                    file_path=file_path,
+                    started=started,
+                    reason="language_fingerprint_violation",
+                    signal_source="lang_lock",
+                )
+                if shadow:
+                    audit_log.record_shadow_block(file_path)
+                else:
+                    audit_log.record_block(file_path)
+                    declared = mani.get("declared_language")
+                    _exit(
+                        2,
+                        f"[hybrid-reasoner] BLOCKED: language fingerprint violation\n"
+                        f"  file: {file_path}\n"
+                        f"  declared: {declared}",
+                    )
+        except Exception:  # noqa: BLE001
+            pass
 
     pairs = _extract_changes(tool_name, tool_input)
     if not pairs:
@@ -484,7 +534,7 @@ def main() -> None:
                     report["integration_authenticity"] = auth
                     report["human_summary"] = (
                         report.get("human_summary", "")
-                        + f" | mock-detector flagged: integration_authenticity={auth:.2f}. Override: '# rc:skip-mock'."
+                        + f" | mock-detector flagged: integration_authenticity={auth:.2f}"
                     )
         except Exception:  # noqa: BLE001
             pass

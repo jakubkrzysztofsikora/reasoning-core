@@ -214,7 +214,7 @@ def screen_command(cmd: str) -> tuple[int, str]:
             "[hybrid-reasoner] BLOCKED: shell command targets the guard or sidecar.\n"
             f"  matched: {deny_reason}\n"
             f"  command: {cmd[:300]}\n"
-            f"  override: set {ALLOW_OVERRIDE_ENV}=1 in your shell, restart Claude."
+            f"  command: {cmd[:300]}"
         )
 
     # Layer B: shell command targeting a guarded path (regardless of operation).
@@ -229,7 +229,7 @@ def screen_command(cmd: str) -> tuple[int, str]:
                 "[hybrid-reasoner] BLOCKED: shell write to guard file.\n"
                 f"  guarded path: {guarded}\n"
                 f"  command: {cmd[:300]}\n"
-                f"  override: set {ALLOW_OVERRIDE_ENV}=1 in your shell, restart Claude."
+                f"  command: {cmd[:300]}"
             )
 
     # Layer C: kill/pkill against sidecar process names.
@@ -241,7 +241,7 @@ def screen_command(cmd: str) -> tuple[int, str]:
                 "[hybrid-reasoner] BLOCKED: shell kill targets sidecar process.\n"
                 f"  process token: {token}\n"
                 f"  command: {cmd[:300]}\n"
-                f"  override: set {ALLOW_OVERRIDE_ENV}=1 in your shell, restart Claude."
+                f"  command: {cmd[:300]}"
             )
 
     # Layer D: shell-level source rewrite. The write-pattern check runs BEFORE
@@ -258,7 +258,7 @@ def screen_command(cmd: str) -> tuple[int, str]:
             f"  pattern: {src_pat}\n"
             f"  command: {cmd[:300]}\n"
             "  reason: use the Edit / Write / MultiEdit tools so the SSM guard can score the change.\n"
-            f"  override: set {ALLOW_OVERRIDE_ENV}=1 in your shell, restart Claude."
+            f"  command: {cmd[:300]}"
         )
 
     # No write pattern, no guard hit — let it through (with or without an

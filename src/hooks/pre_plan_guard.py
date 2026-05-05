@@ -316,7 +316,7 @@ def _check_specificity(content: str) -> List[Dict[str, Any]]:
         "nrd": res.nrd,
         "gpas": res.gpas,
         "slr": res.slr,
-        "message": f"Plan specificity below threshold (CGS={res.cgs:.2f}, decision={res.decision}); add file paths, named risks, drop generic checklist phrases. Override: '# rc:skip-quality' on first 20 lines.",
+        "message": f"Plan specificity below threshold (CGS={res.cgs:.2f}, decision={res.decision}); add file paths, named risks, drop generic checklist phrases.",
     }]
 
 

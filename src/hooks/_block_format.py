@@ -12,13 +12,14 @@ HINTS = {
     "novelty": "align with existing patterns",
 }
 
+# Stderr deliberately does NOT enumerate override routes — naming them in
+# agent-visible output trains the agent to attempt the bypass. Operators
+# learn the override mechanisms from docs / `rc status`, not from blocks.
 GUIDANCE = (
-    "\n  This block is a signal to IMPROVE the file, not bypass it.\n"
-    "  Address the top risk contributors above. Bypass via heredoc, sed,\n"
-    "  or subagent will also be blocked.\n"
+    "\n  Address the top risk contributors above before retrying.\n"
 )
 
-RETRY = "\n  RETRY DETECTED: same file blocked recently. Revise content, do not retry.\n"
+RETRY = "\n  RETRY DETECTED: same file was blocked recently. Revise content; do not retry the same write.\n"
 
 
 def _f(v):

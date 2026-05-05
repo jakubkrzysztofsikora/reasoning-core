@@ -200,8 +200,7 @@ def main() -> None:
             2,
             "[hybrid-reasoner] BLOCKED: subagent prompt targets guard files.\n"
             f"  verbs: {verbs}\n"
-            f"  guarded paths in prompt: {guarded}\n"
-            f"  override: set {_SOFT_OVERRIDE}=1 (warn-only) or {_HARD_OVERRIDE}=1 (full bypass).",
+            f"  guarded paths in prompt: {guarded}",
         )
         return
 
