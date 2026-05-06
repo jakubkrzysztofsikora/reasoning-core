@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 
 from _supervisor_env import build_child_env, gen_extra_env
 from _supervisor_broker import broker_health_snapshot, start_broker_http
+from _supervisor_recalibrate import recalibrate_watcher
 
 
 _LOG_ROTATE_BYTES = 100 * 1024 * 1024
@@ -205,6 +206,15 @@ def main() -> int:
         )
         t.start()
         threads.append(t)
+
+    recal_t = threading.Thread(
+        target=recalibrate_watcher,
+        args=(stop, repo_root),
+        daemon=True,
+        name="recalibrate-watcher",
+    )
+    recal_t.start()
+    threads.append(recal_t)
 
     sys.stderr.write(
         f"[supervisor] managing {len(children)} children: "
