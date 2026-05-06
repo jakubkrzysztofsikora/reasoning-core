@@ -1,0 +1,24 @@
+{
+  "pre_n": 200,
+  "post_n": 138,
+  "unreachable": 0,
+  "agreement_by_category": {
+    "pos": {
+      "agree": 70,
+      "total": 120,
+      "rate": 0.5833333333333334
+    },
+    "shuf": {
+      "agree": 32,
+      "total": 40,
+      "rate": 0.8
+    },
+    "hard": {
+      "agree": 36,
+      "total": 40,
+      "rate": 0.9
+    }
+  },
+  "elapsed_s": 94.58571004867554,
+  "judge_model": "devstral-2-123b-instruct-2512"
+}
