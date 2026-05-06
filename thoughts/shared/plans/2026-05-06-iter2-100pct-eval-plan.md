@@ -549,6 +549,9 @@ Tracked here so promotion gates remain honest.
 | 68 | `rc status` does not surface calibration state (mtime, threshold, CI width, last recalibrate signal) | add `calibration:` section to `src/rc_cli.py::cmd_status` | P-1/P7 follow-up |
 | 69 | `_DELTA = 0.02` and `_LAMBDA = 0.06` hard-coded in `recalibrate.py` — should derive from σ of rolling 90-d benign FPR | once P4 corpus lands, estimate σ at runtime: `λ = 3σ * sqrt(ARL₀)` | P7 follow-up |
 | 70 | Bootstrap uses `random.Random(11)` while `np.random` already in scope — vectorized resample is ~10× faster | swap to `np.random.default_rng(seed).integers(0, n, size=(n_boot, n))` | P7 follow-up |
+| 71 | **Live κ eval (commit `80b5543`) plateaus at κ=0.33-0.36 across 30B→123B Scaleway models. Stratified accuracy shows commit-mined positives are noisy (acc=62% on label=1 vs 88% on hand-crafted hard negs)** — kappa floor is dataset label noise, not model capacity. CDGS correctly stays in skipped mode (gate fail-safe). | Rebuild `grounding_pairs.jsonl`: (a) curated hand-labeled set of 100 high-confidence positives + 100 hand-crafted negs; OR (b) use stronger judge (e.g., Claude Opus / GPT-5.5) to relabel and keep only judge-teacher agreement subset. Re-run κ against rebuilt set. | P5 follow-up (high value) |
+| 72 | Rubric prompt (3-criterion) added (commit `80b5543`) but +0.03 κ only. arxiv 2511.10865 reports +0.18 κ with rubric — gap likely closes once dataset noise drops (#71). Verify after #71. | re-eval with rubric on cleaned dataset | P5 follow-up |
+| 73 | Gate thresholds relaxed κ≥0.6 / CI≥0.5 (industry "acceptable", was "high confidence"). Rationale committed in plan body. | re-tighten to κ≥0.7 once #71 lands and a model genuinely clears it | P5 follow-up |
 
 Promotion criteria (already in §P4): an enforcement flip from shadow → real
 block requires (a) labeled-corpus FPR ≤ 2%, (b) zero blocks on the 50-edit
