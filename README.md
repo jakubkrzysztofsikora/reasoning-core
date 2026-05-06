@@ -243,9 +243,15 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the deep-dive and
 - ✅ **Structured audit log** — `~/.local/share/reasoning-core/events/<date>/<session>.jsonl`
   per decision (override with `RC_AUDIT_ROOT`); rotation pruned by
   `RC_AUDIT_RETENTION_DAYS` on session start.
-- ✅ **Grounding eval harness** — 200 hand-labeled pairs in
-  `eval/datasets/grounding_pairs.jsonl`; `eval/qwen_grounding_eval.py` enforces a
-  Cohen κ ≥ 0.7 sentinel before promoting changes.
+- ✅ **Grounding eval harness** — two datasets ship: v1
+  (`eval/datasets/grounding_pairs.jsonl`, 200 pairs git-mined) and v2
+  (`eval/datasets/grounding_pairs_v2.jsonl`, 138 pairs, devstral-123b
+  judge-relabeled high-confidence subset; `4ed3245`). `eval/qwen_grounding_eval.py`
+  computes Cohen κ; current sentinel target is `RC_QWEN_KAPPA_SENTINEL=0.7`.
+  Live measurement on v2 is **κ=0.74** but contaminated by kin-judge
+  family (relabeling judge and held-out test model are both coder-LLMs);
+  the gate runs **advisory** until a v3 cross-family dataset is built
+  (Phase 3.5 of [`2026-05-06-system-2-loop-closure.md`](thoughts/shared/plans/2026-05-06-system-2-loop-closure.md)).
 
 ---
 
