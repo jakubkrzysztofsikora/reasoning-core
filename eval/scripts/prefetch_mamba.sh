@@ -71,17 +71,20 @@ path = snapshot_download(
 print(path)
 PY
 
-# Resolve the on-disk safetensors path under the snapshot directory.
-# Round-3 fix: upstream may publish sharded weights (model-00001-of-N.safetensors
-# + model.safetensors.index.json) instead of a single model.safetensors.
-# Probe single-file first, fall through to any *.safetensors, then
-# pytorch_model.bin as last-resort.
-SAFETENSORS_PATH="$(find "${HF_HOME}/hub" -type f -name 'model.safetensors' | head -n 1 || true)"
+# Resolve the weight file path. HF Hub 1.13+ stores by content-addressed blob
+# (snapshots/<rev>/<filename> is a symlink to blobs/<sha>); xet-backed
+# downloads sometimes leave only the blob with no symlink. Probe both:
+# (1) named symlink in snapshots/, (2) blob >50MB by size, (3) legacy.
+SAFETENSORS_PATH="$(find -L "${HF_HOME}/hub" -type f -name 'model.safetensors' 2>/dev/null | head -n 1 || true)"
 if [[ -z "${SAFETENSORS_PATH}" ]]; then
-    SAFETENSORS_PATH="$(find "${HF_HOME}/hub" -type f -name '*.safetensors' ! -name '*.index.json' | head -n 1 || true)"
+    SAFETENSORS_PATH="$(find -L "${HF_HOME}/hub" -type f -name '*.safetensors' ! -name '*.index.json' 2>/dev/null | head -n 1 || true)"
 fi
 if [[ -z "${SAFETENSORS_PATH}" ]]; then
-    SAFETENSORS_PATH="$(find "${HF_HOME}/hub" -type f -name 'pytorch_model.bin' | head -n 1 || true)"
+    SAFETENSORS_PATH="$(find -L "${HF_HOME}/hub" -type f -name 'pytorch_model.bin' 2>/dev/null | head -n 1 || true)"
+fi
+# Last resort: any blob >50MB (xet content-addressed storage where filename is a sha).
+if [[ -z "${SAFETENSORS_PATH}" ]]; then
+    SAFETENSORS_PATH="$(find "${HF_HOME}/hub" -path '*/blobs/*' -type f -size +50M 2>/dev/null | head -n 1 || true)"
 fi
 if [[ -z "${SAFETENSORS_PATH}" || ! -f "${SAFETENSORS_PATH}" ]]; then
     echo "[prefetch_mamba] WARN: no weight file (*.safetensors / pytorch_model.bin) found in cache after snapshot_download." >&2
