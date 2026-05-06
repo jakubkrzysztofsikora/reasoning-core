@@ -907,21 +907,47 @@ risk-vector-delta-refactor + coherence-delta-calibration write-ups and
 - **P3 — Calibration:** Mahalanobis over 8-dim risk space, per-kind shrinkage,
   Page-Hinkley monthly recalibration.
 - **P4 — Calibration corpus + golden set + OOD detector + shadow-mode hardening.**
-- **P5 — Sidecar broker + supervisor + grounding eval (Cohen κ ≥ 0.7) on 200 labeled
-  pairs.**
-- **P7 — Calibration concurrent with shadow mode.**
+- **P5 — Sidecar broker + supervisor + grounding eval** on 200 labeled pairs.
+- **P5 round-3 hardening** — 4-reviewer findings closed: per-dim Pareto epsilon,
+  semantic safety net, stderr truncation contract, rules.yaml fail-closed
+  (`b7f0517`).
+- **P5 grounding pairs v2** — judge-relabeled high-confidence subset; live κ=0.74
+  on v2 (kin-judge contaminated, gate advisory) (`4ed3245`).
+- **P7 — Calibration concurrent with shadow mode** (Mahalanobis + Ledoit-Wolf
+  shrinkage + empirical-Bayes per-kind anchor).
+- **P7 supervisor watcher** — consumes `recalibrate.signal` for hot-refit without
+  restart (`5313498`).
+- **Iter-2 readiness blockers closed** — `GUARDED_PATHS` extended to all hook
+  helpers + supervisor + gen_client + calibration; binomial sign-test in
+  `eval/stats.py` for the falsifiable goal (`6a921ce`).
+- **CI eval workflow stabilized** — sharded-safetensors fallback, lazy
+  prefetch, `--run-id` arg, contents:write permission
+  (`c452cb4`/`c0118a4`/`4997ec7`/`dcd3598`/`1738b57`/`1bc2718`).
 
 ### Open
 
-- **CodeBERTScore plan↔diff** for semantic alignment (deferred from P4).
-- **Subagent loop path** + LLM-judge gate behind `RC_COHERENCE_LLM=1` (deferred from P5).
-- **Iterative repair loop** — today the gate is one-shot allow/block; next is closing
-  the loop so Claude re-proposes against the repair hint until pass-or-yield.
+- **Synthesize-Check-Refine loop** — Phase 3 of
+  [`2026-05-06-system-2-loop-closure.md`](thoughts/shared/plans/2026-05-06-system-2-loop-closure.md):
+  on block, auto-call the generative critic, re-score with sidecar, emit
+  validated repair as stderr hint. Iteration is server-side; agent never
+  sees the loop.
+- **Hybrid symbolic gating (ADR injection)** — Phase 2 of the same plan:
+  `.reasoning-core/rules.yaml` + `_rule_engine.py` for layered-import /
+  forbidden-pattern / metric-threshold rules co-emitted with the neural
+  risk vector through the same exit-2 pipe.
+- **TTFV (<15 min) + drift visualization** — Phase 1: `rc audit-history` (last
+  N commits, what would have been blocked) + `rc viz` Mermaid sparkline +
+  `npx reasoning-core init` one-line installer.
+- **v3 cross-family κ dataset** — Phase 3.5: 200 pairs × 3 judges (devstral
+  + llama-3.3-70b + mistral-small) with pairwise-κ < 0.7 independence test.
+  Replaces the kin-judge-contaminated v2 sentinel.
 - **CUDA / MLX kernels** for the Mamba forward pass (currently CPU-only; p95 ~5s).
 - **SSE `/score/stream`** + Prometheus textfmt `/metrics`.
 - **Pre-commit variant** so non-Claude editors are also gated.
 - **Linux systemd service** to mirror the macOS launchd supervisor.
-- **Real `slide-mamba` weights** when public.
+- **Mamba-3 watch + Plan-B Mamba-2-2.7B fallback** — Phase 4: HOLD on Mamba-3
+  (no public HF checkpoint as of 2026-05; CUDA-only kernels; only 1/8 risk
+  dims uses SSM embedding). Plan-B fallback ships behind `RC_USE_MAMBA2_2_7B=1`.
 
 Roadmap source of truth: [`docs/PLAN.md`](docs/PLAN.md) +
 [`thoughts/shared/research/`](thoughts/shared/).
