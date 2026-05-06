@@ -645,16 +645,28 @@ control only the `source_code` kind.
 | `RC_LANG_OVERRIDE` | _unset_ | Per-edit language override |
 | `RC_LANG_LOCK_MAX_FILES` | `20000` | Cap files scanned when fingerprinting the repo |
 | `RC_LANG_AUDIT_THRESHOLD` | `0.33` | PostToolUse foreign-language ratio that triggers an audit row |
-| `RC_DRIFT_WARN` | `4.0` | Coherence-drift warn level |
-| `RC_DRIFT_DENY` | `6.0` | Coherence-drift hard-deny level |
+| `RC_DRIFT_WARN` | `4.0` | **Placeholder** cumulative-drift warn level pending Phase 3.5 calibration; not production-tuned (tracker #78). |
+| `RC_DRIFT_DENY` | `6.0` | **Placeholder** cumulative-drift hard-deny level pending Phase 3.5 calibration. |
 | `RC_DRIFT_OVERRIDE` | _unset_ | `1` disables drift policy (hard-denied if set inline via Bash) |
 
 ### Generative repair head
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `RC_REASONER_BACKEND` | `mlx` | `mlx` (Apple) / `llama_cpp` / `scaleway` |
+| `RC_REASONER_BACKEND` | `mlx` | `mlx` (Apple) / `llama` / `remote` |
+| `RC_GEN_URL` | local mlx port | Override for hosted endpoint (e.g. Scaleway `https://api.scaleway.ai/v1/chat/completions`) |
+| `RC_GEN_API_KEY` | _unset_ | Bearer token for hosted endpoint (`80b5543`); falls through to `SCALEWAY_API_KEY` |
+| `RC_GEN_MODEL` | `mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit` | Model id sent in chat-completions body |
 | `RC_GEN_BUDGET_MS` | `2500` | Generation budget per repair call (ms) |
+
+### Calibration & supervisor (P7)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_CALIBRATION_ENABLED` | _unset_ | `1` enables Mahalanobis calibration gate in pre_edit_guard (`b7f0517`); default OFF until Phase 3.5 v3 corpus calibrates |
+| `RC_CALIBRATION_PATH` | `eval/runs/calibration.json` | Override path to fitted calibration models |
+| `RC_RECALIBRATE_POLL_S` | `60` | Supervisor watcher poll interval for `recalibrate.signal` (`5313498`); hot-reloadable per tick |
+| `RC_BROKER_PORT` | `8764` | Supervisor broker `/health` aggregator port |
 
 ### Bypass / kill switches
 
