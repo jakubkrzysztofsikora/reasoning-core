@@ -159,7 +159,13 @@ def test_malformed_stdin_allowed() -> None:
 # screen_command unit-level
 # ---------------------------------------------------------------------------
 
-def test_screen_command_unit() -> None:
+def test_screen_command_unit(monkeypatch) -> None:
+    # Scrub override env so the test sees the same posture as a normal session.
+    # Without this, a shell that exports RC_ALLOW_GUARD_EDIT=1 (legit operator
+    # override for guard-file edits) defeats the hard-deny assertions below.
+    monkeypatch.delenv("RC_ALLOW_GUARD_EDIT", raising=False)
+    monkeypatch.delenv("RC_ALLOW_SUBAGENT_GUARD_EDIT", raising=False)
+    monkeypatch.delenv("RC_BYPASS_NEXT", raising=False)
     mod = _load_module()
     assert mod.screen_command("ls")[0] == 0
     assert mod.screen_command("pkill -f s2_core")[0] == 2

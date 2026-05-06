@@ -38,7 +38,12 @@ def test_screen_prompt_mutation_verb_outside_guarded():
     assert res["guarded_paths"] == []
 
 
-def test_screen_prompt_mutation_verb_on_guarded_path():
+def test_screen_prompt_mutation_verb_on_guarded_path(monkeypatch):
+    # Scrub operator override env vars so the test sees the same posture as
+    # an unprivileged session — without this, RC_ALLOW_GUARD_EDIT=1 in the
+    # parent shell defeats the assertion.
+    monkeypatch.delenv("RC_ALLOW_GUARD_EDIT", raising=False)
+    monkeypatch.delenv("RC_ALLOW_SUBAGENT_GUARD_EDIT", raising=False)
     res = pre_task_guard.screen_prompt(
         "Implement edits to src/s2_core.py and write a new test."
     )
