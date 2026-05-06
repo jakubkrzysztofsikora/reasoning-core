@@ -17,14 +17,19 @@
 git clone https://github.com/jakubkrzysztofsikora/reasoning-core.git
 cd reasoning-core && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && huggingface-cli download state-spaces/mamba-130m-hf
-direnv allow . && bash scripts/start-sidecar.sh
-claude   # every Edit/Write Claude attempts is now scored before it lands
+direnv allow .
+bash scripts/install-supervisor-launchagent.sh   # macOS — KeepAlive sidecar
+# or, ad-hoc, no launchd:
+# bash scripts/start-sidecar.sh
+export PATH="$PWD/bin:$PATH"                     # `rc` admin shim
+claude   # every Edit/Write Claude proposes is now scored before it lands
 ```
 
 After that, every change Claude proposes goes through a structural-regression scorer.
-Bad refactors get **blocked before they touch your filesystem**, with a structured repair
-hint telling Claude *why* and *how* to revise. Repo-scoped via direnv — leaves every other
-folder untouched.
+The gate ships in **shadow mode** by default (`RC_SHADOW_MODE=1`) — decisions are logged
+to the audit trail without enforcing, so you can observe what *would* be blocked on your
+codebase before flipping it on. Repo-scoped via direnv — leaves every other folder
+untouched.
 
 ---
 
@@ -33,13 +38,20 @@ folder untouched.
 - [Why this exists](#why-this-exists)
 - [The solution: System 1 + System 2](#the-solution-system-1--system-2)
 - [What you get out of the box](#what-you-get-out-of-the-box)
-- [Run it locally (5 steps, no global side-effects)](#run-it-locally-5-steps-no-global-side-effects)
+- [Run it locally (6 steps, no global side-effects)](#run-it-locally-6-steps-no-global-side-effects)
 - [How it works under the hood](#how-it-works-under-the-hood)
 - [Hook layers](#hook-layers)
+- [CLI](#cli)
+- [Supervisor & launchd (macOS)](#supervisor--launchd-macos)
+- [Shadow mode & kill switches](#shadow-mode--kill-switches)
+- [Evaluation harness](#evaluation-harness)
+- [Benchmarks — iteration 1 (draft)](#benchmarks--iteration-1-draft)
 - [Scoring math](#scoring-math)
 - [Configuration](#configuration)
+- [Usage from code](#usage-from-code)
 - [Project layout](#project-layout)
 - [FAQ / troubleshooting](#faq--troubleshooting)
+- [Testing](#testing)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [Acknowledgements + License](#acknowledgements--license)
@@ -175,6 +187,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the deep-dive and
 
 ## What you get out of the box
 
+### Core scoring
+
 - ✅ **Real Mamba-130M weights** — `state-spaces/mamba-130m-hf` via `transformers.AutoModel`,
   not a hash mock. Deterministic forward (`model.eval()` + `torch.no_grad()` + seeded).
 - ✅ **12 Tree-sitter languages** — Python, JS, TS, C#, SQL + 7 data languages (Markdown,
@@ -185,18 +199,55 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the deep-dive and
   saturation; structural risk dims zero out and only `novelty` polices content.
 - ✅ **Delta-semantics risk vector** — fan_in/fan_out/depth/coupling/cohesion measure the
   *change*, not the file's absolute complexity.
-- ✅ **5-layer hook coverage** — Edit/Write, Plan, Bash, Task subagent, sidecar revive.
+- ✅ **OOD detector + golden set** — calibration corpus + Mahalanobis distance over the
+  8-dim risk space; out-of-distribution edits surface in the audit log.
+- ✅ **Calibration pipeline** — `src/calibration.py` + `eval/recalibrate.py` recompute
+  per-kind thresholds from labeled history (Page-Hinkley monthly cadence).
+
+### Hook surface
+
+- ✅ **9-hook coverage** — Edit/Write, Plan, Bash, Task subagent, PreCompact, post-bash
+  revive, post-batch language audit, SessionStart manifest, session-resume re-inject.
+  Wired in [`.claude/settings.json`](.claude/settings.json).
 - ✅ **Structured repair hints** — every block lists top-3 risk contributors with per-dim
   hints + retry-detection banner when Claude tries the same write twice.
+- ✅ **Mock-detector heuristics** — flags placeholder code (`pass`, `NotImplementedError`,
+  TODO bodies, suspicious return-zero) at gate time. Default-on via `RC_MOCK_DETECTOR=1`.
+- ✅ **Plan-quality gate (CGS)** — plan-time scoring of section drift, kNN novelty, and
+  plan→implementation coherence. Behind `RC_PLAN_QUALITY=1`.
+- ✅ **Language fingerprint lock** — `RC_LANG_LOCK=1` rejects edits introducing a
+  language not present in the project's existing fingerprint. PostToolUse audit tracks
+  drift after the fact.
+- ✅ **Generative repair head** — Qwen2.5-Coder-1.5B via MLX (Apple) / Scaleway (CI)
+  selected by `RC_REASONER_BACKEND`, budgeted by `RC_GEN_BUDGET_MS`. Started via
+  `scripts/start-gen-sidecar.sh`.
 - ✅ **Stdlib-only hook runtime** — survives broken venvs (`urllib.request` only).
+
+### Operations & ergonomics
+
 - ✅ **Repo-scoped via direnv** — env, hooks, MCP servers active *only* in this folder.
+- ✅ **Shadow mode by default** — `RC_SHADOW_MODE=1` logs every decision without
+  enforcing. Flip to `0` once calibrated on your codebase.
+- ✅ **Magic-comment escapes + kill-switches** — single-shot bypass via `# rc:bypass-next`
+  magic comment; session-wide off via `RC_BYPASS_NEXT=1`. Captured at session boot so
+  they cannot be edited mid-session.
+- ✅ **`rc` CLI shim** — `bin/rc` exposes operator commands
+  (`rc status`, `rc explain`, `rc bypass-next`, `rc skip-file`, `rc unskip-file`).
+- ✅ **launchd KeepAlive supervisor (macOS)** —
+  `scripts/install-supervisor-launchagent.sh` drops
+  `launchd/com.reasoning-core.supervisor.plist`; sidecar restarts on crash and on login.
 - ✅ **MCP-native bridge** — any MCP client (Claude Code, Claude Desktop, custom) can call
   `reason_over_edit`.
-- ✅ **Structured audit log** — `/tmp/rc-events/<date>/<session>.jsonl` per decision.
+- ✅ **Structured audit log** — `~/.local/share/reasoning-core/events/<date>/<session>.jsonl`
+  per decision (override with `RC_AUDIT_ROOT`); rotation pruned by
+  `RC_AUDIT_RETENTION_DAYS` on session start.
+- ✅ **Grounding eval harness** — 200 hand-labeled pairs in
+  `eval/datasets/grounding_pairs.jsonl`; `eval/qwen_grounding_eval.py` enforces a
+  Cohen κ ≥ 0.7 sentinel before promoting changes.
 
 ---
 
-## Run it locally (5 steps, no global side-effects)
+## Run it locally (6 steps, no global side-effects)
 
 The recommended setup is **repo-scoped**: leaves every other repo and Claude session
 untouched. Promote to global only after you're convinced it earns its keep.
@@ -227,13 +278,16 @@ curl -fsS http://127.0.0.1:8765/health | jq .model_loaded   # → true
 ### 4. Activate `direnv` for repo-scoped env
 
 The repo ships an [`.envrc`](.envrc) that loads venv, sidecar tuning, hook policy posture,
-HuggingFace cache pin **only when you `cd` into this folder**. Other repos see none of it.
+HuggingFace cache pointer (shared with sibling repos at `$HOME/.cache/huggingface` so
+weights aren't downloaded twice), and a Cato VPN-aware CA bundle **only when you `cd` into
+this folder**. Other repos see none of it.
 
 ```bash
 brew install direnv                          # if not installed
 echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc # or bash equivalent
 cd ~/Repos/personal/reasoning-core
 direnv allow .
+export PATH="$PWD/bin:$PATH"                 # so `rc` shim resolves
 ```
 
 Secrets / personal toggles → `.envrc.local` (gitignored, sourced last).
@@ -248,8 +302,9 @@ claude   # picks up .claude/settings.json — hooks active for THIS session only
 Verify it's actually thinking:
 
 ```bash
-curl -fsS http://127.0.0.1:8765/metrics | jq    # score_calls, p50_ms, p95_ms
-ls /tmp/rc-events/$(date +%F)/ | head           # per-decision audit log
+curl -fsS http://127.0.0.1:8765/metrics | jq                              # score_calls, p50_ms, p95_ms
+ls ~/.local/share/reasoning-core/events/$(date +%F)/ | head               # per-decision audit log
+rc status                                                                 # sidecar health + posture
 ```
 
 ### 6. (Optional) Promote globally
@@ -280,21 +335,206 @@ only buys scoring across other repos at the cost of losing the easy-uninstall pr
    - any risk dim `> dim_ceiling[kind]`
 8. Block stderr surfaces top-3 risk contributors with repair hints. Retries within 120s
    trigger a "RETRY DETECTED" banner.
+9. In **shadow mode** (default), steps 7–8 still execute but the hook always returns
+   exit 0; the would-be decision is logged for offline review.
 
 ---
 
 ## Hook layers
 
-| # | Hook | Tool matcher | Purpose |
+| # | Hook | Event / matcher | Purpose |
 |---|---|---|---|
-| L1 | `pre_bash_guard.py` | `Bash` | Blocks shell-level source writes (heredoc, sed, tee), kills against sidecar, edits to guard files |
-| L2 | `pre_edit_guard.py` | `Edit\|Write\|MultiEdit` | SSM scoring; per-kind threshold dispatch; guard-file lock |
-| L3 | `pre_plan_guard.py` | `Plan` (and Write to `**/plans/**.md`) | Plan-time heuristics: per-file LOC budget, boundary-crossing prose, novelty drift |
-| L4 | `pre_task_guard.py` | `Task` | Regex screen on subagent prompts mentioning guarded paths with mutation verbs |
-| L5 | `post_bash_revive.py` | `Bash` (PostToolUse) | Re-spawns sidecar when `/health` stops responding after a kill-shaped command |
+| L1 | `pre_bash_guard.py` | PreToolUse / `Bash` | Blocks shell-level source writes (heredoc, sed, tee), kills against the sidecar, env tampering, edits to guard files |
+| L2 | `pre_edit_guard.py` | PreToolUse / `Edit\|Write\|MultiEdit` | SSM scoring; per-kind threshold dispatch; mock-detector; OOD detector; language-lock; drift policy; guard-file lock |
+| L3 | `pre_plan_guard.py` | PreToolUse / `Write` (and Plan-shaped writes to `**/plans/**.md`) | Plan-time heuristics + plan-quality CGS (kNN novelty, section drift, plan→impl coherence) |
+| L4 | `pre_task_guard.py` | PreToolUse / `Task` | Regex screen on subagent prompts mentioning guarded paths with mutation verbs |
+| L5 | `post_bash_revive.py` | PostToolUse / `Bash` | Re-spawns sidecar when `/health` stops responding after a kill-shaped command |
+| L6 | `post_batch_lang_audit.py` | PostToolUse / `Edit\|Write\|MultiEdit` | After-the-fact language-fingerprint audit; logs drift events when foreign-language ratio crosses `RC_LANG_AUDIT_THRESHOLD` |
+| L7 | `pre_compact_guard.py` | PreCompact | Captures pre-compaction state so the post-compact context can be reconciled |
+| L8 | `session_start_manifest.py` | SessionStart | Snapshots `RC_*` env, repo SHA, language fingerprint, active task spec; prevents mid-session env tampering |
+| L9 | `session_resume_inject.py` | SessionStart (resume) + UserPromptSubmit | Re-injects pinned env from the prior session manifest into the resumed shell |
 
-All five wired in [`.claude/settings.json`](.claude/settings.json). Every fire emits an
+All nine wired in [`.claude/settings.json`](.claude/settings.json). Every fire emits an
 audit row.
+
+Internal helpers (libraries, not hook entrypoints): `_audit_rotation`, `_block_format`,
+`_kill_switches`, `_magic_comments`, `_mock_detector`, `_ood_detector`, `_plan_quality`,
+`_session_manifest`, `_shadow_mode`.
+
+---
+
+## CLI
+
+Put `bin/` on PATH (`export PATH="$PWD/bin:$PATH"`) and use `rc` for diagnostics and
+single-shot bypasses:
+
+| Command | Purpose |
+|---|---|
+| `rc status` | Sidecar health + threshold posture (shadow mode? fail-closed? per-kind ceilings?) |
+| `rc explain` | Explain the most recent block decision (top-3 risk contributors + repair hints) |
+| `rc bypass-next` | Arm a single-shot bypass for the next Edit/Write — consumed on first guard fire |
+| `rc skip-file <path>` | Add `<path>` to the per-session skip list (logged) |
+| `rc unskip-file <path>` | Remove `<path>` from the skip list |
+
+`rc --help` is authoritative.
+
+---
+
+## Supervisor & launchd (macOS)
+
+The sidecar is a long-lived FastAPI process; if it crashes mid-session you lose scoring
+until you notice. The supervisor solves both problems.
+
+```bash
+bash scripts/install-supervisor-launchagent.sh
+launchctl list | grep com.reasoning-core
+tail -f /tmp/rc-sidecar-supervisor.log
+```
+
+- KeepAlive=true → relaunches on crash.
+- RunAtLoad=true → starts on login.
+- Uninstall: `launchctl bootout gui/$UID/com.reasoning-core.supervisor` then delete the
+  plist from `~/Library/LaunchAgents/`.
+
+Linux equivalent: see [`docs/HARDENING.md`](docs/HARDENING.md).
+
+---
+
+## Shadow mode & kill switches
+
+The gate ships in **shadow mode** by default (`RC_SHADOW_MODE=1` in `.envrc`). Decisions
+are computed and logged; the hook always returns exit 0. This lets you observe what the
+gate *would* have done on your codebase before flipping it on.
+
+Promote to enforcement when ready:
+
+```bash
+echo 'export RC_SHADOW_MODE=0' >> .envrc.local
+direnv reload
+```
+
+Escapes (in order of preference):
+
+- **Magic comment, single edit:** prepend `# rc:bypass-next` (or `// rc:bypass-next`) to
+  the file before the Edit Claude is about to fire.
+- **Single-shot, single command:** `rc bypass-next` arms one bypass; the next guard fire
+  consumes it.
+- **Single-shot, fresh session:** `RC_BYPASS_NEXT=1 claude ...` — captured at session
+  boot, consumed by the first guard fire.
+- **Per-path session-wide:** `RC_ALLOW_GUARD_EDIT=1` for guarded paths,
+  `RC_ALLOW_SUBAGENT_GUARD_EDIT=1` for subagent prompts naming them.
+- **Last resort:** `S2_FAIL_CLOSED=0` and kill the sidecar — fails open. Don't ship this;
+  it nullifies the gate.
+
+Every escape path emits an audit row tagged with the override mechanism so abuse is
+spottable later.
+
+---
+
+## Evaluation harness
+
+`eval/` is the calibration + regression-test machine for the gate. See
+[`eval/README.md`](eval/README.md) for full reference.
+
+| Component | Purpose |
+|---|---|
+| `validate_embedder.py` | Embedder fitness test — checks Mamba pooled embeddings discriminate semantic-vs-syntactic edits |
+| `calibration_corpus.py` | Mines labeled (good-edit, bad-edit) pairs from git history |
+| `golden_set.py` | Pinned regression cases that must keep their decisions across releases |
+| `recalibrate.py` | Page-Hinkley monthly recal of per-kind thresholds |
+| `qwen_grounding_eval.py` | Enforces Cohen κ ≥ `RC_QWEN_KAPPA_SENTINEL` (default 0.7) between SSM gate and Qwen judge on 200 hand-labeled pairs (`datasets/grounding_pairs.jsonl`) |
+| `run_suite.py` + `aggregate.py` + `stats.py` | Paired Wilcoxon harness across N runs |
+| `synthetic_drift.py` | Generates drifted variants for stress testing |
+| `build_grounding_pairs.py` | Rebuilds the labeled-pair dataset from raw sources |
+
+Smoke run:
+
+```bash
+python3 -m eval.run_suite --task fixtures/smoke --n 2
+python3 -m eval.aggregate --runs eval/runs/smoke-001
+```
+
+---
+
+## Benchmarks — iteration 1 (draft)
+
+> **Status: initial draft, n=1–3 per cell, single-judge.** Iteration 2 (in progress) ships
+> the iter-1 failure-mode fixes (mock-detector, plan-quality CGS, language-fingerprint
+> lock) and re-runs against the same 8-task harness with n≥3 + cross-family judges.
+> Numbers below are headline only; full per-task per-judge tables live in
+> `~/evals/2026-05-05_*/REPORT.md` (gitignored — they include real Anthropic spend).
+
+**Setup.** Two arms × eight tasks (T1, T2, T5, T7, T8, T9, E1, P0), randomized arm order
+per pair, fixed-seed correctness gate + rotated-seed flake check, BARS-rubric
+implementation- and plan-quality grades.
+
+- **Setup A (control):** vanilla Claude Code, no hooks.
+- **Setup B (reasoning-core):** the gate in this repo, `S2_FAIL_CLOSED=1`, shadow-mode off.
+
+### Headline numbers (means across 8 tasks)
+
+| metric | Setup A (vanilla) | Setup B (reasoning-core) | Δ (B − A) | Δ% |
+|---|---:|---:|---:|---:|
+| **Cost / task (USD)** | $11.44 | $8.56 | −$2.88 | **−25.1%** |
+| **Wall clock / task** | 1 656 s | 1 270 s | −386 s | **−23.3%** |
+| **Tokens / task (main)** | 66 733 | 65 222 | −1 511 | −2.3% |
+| Impl quality (BARS 1–5) | 2.90 | 2.88 | −0.02 | flat |
+| Plan quality (BARS 1–5) | 2.92 | 2.50 | −0.42 | −14.4% |
+| **Task wins (decision rule: gates → impl_q → plan_q → cost)** | 2 / 8 | **6 / 8** | — | — |
+
+Suite totals: Setup A spent **$91.50** / 533 866 tokens across all 8 tasks; Setup B spent
+**$68.51** / 521 772 tokens. ~$23 / 25% saved at the suite level on this single-run draft.
+
+### Per-task verdicts
+
+| task | winner | A impl_q / plan_q | B impl_q / plan_q | A tokens | B tokens | A $ | B $ |
+|---|---|---:|---:|---:|---:|---:|---:|
+| T1 | A | 5.0 / 5.0 | 3.0 / 1.0 | 71 200 | 29 800 | $13.08 | $3.41 |
+| T2 | B | 3.5 / 3.0 | 5.0 / 3.0 | 121 000 | 94 200 | $22.93 | $12.39 |
+| T5 | B | 1.83 / 1.67 | 3.5 / 3.0 | 84 533 | 72 208 | $15.53 | $10.26 |
+| T7 | B | 1.83 / 1.67 | 3.5 / 3.0 | 84 533 | 72 208 | $15.53 | $10.26 |
+| T8 | B | 3.0 / 3.0 | 4.0 / 5.0 | 41 600 | 24 662 | $6.98 | $2.83 |
+| T9 | A | 1.0 / 3.0 | 1.0 / 1.0 | 37 700 | 39 894 | $2.85 | $3.49 |
+| E1 | B (correctness gate) | 3.5 / 3.0 (locked 0/1) | 1.0 / 1.0 (locked 1/1) | 57 600 | 41 600 | $5.89 | $4.29 |
+| P0 | B | 3.5 / 3.0 | 2.0 / 3.0 | 35 700 | 147 200 | $8.71 | $21.58 |
+
+### What this draft shows
+
+- **Money**: Setup B is meaningfully cheaper on 6/8 tasks. The P0 outlier (B spent
+  $21.58 vs A's $8.71) inflates B's mean tokens and partially erases the per-token
+  savings; without P0, B's mean cost drops to ~$5.34 (−40% vs A).
+- **Wall clock**: Setup B finishes ~23% faster on average. The gate is not free
+  (p95 ~5 s/Edit on CPU Mamba); the speedup comes from B avoiding regression-rework
+  loops.
+- **Quality**: implementation-quality means are flat. B wins by **decision rule**
+  (gates → impl_q → plan_q → cost), not by raw rubric points.
+- **Failures (informative)**:
+  - **T1** lost because the iter-1 build had no mock-detector — Claude shipped
+    placeholder code, scored low. Iter-2 ships `_mock_detector.py`.
+  - **T9** lost because plan-time scoring measured plan-vs-plan novelty, not
+    generic-vs-specific. Iter-2 ships the plan-quality CGS gate
+    (`_plan_quality.py`, behind `RC_PLAN_QUALITY=1`).
+  - **E1** is a partial-win: B passed the correctness gate (locked 1/1) where A
+    failed (locked 0/1), but the rubric grader marked B's diff lower because no
+    language-convention enforcement existed in iter-1. Iter-2 ships
+    `RC_LANG_LOCK` + post-batch language audit.
+
+### Caveats
+
+- n=1 per (task, arm) cell on most tasks (T5/T7 group has n=3); CIs are wide. The
+  iter-2 re-run targets n≥3 per cell with cross-family judges (Gemini + vibe) and
+  a Krippendorff α inter-rater gate.
+- Single-judge BARS grades; iter-2 adds the cross-family judge and per-grade
+  contamination check (`eval/contamination.py` in the orchestrator harness).
+- Decision rule is lexicographic (gates first); a single rubric point swing can
+  flip a per-task verdict. Treat headline win-count as directional, not significant.
+
+### Iteration-2 acceptance criterion (pre-registered)
+
+Setup B must pass the sign-test on 8 tasks (≥7/8 wins → p ≤ 0.035; 8/8 → p = 0.0039)
+with **paired bootstrap 95% CI on suite-mean BARS impl-quality excluding 0**. See
+[`thoughts/shared/plans/2026-05-06-iter2-100pct-eval-plan.md`](thoughts/shared/plans/2026-05-06-iter2-100pct-eval-plan.md)
+for the full v2 plan + the 19 reviewer corrections folded in.
 
 ---
 
@@ -335,22 +575,80 @@ Block fires iff `ais < threshold[kind]` OR `cd > threshold[kind]` OR any
 
 ## Configuration
 
+### Sidecar runtime
+
 | Env var | Default | Purpose |
 |---|---|---|
 | `S2_DEVICE` | `cpu` | `cpu` or `cuda` |
+| `S2_PORT` | `8765` | Sidecar bind port |
+| `S2_URL` | `http://127.0.0.1:$S2_PORT` | Override hook target |
+| `S2_TIMEOUT` | `60` | Hook /score timeout (seconds) |
+| `S2_FAIL_CLOSED` | `1` | `1` blocks edits when sidecar unreachable |
+| `S2_LOG_LEVEL` | `INFO` | Sidecar log level |
 | `S2_SSM_CHECKPOINT` | `state-spaces/mamba-130m-hf` | Override SSM backbone |
-| `S2_TIMEOUT` | `60` | Hook /score timeout |
-| `S2_FAIL_CLOSED` | `1` (via `.envrc`) | `1` blocks edits when sidecar unreachable |
+| `HF_HOME` | `$HOME/.cache/huggingface` | HF cache (shared with sibling repos / eval worktrees) |
+
+### Source-code thresholds
+
+Per-kind ceilings for `test_code` / `plan_md` / `doc_md` / `config` are not
+env-overridable yet — see `_KIND_THRESHOLDS` in `src/s2_core.py`. The three vars below
+control only the `source_code` kind.
+
+| Env var | Default | Purpose |
+|---|---|---|
 | `S2_AIS_THRESHOLD` | `0.4` | AIS threshold for `source_code` |
 | `S2_COHERENCE_THRESHOLD` | `1.5` | `coherence_delta` threshold for `source_code` |
 | `S2_RISK_DIM_THRESHOLD` | `0.9` | Per-dim ceiling for `source_code` |
-| `RC_PLAN_BLOCK` | `1` (via `.envrc`) | `1` escalates plan-guard warnings to hard block |
-| `RC_ALLOW_GUARD_EDIT` | _unset_ | `1` allows edits to guarded paths. Captured at session boot |
-| `RC_ALLOW_SUBAGENT_GUARD_EDIT` | _unset_ | `1` allows Task prompts mentioning guarded paths |
-| `HF_HOME` | `$(pwd)/.cache/huggingface` (via `.envrc`) | Project-local Mamba cache |
 
-Per-kind thresholds for `test_code` / `plan_md` / `doc_md` / `config` are not
-env-overridable yet — see `_KIND_THRESHOLDS` in `src/s2_core.py`.
+### Hook policy posture
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_SHADOW_MODE` | `1` | Log decisions, do not enforce |
+| `RC_PLAN_BLOCK` | `1` | Plan-guard warnings escalate to hard block |
+| `RC_PLAN_QUALITY` | `0` | Enable plan-quality CGS gate |
+| `RC_MOCK_DETECTOR` | `1` | Reject placeholder code patterns |
+| `RC_LANG_LOCK` | `1` | Reject edits introducing un-fingerprinted languages |
+| `RC_LANG_ALLOW` | _unset_ | Comma-list of additional languages to permit |
+| `RC_LANG_OVERRIDE` | _unset_ | Per-edit language override |
+| `RC_LANG_LOCK_MAX_FILES` | `20000` | Cap files scanned when fingerprinting the repo |
+| `RC_LANG_AUDIT_THRESHOLD` | `0.33` | PostToolUse foreign-language ratio that triggers an audit row |
+| `RC_DRIFT_WARN` | `4.0` | Coherence-drift warn level |
+| `RC_DRIFT_DENY` | `6.0` | Coherence-drift hard-deny level |
+| `RC_DRIFT_OVERRIDE` | _unset_ | `1` disables drift policy (hard-denied if set inline via Bash) |
+
+### Generative repair head
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_REASONER_BACKEND` | `mlx` | `mlx` (Apple) / `llama_cpp` / `scaleway` |
+| `RC_GEN_BUDGET_MS` | `2500` | Generation budget per repair call (ms) |
+
+### Bypass / kill switches
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_BYPASS_NEXT` | _unset_ | One-shot bypass; consumed on first guard fire |
+| `RC_ALLOW_GUARD_EDIT` | _unset_ | Allow edits to guarded paths (captured at session boot) |
+| `RC_ALLOW_SUBAGENT_GUARD_EDIT` | _unset_ | Allow Task prompts naming guarded paths |
+
+### Audit log & state
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_AUDIT_ROOT` | `$HOME/.local/share/reasoning-core/events` | Audit log root |
+| `RC_AUDIT_RETENTION_DAYS` | `90` | Prune older audit shards on session start |
+| `RC_AUDIT_CAP_BYTES` | `5368709120` (5 GiB) | Per-shard size cap before rotation |
+| `RC_STATE_DIR` | _internal default_ | Session manifest + sentinel state |
+
+### Eval / calibration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_LIVE` | _unset_ | `1` enables live Scaleway eval tests |
+| `RC_EVAL_STUB_CLAUDE` | _unset_ | Stub Claude in eval harness |
+| `RC_QWEN_KAPPA_SENTINEL` | `0.7` | Min Cohen κ for grounding eval to pass |
+| `RC_TASK_SPEC` | _unset_ | Active task spec path (read by every hook for audit context) |
 
 ---
 
@@ -377,49 +675,116 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 
 ```
 reasoning-core/
-├── README.md                    ← you are here
+├── README.md                       ← you are here
 ├── LICENSE
 ├── requirements.txt
 ├── pyproject.toml
-├── .envrc                       ← repo-scoped env (direnv)
+├── .envrc                          ← repo-scoped env (direnv)
 ├── .claude/
-│   ├── settings.json            ← 5 hook matchers + MCP server
+│   ├── settings.json               ← 9 hook matchers + MCP server
 │   └── skills/reasoning/SKILL.md
+├── bin/
+│   └── rc                          ← `python3 -m src.rc_cli` shim
+├── launchd/
+│   └── com.reasoning-core.supervisor.plist
 ├── src/
-│   ├── ssm_backbone.py          ← Mamba loader, embed(), ast_to_tokens
-│   ├── grammars.py              ← Tree-sitter loader (12 languages)
-│   ├── s2_core.py               ← parsing, scoring, FastAPI
-│   ├── mcp_reasoner.py          ← FastMCP bridge
+│   ├── ssm_backbone.py             ← Mamba loader, embed(), ast_to_tokens
+│   ├── grammars.py                 ← Tree-sitter loader (12 languages)
+│   ├── s2_core.py                  ← parsing, scoring, FastAPI sidecar
+│   ├── mcp_reasoner.py             ← FastMCP bridge
+│   ├── calibration.py              ← Mahalanobis + per-kind shrinkage
+│   ├── gen_client.py               ← Qwen / Scaleway generative client
+│   ├── sidecar_supervisor.py       ← KeepAlive supervisor
+│   ├── _supervisor_broker.py       ← cross-process broker
+│   ├── _supervisor_env.py          ← env capture + restore
+│   ├── rc_cli.py                   ← admin / diagnostic CLI
 │   └── hooks/
 │       ├── pre_edit_guard.py
 │       ├── pre_plan_guard.py
 │       ├── pre_bash_guard.py
 │       ├── pre_task_guard.py
+│       ├── pre_compact_guard.py
 │       ├── post_bash_revive.py
-│       ├── _block_format.py     ← block message + repair hints
-│       └── audit_log.py         ← JSONL audit + retry detection
+│       ├── post_batch_lang_audit.py
+│       ├── session_start_manifest.py
+│       ├── session_resume_inject.py
+│       ├── audit_log.py            ← JSONL audit + retry detection
+│       ├── _block_format.py        ← block message + repair hints
+│       ├── _audit_rotation.py
+│       ├── _kill_switches.py
+│       ├── _magic_comments.py
+│       ├── _mock_detector.py
+│       ├── _ood_detector.py
+│       ├── _plan_quality.py
+│       ├── _session_manifest.py
+│       └── _shadow_mode.py
 ├── scripts/
 │   ├── start-sidecar.sh
+│   ├── start-gen-sidecar.sh
+│   ├── install-supervisor-launchagent.sh
 │   ├── configure-scaleway.sh
 │   └── test-prototype.sh
 ├── tests/
-├── eval/                        ← paired Wilcoxon harness
-├── thoughts/shared/             ← research, plans, handoffs
+├── eval/
+│   ├── README.md
+│   ├── Dockerfile
+│   ├── run_suite.py                ← top-level harness
+│   ├── run_task.sh
+│   ├── aggregate.py
+│   ├── stats.py                    ← paired Wilcoxon
+│   ├── metrics.py
+│   ├── validate_embedder.py        ← embedder fitness test
+│   ├── calibration_corpus.py       ← labeled corpus mining
+│   ├── golden_set.py               ← regression suite
+│   ├── recalibrate.py              ← Page-Hinkley monthly recal
+│   ├── synthetic_drift.py
+│   ├── build_grounding_pairs.py
+│   ├── qwen_grounding_eval.py      ← Cohen κ ≥ 0.7 gate
+│   ├── datasets/
+│   │   ├── grounding_pairs.jsonl   ← 200 hand-labeled pairs
+│   │   ├── swe_bench_verified_python_subset.json
+│   │   └── refresh_subset.py
+│   ├── prompts/system_prompt.txt
+│   ├── fixtures/
+│   ├── runs/
+│   └── scripts/prefetch_mamba.sh
+├── thoughts/shared/                ← research, plans, handoffs
 └── docs/
     ├── ARCHITECTURE.md
     ├── HARDENING.md
-    └── EVAL_DESIGN.md
+    ├── EVAL_DESIGN.md
+    ├── EVAL_RESULTS.md
+    ├── VERIFICATION.md
+    └── PLAN.md
 ```
 
 ---
 
 ## FAQ / troubleshooting
 
+**Q: First time running, am I getting blocked?**
+A: No. The gate ships in shadow mode (`RC_SHADOW_MODE=1`). Every Edit/Write is scored and
+the decision is logged to `~/.local/share/reasoning-core/events/`, but the hook always
+returns exit 0. Promote to enforcement after a few sessions of observation by setting
+`RC_SHADOW_MODE=0` in `.envrc.local`.
+
 **Q: The hook keeps blocking obviously-fine edits.**
-A: Check `top risk contributors` in the block message. If `churn=1.00` on a small Edit, your
-sidecar predates `2345fba` (Edit-tool reconstruction fix) — restart it. If `fan_out=1.00`
-on an additive edit to a busy file, your sidecar predates `2873c82` (delta-semantics
-refactor) — restart it.
+A: Check `top risk contributors` in the block message. If a single dim sits at `1.00` on a
+tiny edit, restart the sidecar (`bash scripts/start-sidecar.sh`) — old processes can hold
+pre-refactor scoring code. If it persists, run `rc status` and `rc explain`, then open an
+issue with the audit row attached.
+
+**Q: Sidecar keeps dying mid-session.**
+A: Install the launchd supervisor:
+`bash scripts/install-supervisor-launchagent.sh`. KeepAlive will relaunch it on crash and
+on login.
+
+**Q: I'm on a corporate VPN (Cato / Zscaler / etc.) and `pip install` /
+`huggingface-cli` fail with "self-signed certificate in certificate chain".**
+A: `direnv reload` — the repo's `.envrc` builds
+`~/.cache/reasoning-core/ca-bundle.pem` from `certifi` + your system Cato root and
+exports `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`. macOS only today
+(uses `security find-certificate`); Linux users add their root to the bundle manually.
 
 **Q: Sidecar takes forever to start.**
 A: First run downloads Mamba weights (~250 MB). Subsequent boots ~30s on CPU.
@@ -475,30 +840,45 @@ Yes please.
 
 ## Roadmap
 
-The current shipped surface is verification-only — Claude proposes, SSM judges, hook
-gates. The next phase is **co-reasoning**: SSM participates in planning + suggests
-revisions + closes the loop iteratively.
+The current shipped surface goes well past verification-only — the gate participates in
+planning, mines its own calibration corpus, and runs concurrent calibration in shadow
+mode. The next phase is **closing the loop**: iterative repair so Claude re-proposes
+against the repair hint until pass-or-yield.
 
-Read [`thoughts/shared/research/2026-05-05-ssm-co-reasoner-deep-research.md`](thoughts/shared/research/2026-05-05-ssm-co-reasoner-deep-research.md)
-for the deep-research findings + 3-reviewer adversarial verdict (REQUEST_CHANGES; ship in
-shadow-mode first).
+Read [`thoughts/shared/research/`](thoughts/shared/research/) for the
+risk-vector-delta-refactor + coherence-delta-calibration write-ups and
+[`docs/PLAN.md`](docs/PLAN.md) for the spec.
 
-Tracked next-steps:
+### Shipped (see `git log --grep='^feat'`)
 
-- **P0 — validation harness** (must land first): embedder fitness test, labeled corpus
-  mining from git history, shadow-mode wiring (log decisions, don't enforce).
-- **P1 — plan-time SSM scoring + plan→code coherence gate** (warn-only by default):
-  kNN-to-nearest-existing-file novelty, sliding-window section drift, PostToolUse
-  plan-implementation gate, explicit `RC_ACTIVE_PLAN` env.
-- **P2 — generative repair head**: Qwen2.5-Coder-1.5B-Instruct via MLX (Apple) /
-  llama.cpp GGUF (Linux) / Scaleway-hosted (CI) selected by `RC_REASONER_BACKEND`.
-- **P3 — calibration**: Mahalanobis distance over 8-dim risk space, hierarchical Bayes
-  per-kind shrinkage, monthly Page-Hinkley recalibration.
-- **P4 — CodeBERTScore plan↔diff** for semantic alignment.
-- **P5 — subagent loop path** + LLM-judge gate behind `RC_COHERENCE_LLM=1`.
+- **P-1 — Day-zero ergonomics:** magic-comment escapes, `RC_BYPASS_NEXT` kill switch,
+  `rc` CLI.
+- **P0 — Validation harness:** embedder fitness test, calibration corpus, golden set,
+  shadow-mode wiring.
+- **P1 — Plan-time SSM scoring + plan→code coherence gate**, mock-detector heuristics.
+- **P2 — Generative repair head:** Qwen2.5-Coder-1.5B via MLX / Scaleway, behind
+  `RC_REASONER_BACKEND`.
+- **P3 — Calibration:** Mahalanobis over 8-dim risk space, per-kind shrinkage,
+  Page-Hinkley monthly recalibration.
+- **P4 — Calibration corpus + golden set + OOD detector + shadow-mode hardening.**
+- **P5 — Sidecar broker + supervisor + grounding eval (Cohen κ ≥ 0.7) on 200 labeled
+  pairs.**
+- **P7 — Calibration concurrent with shadow mode.**
 
-Other open items: real `slide-mamba` weights when public; CUDA / MLX kernels for non-CPU
-paths; SSE `/score/stream`; Prometheus textfmt `/metrics`; pre-commit variant.
+### Open
+
+- **CodeBERTScore plan↔diff** for semantic alignment (deferred from P4).
+- **Subagent loop path** + LLM-judge gate behind `RC_COHERENCE_LLM=1` (deferred from P5).
+- **Iterative repair loop** — today the gate is one-shot allow/block; next is closing
+  the loop so Claude re-proposes against the repair hint until pass-or-yield.
+- **CUDA / MLX kernels** for the Mamba forward pass (currently CPU-only; p95 ~5s).
+- **SSE `/score/stream`** + Prometheus textfmt `/metrics`.
+- **Pre-commit variant** so non-Claude editors are also gated.
+- **Linux systemd service** to mirror the macOS launchd supervisor.
+- **Real `slide-mamba` weights** when public.
+
+Roadmap source of truth: [`docs/PLAN.md`](docs/PLAN.md) +
+[`thoughts/shared/research/`](thoughts/shared/).
 
 ---
 
