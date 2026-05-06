@@ -466,7 +466,8 @@ spottable later.
 | `calibration_corpus.py` | Mines labeled (good-edit, bad-edit) pairs from git history |
 | `golden_set.py` | Pinned regression cases that must keep their decisions across releases |
 | `recalibrate.py` | Page-Hinkley monthly recal of per-kind thresholds |
-| `qwen_grounding_eval.py` | Enforces Cohen κ ≥ `RC_QWEN_KAPPA_SENTINEL` (default 0.7) between SSM gate and Qwen judge on 200 hand-labeled pairs (`datasets/grounding_pairs.jsonl`) |
+| `qwen_grounding_eval.py` | Computes Cohen κ between SSM gate and the generative critic. Two datasets: v1 (`datasets/grounding_pairs.jsonl`, 200 pairs git-mined) and v2 (`datasets/grounding_pairs_v2.jsonl`, 138 pairs, devstral-123b judge-relabeled). Live κ on v2 = 0.74 but contaminated by kin-judge family + selection bias (v2 keeps only pairs where judge agreed with teacher); gate runs **advisory** until v3 cross-family dataset lands. Default arg `--gate-kappa 0.6` ≠ docstring `0.7` target — see [tracker #74-86](thoughts/shared/plans/2026-05-06-iter2-100pct-eval-plan.md) for the v3 gate plan. |
+| `relabel_grounding_pairs.py` | Pipeline that produced v2 from v1 via Scaleway-hosted devstral-2-123b judge (`4ed3245`) |
 | `run_suite.py` + `aggregate.py` + `stats.py` | Paired Wilcoxon harness across N runs |
 | `synthetic_drift.py` | Generates drifted variants for stress testing |
 | `build_grounding_pairs.py` | Rebuilds the labeled-pair dataset from raw sources |
