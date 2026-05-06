@@ -44,6 +44,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--task-timeout", type=int, default=900, help="per-arm wall-clock cap in seconds")
     p.add_argument("--skip-aggregate", action="store_true", help="do not invoke aggregate.py at the end")
+    p.add_argument("--run-id", default=None,
+                   help="explicit run-id label (default = utc timestamp). "
+                        "CI passes the GitHub run number for traceability.")
     return p.parse_args(argv)
 
 
@@ -134,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
 
     schedule = _build_schedule(tasks, arms, args.seed)
 
-    run_id = datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
+    run_id = args.run_id or datetime.now(timezone.utc).strftime("run-%Y%m%dT%H%M%SZ")
     out_dir = Path(args.out_dir) if args.out_dir else (DEFAULT_OUT_BASE / run_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
