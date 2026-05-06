@@ -428,9 +428,9 @@ Requires P4 (labeled corpus). **Runs concurrent with P4 shadow window**, not aft
 | **P2 Plan-quality CGS gate** | ✅ shipped + hardened (default off; CDGS+WWDS deferred) | `1724810`, `ad2ea80` | 11 |
 | **P3 Long-horizon hardening** (Invariants 1, 2, 4, 5 + manifest + PreCompact + Bash extension + lang audit) | ✅ shipped + 3× hardened | `54c6e57`, `562cd61`, `834a60e` | 6 |
 | **P4 Validation harness** | 🟡 started (`eval/validate_embedder.py` shipped) | `834a60e` | — |
-| **P5 Generative critic** | ⏳ not started | — | — |
+| **P5 Generative critic** | ✅ shipped + round-2 hardened (6C/5H/8M closed) | `aece0e6`, `2e4a3d2`, `8ccac86`, `74e7dff`, `6590b15`, `44f8a1a` | 11 |
 | **P6 Eval framework operational** | ❌ DROPPED — out of scope (cannot edit eval methodology) | — | — |
-| **P7 Calibration concurrent with shadow** | ⏳ not started | — | — |
+| **P7 Calibration concurrent with shadow** | ✅ shipped (Mahalanobis + James-Stein + CUSUM + Page-Hinkley) | _new commit_ | — |
 
 **Total: 46/46 reasoning-core tests pass.**
 
