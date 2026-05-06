@@ -22,6 +22,21 @@ if str(_HOOKS_DIR) not in sys.path:
 import _session_manifest as _sm  # type: ignore  # noqa: E402
 
 
+def _read_session_id_from_stdin() -> str:
+    """Reviewer-flagged: CLAUDE_SESSION_ID env is NOT exported by Claude Code.
+    The session_id comes from the JSON payload on stdin per hook spec."""
+    try:
+        raw = sys.stdin.read()
+        if raw:
+            data = json.loads(raw)
+            sid = data.get("session_id") if isinstance(data, dict) else None
+            if isinstance(sid, str) and sid:
+                return sid
+    except (ValueError, OSError):
+        pass
+    return os.environ.get("CLAUDE_SESSION_ID") or ""
+
+
 def main() -> None:
     if os.environ.get("RC_LANG_LOCK") != "1":
         sys.exit(0)
@@ -32,15 +47,14 @@ def main() -> None:
     if not mani:
         sys.exit(0)
     declared = mani.get("declared_language") or "unknown"
-    # Blurb is operator-facing context only — does NOT enumerate override
-    # paths (would contradict the directive on agent-visible bypass routes).
     blurb = (
         f"Session task language: {declared}. "
         f"Stay in this language family for production code."
     )
-    # Stamp session_id so cross-session bleed via SessionStart consume is
-    # avoided — session_resume_inject only consumes if the session_id matches.
-    session_id = os.environ.get("CLAUDE_SESSION_ID") or ""
+    # Stamp session_id from stdin payload (NOT env). Without this, the
+    # bleed-protection in session_resume_inject sees empty anchor.session_id
+    # and silently no-ops the cross-session check.
+    session_id = _read_session_id_from_stdin()
     state_dir = Path(os.path.expanduser("~/.local/state/reasoning-core/sessions"))
     try:
         state_dir.mkdir(parents=True, exist_ok=True)

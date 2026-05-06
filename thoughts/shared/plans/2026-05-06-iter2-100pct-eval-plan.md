@@ -511,6 +511,12 @@ Tracked here so promotion gates remain honest.
 | 32 | `eval/golden_set.py` — 50 hand-curated benign edits as zero-blocks regression gate before promotion | manual curation pass | P4 |
 | 33 | `src/hooks/_ood_detector.py` — kNN density estimator on plan embeddings; routes far-from-manifold plans to human review | embedder fitness pass + corpus | P4 |
 | 34 | `eval/shadow_mode.py` as a dedicated module file — currently RC_SHADOW_MODE is honored across hooks (`pre_edit_guard`, `pre_task_guard`) but no central module wraps the logic | refactor follow-up — function ships, file does not | P4 |
+| 35 | HARD_DENY env-prefix is Claude-side only — operator-set `RC_*_OVERRIDE=1` from operator's own shell still wins | document threat-model scope explicitly; operator hygiene not enforceable from inside the hook | doc-only |
+| 36 | `# rc:skip-framework` and `[rc:allow-foreign-lang]` are agent-learnable strings (no provenance check) — Goodhart-vulnerable. Plan markdown is Write-on-create so before-state self-introduction defense doesn't apply | HMAC-signed sentinel keyed to a session secret OR require sentinel in `RC_TASK_SPEC` env (operator-set) | P5 / P7 |
+| 37 | Drift-gate v0 placeholder banner not surfaced to operators — block stderr says raw "6.5 > 6.0" without "(placeholder; pending P7 calibration)" disclaimer; `rc status` doesn't flag either | stderr message extension + `rc status` placeholder banner | P3 follow-up |
+| 38 | `_PLAN_PATTERNS` matches only `thoughts/shared/plans/*.md`, `PLAN.md`, `*.plan.md` — bareword no-ext / arbitrary-path plans don't trigger plan-guard at all (skip-framework directive moot for those) | broaden plan-detection or document supported plan-file naming | P4 |
+| 39 | `framework_pivot` lexicon misses ~80% of modern Python tooling (poetry, uv, pdm, tox, nox, hatch, pdm, conda, mamba, pipx) and most C# / JS tooling beyond top-level (yarn, pnpm, bun, dotnet test variants) | extend lexicon; ideally derive from `_session_manifest._LANG_FAMILY` map | P4 |
+| 40 | Inv 3 (PreCompact handoff) is shipped functionally (`pre_compact_guard.py` + `session_resume_inject.py`) but lacks an integration test; not in `tests/test_lang_invariants.py` | end-to-end test: write anchor → resume → consume; verify session_id match | P4 |
 
 Promotion criteria (already in §P4): an enforcement flip from shadow → real
 block requires (a) labeled-corpus FPR ≤ 2%, (b) zero blocks on the 50-edit
