@@ -424,11 +424,56 @@ Requires P4 (labeled corpus). **Runs concurrent with P4 shadow window**, not aft
 
 ---
 
+## Implementation Status — what shipped vs what's deferred
+
+### Shipped (commits 119062f → 834a60e)
+
+| Phase | Status | Key commits | Tests |
+|---|---|---|---|
+| **P-1 Day-zero ergonomics** | ✅ shipped + 2× hardened | `119062f`, `42b81f2` | 13 |
+| **P0 Setup B formalize** | ✅ shipped + hardened | `42b81f2`, `5f10d6b` (+ `eval-setups/B/` filesystem) | (in P-1) |
+| **P1 Mock-detector heuristics** | ✅ shipped + hardened (Stryker corr deferred) | `5f10d6b`, `1724810`, `ad2ea80` | 14 |
+| **P2 Plan-quality CGS gate** | ✅ shipped + hardened (default off; CDGS+WWDS deferred) | `1724810`, `ad2ea80` | 11 |
+| **P3 Long-horizon hardening** (Invariants 1, 2, 4, 5 + manifest + PreCompact + Bash extension + lang audit) | ✅ shipped + 3× hardened | `54c6e57`, `562cd61`, `834a60e` | 6 |
+| **P4 Validation harness** | 🟡 started (`eval/validate_embedder.py` shipped) | `834a60e` | — |
+| **P5 Generative critic** | ⏳ not started | — | — |
+| **P6 Eval framework operational** | ⏳ not started (n=3, second judge, Krippendorff α) | — | — |
+| **P7 Calibration concurrent with shadow** | ⏳ not started | — | — |
+
+**Total: 46/46 reasoning-core tests pass.**
+
+### Reviewer-flagged silent drops — closed in `834a60e`
+
+The 4th-reviewer auditor identified 6 plan-promised items that had shipped
+neither in code nor in the deferred tracker. All now closed:
+
+- ✅ **Invariant 2 cumulative_drift gate** at 4.0 warn / 6.0 deny — wired in `pre_edit_guard.py` with `RC_DRIFT_WARN`/`RC_DRIFT_DENY`/`RC_DRIFT_OVERRIDE` env knobs and shadow-mode honor
+- ✅ **Invariant 4 subagent language pivot** — wired in `pre_task_guard.py`
+- ✅ **Invariant 5 framework pivot in plan** — wired in `pre_plan_guard.py`
+- ✅ **`tests/test_lang_invariants.py`** — 6 tests (all pass)
+- 📋 **9th risk dim `integration_authenticity`** — currently flows via audit `signal_source` field instead of a dedicated dim refactor; tracker item #21
+- 📋 **`eval/spawner.py` pre-flight** — eval framework lives outside reasoning-core repo; tracker item #22
+
+### Reviewer-flagged hardening — shipped in `834a60e`
+
+3-reviewer-convergent P3 part-2 issues all closed:
+
+- ✅ Bash regex extended (`cp`/`mv`/`install`/`rsync`/`python -c open()`/`node -e writeFileSync`)
+- ✅ PreCompact anchor blurb override-path leak stripped
+- ✅ `session_resume_inject` reads `hookEventName` from stdin payload (protocol fix)
+- ✅ Cross-session anchor bleed: `session_id` match check
+- ✅ Atomic manifest save (temp + `os.replace`)
+- ✅ Walk excludes extended (`vendor/`, `_build/`, `Pods/`, `.gradle/`, `.next/`, `out/`, `packages/`, `cmake-build-*`)
+- ✅ `post_batch_lang_audit` threshold raised 0.20 → 0.33
+- ✅ Override hints stripped from all agent-visible block stderr (per user directive)
+
+---
+
 ## Deferred Items Tracker
 
-Items intentionally not shipped in P-1/P0/P1/P2 because they depend on the
-shadow-window corpus, P5 generative critic, or are nice-to-haves that follow
-the must-haves. Tracked here so promotion gates remain honest.
+Items intentionally not shipped because they depend on the shadow-window
+corpus, P5 generative critic, or are nice-to-haves that follow the must-haves.
+Tracked here so promotion gates remain honest.
 
 | # | Item | Blocked by | Lands in |
 |---|---|---|---|
