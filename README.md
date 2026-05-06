@@ -736,11 +736,12 @@ reasoning-core/
 │   ├── grammars.py                 ← Tree-sitter loader (12 languages)
 │   ├── s2_core.py                  ← parsing, scoring, FastAPI sidecar
 │   ├── mcp_reasoner.py             ← FastMCP bridge
-│   ├── calibration.py              ← Mahalanobis + per-kind shrinkage
-│   ├── gen_client.py               ← Qwen / Scaleway generative client
+│   ├── calibration.py              ← Mahalanobis + Ledoit-Wolf shrinkage + empirical-Bayes per-kind
+│   ├── gen_client.py               ← Qwen / Scaleway generative client (Bearer auth)
 │   ├── sidecar_supervisor.py       ← KeepAlive supervisor
-│   ├── _supervisor_broker.py       ← cross-process broker
+│   ├── _supervisor_broker.py       ← cross-process broker (`/health` aggregator on RC_BROKER_PORT)
 │   ├── _supervisor_env.py          ← env capture + restore
+│   ├── _supervisor_recalibrate.py  ← watcher consuming `recalibrate.signal` for hot-refit (`5313498`)
 │   ├── rc_cli.py                   ← admin / diagnostic CLI
 │   └── hooks/
 │       ├── pre_edit_guard.py
@@ -761,7 +762,8 @@ reasoning-core/
 │       ├── _ood_detector.py
 │       ├── _plan_quality.py
 │       ├── _session_manifest.py
-│       └── _shadow_mode.py
+│       ├── _shadow_mode.py
+│       └── _calibration_gate.py    ← hot-path Mahalanobis gate (`b7f0517`)
 ├── scripts/
 │   ├── start-sidecar.sh
 │   ├── start-gen-sidecar.sh
