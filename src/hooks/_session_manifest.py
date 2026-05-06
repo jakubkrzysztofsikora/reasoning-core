@@ -95,6 +95,12 @@ def language_for_path(file_path: str) -> Optional[str]:
 
 _DEFAULT_PREFIX_EXEMPTIONS = ("scripts/", "tools/", "bin/")
 
+# Round-2 P3 polyglot fix: families with >= MULTI_LANG_THRESHOLD share of the
+# extension distribution are co-declared. Bimodal repos (e.g., 5884 .cs +
+# 1884 .ts in circit-app — 24% TS share) keep BOTH languages active in the
+# manifest, so frontend writes don't trip the lock.
+MULTI_LANG_THRESHOLD = 0.10  # 10% of total file count
+
 
 def _matches_prefix_exemption(file_path: str, prefixes: tuple) -> bool:
     """True if any path component starts with one of the exempt prefixes.
@@ -115,24 +121,57 @@ def _matches_prefix_exemption(file_path: str, prefixes: tuple) -> bool:
     return False
 
 
+def _path_exemptions_from_env() -> tuple:
+    """Extra top-level prefixes from `RC_LANG_LOCK_PATH_EXEMPT` env (csv).
+    Lets monorepos carve out subtrees per language: e.g.,
+    `RC_LANG_LOCK_PATH_EXEMPT=Circit.Frontend/,docs/` whitelists those roots
+    regardless of language family."""
+    raw = os.environ.get("RC_LANG_LOCK_PATH_EXEMPT", "")
+    extras = tuple(p.strip().rstrip("/") + "/" for p in raw.split(",") if p.strip())
+    return _DEFAULT_PREFIX_EXEMPTIONS + extras
+
+
+def _declared_set(manifest: Optional[dict]) -> set:
+    """Normalize declared_language to a set of language families.
+
+    Backwards-compat: legacy manifests stored a single string;
+    polyglot-aware manifests store a list. Either form is accepted.
+    Empty/None → empty set (treated as 'no lock')."""
+    if not manifest:
+        return set()
+    decl = manifest.get("declared_language")
+    if decl is None:
+        return set()
+    if isinstance(decl, str):
+        return {decl}
+    if isinstance(decl, (list, tuple, set)):
+        return set(decl)
+    return set()
+
+
 def is_path_allowed(manifest: Optional[dict], file_path: str) -> bool:
-    """True if the file_path's language matches manifest's declared language
-    OR is on the allow-list OR sits under a TOP-LEVEL path-prefix exemption."""
+    """True if the file_path's language matches the manifest's declared
+    languages OR is on the allow-list OR sits under a TOP-LEVEL path-prefix
+    exemption.
+
+    Round-2 P3 polyglot fix: `declared_language` may be a list (e.g.,
+    `["csharp", "javascript"]`) on bimodal repos. The gate accepts the file
+    iff its language is in the declared set."""
     if not manifest:
         return True
     if not file_path:
         return True
-    # Path-prefix exemptions: only top-level dir names. Substring match was a
-    # silent bypass for `src/scripts/evil.py`, `lib/tools/x.cs`, etc.
-    if _matches_prefix_exemption(file_path, _DEFAULT_PREFIX_EXEMPTIONS):
+    # Path-prefix exemptions: only top-level dir names. RC_LANG_LOCK_PATH_EXEMPT
+    # extends the default scripts/ tools/ bin/ list with operator-supplied roots.
+    if _matches_prefix_exemption(file_path, _path_exemptions_from_env()):
         return True
-    declared = manifest.get("declared_language")
+    declared = _declared_set(manifest)
     if not declared:
         return True
     file_lang = language_for_path(file_path)
     if file_lang is None:
         return True  # unknown extension; let the SSM scorer handle it
-    if file_lang == declared:
+    if file_lang in declared:
         return True
     allow = set(manifest.get("lang_allow") or [])
     ext = Path(file_path).suffix.lower()
@@ -141,12 +180,22 @@ def is_path_allowed(manifest: Optional[dict], file_path: str) -> bool:
     return False
 
 
-def detect_initial_language(cwd: str, max_files: Optional[int] = None) -> tuple[Optional[str], dict]:
-    """Walk cwd and report dominant language family + extension distribution.
+def detect_initial_language(cwd: str, max_files: Optional[int] = None):
+    """Walk cwd and report declared language family/families + extension distribution.
 
     Bounded by max_files (default RC_LANG_LOCK_MAX_FILES env, fallback 20000)
     to keep SessionStart latency under control on large monorepos. Excludes
     .git/node_modules/dist/.venv/etc.
+
+    Round-2 P3 polyglot fix: when MORE THAN ONE language family clears
+    `MULTI_LANG_THRESHOLD` (default 10% of files), returns the LIST of
+    families instead of a single winner. Single-language repos keep the
+    legacy string return for backwards-compat with consumers that branch
+    on `isinstance(declared, str)`.
+
+    Returns:
+        (declared, ext_distribution): declared is `str | list[str] | None`.
+        ext_distribution is a counts-by-extension dict.
     """
     if max_files is None:
         try:
@@ -176,5 +225,19 @@ def detect_initial_language(cwd: str, max_files: Optional[int] = None) -> tuple[
         fam = _LANG_FAMILY.get(ext)
         if fam:
             family[fam] = family.get(fam, 0) + n
-    declared = max(family, key=family.get) if family else None
-    return declared, counts
+    if not family:
+        return None, counts
+    total = sum(family.values())
+    threshold = int(total * MULTI_LANG_THRESHOLD)
+    above = sorted(
+        [(fam, n) for fam, n in family.items() if n >= threshold],
+        key=lambda kv: -kv[1],
+    )
+    if not above:
+        # Defensive: total > 0 but threshold rounded everything out
+        # (shouldn't happen with int() floor, but guard anyway).
+        return max(family, key=family.get), counts
+    if len(above) == 1:
+        return above[0][0], counts
+    # Polyglot: keep all families that cleared the threshold, ordered by share.
+    return [fam for fam, _ in above], counts

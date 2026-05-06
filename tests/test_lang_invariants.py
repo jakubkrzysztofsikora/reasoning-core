@@ -44,6 +44,76 @@ def test_invariant_1_lang_lock_blocks_foreign_extension():
         assert sm.is_path_allowed(mani, "src/scripts/foo.py") is False  # substring fix
 
 
+def test_invariant_1_polyglot_manifest_accepts_all_declared(monkeypatch):
+    """Round-2 P3 fix: declared_language as list (polyglot repos).
+    Both C# backend + TS frontend writes must pass under a bimodal manifest."""
+    monkeypatch.delenv("RC_LANG_LOCK_PATH_EXEMPT", raising=False)
+    import _session_manifest as sm
+    with tempfile.TemporaryDirectory() as td:
+        _seed_manifest(Path(td), declared=["csharp", "javascript"])
+        mani = sm.load(sm.manifest_key("/fake/repo", "test-task"))
+        # C# backend write — passes (declared)
+        assert sm.is_path_allowed(mani, "Circit.Backend/Auth/Login.cs") is True
+        # TS frontend write — passes (declared)
+        assert sm.is_path_allowed(mani, "Circit.Frontend/cypress/e2e/foo.cy.ts") is True
+        # Python NOT in declared set — still blocked
+        assert sm.is_path_allowed(mani, "Tests/foo.py") is False
+
+
+def test_invariant_1_path_exempt_env(monkeypatch):
+    """RC_LANG_LOCK_PATH_EXEMPT lets specific top-level dirs through
+    regardless of declared language."""
+    monkeypatch.setenv("RC_LANG_LOCK_PATH_EXEMPT", "Circit.Frontend/,docs/")
+    import _session_manifest as sm
+    with tempfile.TemporaryDirectory() as td:
+        _seed_manifest(Path(td), declared="csharp")
+        mani = sm.load(sm.manifest_key("/fake/repo", "test-task"))
+        # Frontend dir exempted by env: TS write passes despite declared=csharp
+        assert sm.is_path_allowed(mani, "Circit.Frontend/foo.cy.ts") is True
+        # docs/ exempted
+        assert sm.is_path_allowed(mani, "docs/guide.md") is True
+        # Other Python writes still blocked
+        assert sm.is_path_allowed(mani, "Tests/foo.py") is False
+
+
+def test_detect_initial_language_polyglot(tmp_path):
+    """Bimodal repo (>=10% threshold) returns LIST of families."""
+    import _session_manifest as sm
+    # 100 .cs + 30 .ts (23% TS) → both above 10% threshold
+    for i in range(100):
+        (tmp_path / f"f{i}.cs").write_text("// stub")
+    for i in range(30):
+        (tmp_path / f"f{i}.ts").write_text("// stub")
+    declared, counts = sm.detect_initial_language(str(tmp_path))
+    assert isinstance(declared, list), f"expected list, got {type(declared)}: {declared}"
+    assert "csharp" in declared
+    assert "javascript" in declared
+
+
+def test_detect_initial_language_single_lang_string(tmp_path):
+    """Single-dominant repo keeps legacy string return for backwards-compat."""
+    import _session_manifest as sm
+    # 100 .cs + 5 .ts (4.5% TS — below 10% threshold) → just csharp
+    for i in range(100):
+        (tmp_path / f"f{i}.cs").write_text("// stub")
+    for i in range(5):
+        (tmp_path / f"f{i}.ts").write_text("// stub")
+    declared, counts = sm.detect_initial_language(str(tmp_path))
+    assert isinstance(declared, str)
+    assert declared == "csharp"
+
+
+def test_legacy_string_manifest_still_works():
+    """Backwards-compat: existing manifests on disk store declared as string."""
+    import _session_manifest as sm
+    with tempfile.TemporaryDirectory() as td:
+        _seed_manifest(Path(td), declared="csharp")  # legacy string form
+        mani = sm.load(sm.manifest_key("/fake/repo", "test-task"))
+        # Must still gate correctly
+        assert sm.is_path_allowed(mani, "src/Auth/Login.cs") is True
+        assert sm.is_path_allowed(mani, "Tests/foo.py") is False
+
+
 def test_invariant_2_drift_gate_wired():
     """RC_DRIFT_WARN/DENY env vars are honored by pre_edit_guard."""
     src = (_ROOT / "src/hooks/pre_edit_guard.py").read_text()

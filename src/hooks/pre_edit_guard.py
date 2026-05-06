@@ -423,11 +423,21 @@ def main() -> None:
                 else:
                     audit_log.record_block(file_path)
                     declared = mani.get("declared_language")
+                    # Round-2 P3 polyglot fix: list-format declared is fine
+                    # for f-string display ("['csharp', 'javascript']"). Hint
+                    # text helps operators self-unblock without bypassing.
+                    file_lang = _session_manifest.language_for_path(file_path)
                     _exit(
                         2,
                         f"[hybrid-reasoner] BLOCKED: language fingerprint violation\n"
                         f"  file: {file_path}\n"
-                        f"  declared: {declared}",
+                        f"  declared: {declared}\n"
+                        f"  file_lang: {file_lang}\n"
+                        f"  hint: set RC_LANG_ALLOW=.{file_lang} OR add the file's\n"
+                        f"        top-level dir to RC_LANG_LOCK_PATH_EXEMPT, then\n"
+                        f"        delete the manifest at\n"
+                        f"        ~/.local/state/reasoning-core/sessions/<key>.json\n"
+                        f"        and start a new Claude Code session.",
                     )
         except Exception:  # noqa: BLE001
             pass
