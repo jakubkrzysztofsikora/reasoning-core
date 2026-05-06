@@ -71,7 +71,7 @@ Pre-registered acceptance criterion for iter-2:
 | 10 | New: `RC_LANG_ALLOW=py,sh` allowlist + path-prefix exemption (`scripts/`, `tools/`) | P3 |
 | 11 | Mock-detector heuristics as cheap pre-filter; Stryker mutation score is the actual gate. Require r ≥ 0.6 correlation between heuristic and mutation score | P1 |
 | 12 | Adversarial-robustness gate for CGS — red-team 20 cosmetically-padded plans, require CGS<0.5 on ≥80% | P2 |
-| 13 | OOD plan detection (kNN density estimator) + judge-bias eval (per-dim systematic offset) | P4, P6 |
+| 13 | OOD plan detection (kNN density estimator); judge-bias eval portion DROPPED (P6 out of scope) | P4 |
 | 14 | Calibration corpus filter: exclude amend commits, force-pushes, reverts touching different files than original | P4 |
 | 15 | `RC_GEN_BUDGET_MS=2500` per Qwen call with hard timeout → fail-open to BM25 | P5 |
 | 16 | Single sidecar broker, not two independent servers (Mamba+Qwen Metal contention) | P5 |
@@ -378,17 +378,9 @@ Requires P0, P-1. Optional for P2/P3 (graceful degradation).
 
 ---
 
-## Phase 6: Eval framework operational changes
+## Phase 6: DROPPED
 
-[Content unchanged from v1 (zero methodology edits) — n=3, second judge, Krippendorff α gate]
-
-### Additional reviewer correction folded in
-
-- Judge-bias eval: 20 anchor items judged by both, compute per-dimension systematic offset (judge A − judge B); Krippendorff α hides additive bias (LLM scientist correction #13)
-
-### Changes (additive only)
-
-**File `eval/judge_bias_eval.py` (new)** — Anchor-item bias check. 20 plans/diffs scored by both judges. If per-dim systematic offset > 0.5 BARS points, flag and apply post-hoc correction or escalate.
+Eval methodology / framework is OUT OF SCOPE — researcher cannot influence eval criteria, judging, or operational params. All P6 deliverables removed (no n=3, no second judge, no Krippendorff α, no judge-bias eval). Skip directly from P5 → P7.
 
 ---
 
@@ -437,7 +429,7 @@ Requires P4 (labeled corpus). **Runs concurrent with P4 shadow window**, not aft
 | **P3 Long-horizon hardening** (Invariants 1, 2, 4, 5 + manifest + PreCompact + Bash extension + lang audit) | ✅ shipped + 3× hardened | `54c6e57`, `562cd61`, `834a60e` | 6 |
 | **P4 Validation harness** | 🟡 started (`eval/validate_embedder.py` shipped) | `834a60e` | — |
 | **P5 Generative critic** | ⏳ not started | — | — |
-| **P6 Eval framework operational** | ⏳ not started (n=3, second judge, Krippendorff α) | — | — |
+| **P6 Eval framework operational** | ❌ DROPPED — out of scope (cannot edit eval methodology) | — | — |
 | **P7 Calibration concurrent with shadow** | ⏳ not started | — | — |
 
 **Total: 46/46 reasoning-core tests pass.**
@@ -549,7 +541,7 @@ Week 1-2:  P-1 ergonomics (CLI, magic comments, kill switches, audit log relocat
 Week 1-2:  P1 + P2 in parallel after P-1 lands
 Week 3-4:  P3 (5 hook files, includes pre_bash_guard extension) + P5 (broker + Qwen + Linux)
 Week 3+:   P4 shadow window OPENS (audit-only); P7 calibration runs CONCURRENT
-Week 5-8:  Shadow data accumulates; P6 framework changes (n=3, second judge, bias eval)
+Week 5-8:  Shadow data accumulates (P6 dropped — eval methodology out of scope)
 Week 8-10: Promotion criteria assessed (FPR, golden-set, adversarial, mutation-r)
 Week 10+:  Run iter-2 eval with enforcement promoted ONLY where criteria pass
 ```
@@ -569,7 +561,7 @@ Net new in v2:
 - `src/hooks/_ood_detector.py` (P4 OOD plan detection)
 - `src/sidecar_supervisor.py` (P5 broker)
 - `eval/qwen_grounding_eval.py` (P5 κ gate)
-- `eval/judge_bias_eval.py` (P6 bias check)
+- ~~`eval/judge_bias_eval.py`~~ (P6 DROPPED — out of scope)
 - `eval/synthetic_drift.py` (P7 CUSUM)
 
 Modified additionally in v2: `src/hooks/pre_bash_guard.py` (P3 manifest consume), `src/hooks/audit_log.py` (P-1 path move + rotation).
