@@ -1,1 +1,12 @@
-{"gate_pass": true, "kappa": 0.7389659520807061}
+{
+  "gate_pass": true,
+  "kappa": 0.8025049286791138,
+  "dataset_version": "v3",
+  "model_id": "qwen3-coder-30b-a3b-instruct",
+  "judges": [
+    "devstral-2-123b-instruct-2512",
+    "llama-3.3-70b-instruct",
+    "mistral-small-3.2-24b-instruct-2506"
+  ],
+  "n_pairs": 131
+}

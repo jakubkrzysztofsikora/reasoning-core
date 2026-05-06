@@ -1,0 +1,30 @@
+{
+  "pre_n": 200,
+  "post_n": 131,
+  "unreachable": 0,
+  "no_majority": 0,
+  "teacher_disagree": 69,
+  "require_teacher_agreement": true,
+  "judges": [
+    "devstral-2-123b-instruct-2512",
+    "llama-3.3-70b-instruct",
+    "mistral-small-3.2-24b-instruct-2506"
+  ],
+  "agreement_by_category": {
+    "pos": {
+      "agree": 63,
+      "total": 120,
+      "rate": 0.525
+    },
+    "shuf": {
+      "agree": 31,
+      "total": 40,
+      "rate": 0.775
+    },
+    "hard": {
+      "agree": 37,
+      "total": 40,
+      "rate": 0.925
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "epsilon": 0.05,
+  "n": 63,
+  "source_run": "eval/runs/qwen_grounding_v3_20260506.json",
+  "method": "bootstrap_default",
+  "note": "Initial bootstrap value. Re-derive from live sidecar coherence_delta values on v3 pos subset when calibration shadow window opens."
+}

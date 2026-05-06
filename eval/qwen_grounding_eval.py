@@ -142,9 +142,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--pairs", type=Path,
-        default=Path(__file__).resolve().parent / "datasets" / "grounding_pairs_v2.jsonl",
-        help="default = grounding_pairs_v2.jsonl (judge-relabeled, "
-             "high-confidence subset). v1 set is deprecated for gate evals."
+        default=Path(__file__).resolve().parent / "datasets" / "grounding_pairs_v3.jsonl",
+        help="default = grounding_pairs_v3.jsonl (cross-family judge majority,"
+             " 131 pairs; max pairwise judge κ=0.700 < 0.7 gate). v2 + v1 "
+             "retained for reproducibility but deprecated for gate evals."
     )
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--gate-kappa", type=float, default=0.6,
