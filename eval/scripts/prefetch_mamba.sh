@@ -84,9 +84,15 @@ if [[ -z "${SAFETENSORS_PATH}" ]]; then
     SAFETENSORS_PATH="$(find "${HF_HOME}/hub" -type f -name 'pytorch_model.bin' | head -n 1 || true)"
 fi
 if [[ -z "${SAFETENSORS_PATH}" || ! -f "${SAFETENSORS_PATH}" ]]; then
-    echo "[prefetch_mamba] FATAL: no weight file (*.safetensors / pytorch_model.bin) found after snapshot_download." >&2
-    echo "[prefetch_mamba] snapshot dir contents:" >&2
-    find "${HF_HOME}/hub" -type f | head -20 >&2
+    echo "[prefetch_mamba] WARN: no weight file (*.safetensors / pytorch_model.bin) found in cache after snapshot_download." >&2
+    echo "[prefetch_mamba] HF_HOME=${HF_HOME}" >&2
+    echo "[prefetch_mamba] cache contents:" >&2
+    find "${HF_HOME}" -maxdepth 6 -type f 2>/dev/null | head -20 >&2 || true
+    if [[ "${RC_PREFETCH_SOFT_FAIL:-0}" == "1" ]]; then
+        echo "[prefetch_mamba] RC_PREFETCH_SOFT_FAIL=1 — continuing; transformers will fetch lazily at first model load." >&2
+        exit 0
+    fi
+    echo "[prefetch_mamba] FATAL: weight file missing. Set RC_PREFETCH_SOFT_FAIL=1 in CI to fall through to lazy load." >&2
     exit 65
 fi
 

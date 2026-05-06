@@ -111,6 +111,11 @@ jobs:
         # Track C owns eval/scripts/prefetch_mamba.sh. Until it lands, this
         # step warms the HF cache via a one-shot transformers download so a
         # missing prefetch script does not stall the gate.
+        # RC_PREFETCH_SOFT_FAIL=1: if the prefetch's safetensors gate misses
+        # (e.g., upstream layout drift), fall through to lazy transformers
+        # download at sidecar boot rather than failing the whole CI gate.
+        env:
+          RC_PREFETCH_SOFT_FAIL: "1"
         run: |
           set -euo pipefail
           if [[ -x eval/scripts/prefetch_mamba.sh ]]; then
