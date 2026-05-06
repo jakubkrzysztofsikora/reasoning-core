@@ -43,7 +43,10 @@ on:
         type: string
 
 permissions:
-  contents: read
+  # contents: write is required by the "Post headline metrics" step
+  # (actions/github-script create*Comment) — was failing 403 'Resource not
+  # accessible by integration' on push events because contents was read-only.
+  contents: write
   pull-requests: write
   issues: write
 
