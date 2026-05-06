@@ -483,18 +483,25 @@ python3 -m eval.aggregate --runs eval/runs/smoke-001
 
 ## Benchmarks — iteration 1 (draft)
 
-> **Status: initial draft, n=1–3 per cell, single-judge.** Iteration 2 (in progress) ships
-> the iter-1 failure-mode fixes (mock-detector, plan-quality CGS, language-fingerprint
-> lock) and re-runs against the same 8-task harness with n≥3 + cross-family judges.
-> Numbers below are headline only; full per-task per-judge tables live in
-> `~/evals/2026-05-05_*/REPORT.md` (gitignored — they include real Anthropic spend).
+> **Status: initial draft, n=1–3 per cell, single-judge.** Iteration-2 failure-mode
+> fixes are **shipped** (mock-detector P1 `1724810`, plan-quality CGS P2 `ad2ea80`,
+> language-fingerprint lock P3 `54c6e57`, calibration concurrent with shadow P7
+> `89820b0`); the binomial sign-test acceptance harness wired in
+> `eval/stats.py::sign_test` (`6a921ce`). Re-run against the same 8-task harness
+> is **scheduled**, not yet executed — the numbers below are still iter-1 ground
+> truth. Pre-registered acceptance: ≥7/8 task-mean wins for Setup B with ≥1.0
+> BARS gap and sign-test p ≤ 0.05.
+> Full per-task per-judge tables live in `~/evals/2026-05-05_*/REPORT.md`
+> (gitignored — they include real Anthropic spend).
 
 **Setup.** Two arms × eight tasks (T1, T2, T5, T7, T8, T9, E1, P0), randomized arm order
 per pair, fixed-seed correctness gate + rotated-seed flake check, BARS-rubric
 implementation- and plan-quality grades.
 
 - **Setup A (control):** vanilla Claude Code, no hooks.
-- **Setup B (reasoning-core):** the gate in this repo, `S2_FAIL_CLOSED=1`, shadow-mode off.
+- **Setup B (reasoning-core):** the gate in this repo, `S2_FAIL_CLOSED=1`,
+  shadow-mode off (a *measurement* configuration; default operator posture
+  ships shadow-mode-on per `.envrc`).
 
 ### Headline numbers (means across 8 tasks)
 
