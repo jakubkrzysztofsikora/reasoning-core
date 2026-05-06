@@ -3,6 +3,8 @@
 > **Stop AI coding agents from making architecturally bad changes** — by giving them a local
 > Mamba SSM that reasons about the *structure* of your codebase, not just the tokens.
 
+[![lint-and-test](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml/badge.svg)](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml)
+[![eval](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml/badge.svg)](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#roadmap)
