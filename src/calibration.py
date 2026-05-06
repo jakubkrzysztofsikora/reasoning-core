@@ -68,10 +68,32 @@ class CalibrationModel:
 
 
 def save_models(per_kind: Dict[str, CalibrationModel], path: Path) -> None:
-    """Persistence contract for `fit_per_kind` output."""
+    """Persistence contract for `fit_per_kind` output.
+
+    **Atomic write** (round-3 round-2 senior-dev C1): the hot-path reader
+    in `src/hooks/_calibration_gate.py` keys its mtime cache on
+    `(path, mtime_ns)` and disables itself with warn-once on JSONDecodeError.
+    A non-atomic `path.write_text` could yield a torn file if a hook reads
+    between the truncate and the full write — durably disabling the gate
+    until the supervisor refits again.
+    Use `tmp + os.replace` (POSIX atomic rename): readers always see either
+    the old file (with old mtime) or the new file (with new mtime), never
+    a half-written one.
+    """
+    import os
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {kind: json.loads(m.to_json()) for kind, m in per_kind.items()}
-    path.write_text(json.dumps(payload, indent=2))
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    try:
+        tmp.write_text(json.dumps(payload, indent=2))
+        os.replace(tmp, path)
+    except Exception:
+        # Cleanup orphan tmp on any failure (write_text or replace).
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def load_models(path: Path) -> Dict[str, CalibrationModel]:

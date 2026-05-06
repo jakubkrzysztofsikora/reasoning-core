@@ -346,8 +346,15 @@ def main() -> None:
         "/scripts/start-gen-sidecar.sh",
     )
     is_retry = audit_log.is_retry_after_block(file_path)
+    # Round-3 round-2 senior-dev H2: normalize to absolute path BEFORE the
+    # substring check. Claude Code always passes absolute paths via tool_input,
+    # but defensive normalization closes a false-negative where any caller
+    # (test, MCP bridge, future tooling) passes a relative path and bypasses
+    # the lock entirely. abspath() on an already-absolute path is a no-op.
+    _norm_path = os.path.abspath(file_path) if file_path else file_path
     if (
-        any(g in file_path for g in GUARDED_PATHS)
+        _norm_path
+        and any(g in _norm_path for g in GUARDED_PATHS)
         and os.environ.get("RC_ALLOW_GUARD_EDIT") != "1"
     ):
         audit_log.record_block(file_path)

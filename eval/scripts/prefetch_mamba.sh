@@ -75,16 +75,31 @@ PY
 # (snapshots/<rev>/<filename> is a symlink to blobs/<sha>); xet-backed
 # downloads sometimes leave only the blob with no symlink. Probe both:
 # (1) named symlink in snapshots/, (2) blob >50MB by size, (3) legacy.
+# Track which probe found the file. Hash-pin only applies to the
+# single-file model.safetensors layout (PROBE_KIND=single) AND to the
+# xet content-addressed blob path (PROBE_KIND=xet_blob), where the blob's
+# content IS the same single-file model.safetensors blob, just stored
+# under its own sha-hash filename. Sharded layouts (multiple shards +
+# index.json) and pytorch_model.bin fallback have different content
+# hashes that the pin doesn't cover — those skip the gate (round-3 H4
+# senior-dev fix: was previously skipping for ALL non-"model.safetensors"
+# basenames including the xet blob path, which silently bypassed sha256
+# verification on a code path the pin DOES cover).
+PROBE_KIND=""
 SAFETENSORS_PATH="$(find -L "${HF_HOME}/hub" -type f -name 'model.safetensors' 2>/dev/null | head -n 1 || true)"
+[[ -n "${SAFETENSORS_PATH}" ]] && PROBE_KIND="single"
 if [[ -z "${SAFETENSORS_PATH}" ]]; then
     SAFETENSORS_PATH="$(find -L "${HF_HOME}/hub" -type f -name '*.safetensors' ! -name '*.index.json' 2>/dev/null | head -n 1 || true)"
+    [[ -n "${SAFETENSORS_PATH}" ]] && PROBE_KIND="sharded"
 fi
 if [[ -z "${SAFETENSORS_PATH}" ]]; then
     SAFETENSORS_PATH="$(find -L "${HF_HOME}/hub" -type f -name 'pytorch_model.bin' 2>/dev/null | head -n 1 || true)"
+    [[ -n "${SAFETENSORS_PATH}" ]] && PROBE_KIND="pytorch_bin"
 fi
 # Last resort: any blob >50MB (xet content-addressed storage where filename is a sha).
 if [[ -z "${SAFETENSORS_PATH}" ]]; then
     SAFETENSORS_PATH="$(find "${HF_HOME}/hub" -path '*/blobs/*' -type f -size +50M 2>/dev/null | head -n 1 || true)"
+    [[ -n "${SAFETENSORS_PATH}" ]] && PROBE_KIND="xet_blob"
 fi
 if [[ -z "${SAFETENSORS_PATH}" || ! -f "${SAFETENSORS_PATH}" ]]; then
     echo "[prefetch_mamba] WARN: no weight file (*.safetensors / pytorch_model.bin) found in cache after snapshot_download." >&2
@@ -99,12 +114,13 @@ if [[ -z "${SAFETENSORS_PATH}" || ! -f "${SAFETENSORS_PATH}" ]]; then
     exit 65
 fi
 
-# Skip pin-verify when upstream sharded the model — pin is for the single-file
-# blob hash; sharded layout produces N different hashes that must be pinned
-# separately. CI gates against the live snapshot via HF revision pin instead.
+# Apply pin verification when the located file IS the single-file model
+# (either via direct symlink probe or the xet content-addressed blob,
+# which holds the same content under a sha-named filename). Skip pin for
+# sharded layouts and pytorch_model.bin — pin doesn't cover those.
 SAFETENSORS_BASENAME="$(basename "${SAFETENSORS_PATH}")"
-if [[ "${SAFETENSORS_BASENAME}" != "model.safetensors" ]]; then
-    echo "[prefetch_mamba] WARN: weight file is '${SAFETENSORS_BASENAME}' (sharded or alt format); sha256 pin only covers single-file model.safetensors. Skipping checksum gate; relying on RC_MAMBA_REVISION pin." >&2
+if [[ "${PROBE_KIND}" != "single" && "${PROBE_KIND}" != "xet_blob" ]]; then
+    echo "[prefetch_mamba] WARN: weight file is '${SAFETENSORS_BASENAME}' (probe=${PROBE_KIND}); sha256 pin only covers single-file model.safetensors. Skipping checksum gate; relying on RC_MAMBA_REVISION pin." >&2
 else
     MANIFEST="$(mktemp)"
     printf '%s  %s\n' "${EXPECTED_SAFETENSORS_SHA256}" "${SAFETENSORS_PATH}" > "${MANIFEST}"

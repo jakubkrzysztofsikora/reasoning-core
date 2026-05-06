@@ -106,3 +106,33 @@ def test_save_load_per_kind_roundtrip(tmp_path):
     loaded = calibration.load_models(path)
     assert set(loaded.keys()) == {"source", "test"}
     assert abs(loaded["source"].threshold - models["source"].threshold) < 1e-9
+
+
+def test_save_models_is_atomic(tmp_path):
+    """Round-3 round-2 senior-dev C1: save_models must use tmp+rename so
+    a concurrent reader never sees a half-written JSON."""
+    import os
+    rng = np.random.default_rng(11)
+    X = rng.normal(0, 1, size=(200, 9))
+    kinds = ["source"] * 200
+    models = calibration.fit_per_kind(X, kinds)
+    target = tmp_path / "models.json"
+
+    # Pre-populate target with an old (valid) payload to verify the rename
+    # replaces the file rather than appending.
+    target.write_text('{"_old": "payload"}')
+    old_inode = target.stat().st_ino
+
+    calibration.save_models(models, target)
+
+    # New file replaced the old one; load works.
+    loaded = calibration.load_models(target)
+    assert "source" in loaded
+
+    # No tmp-suffix file left behind in the directory.
+    leftovers = [p.name for p in tmp_path.iterdir() if ".tmp." in p.name]
+    assert leftovers == [], f"orphan tmp files: {leftovers}"
+
+    # The replacement was atomic — file inode changed (POSIX rename).
+    new_inode = target.stat().st_ino
+    assert new_inode != old_inode, "expected atomic replace to give a fresh inode"

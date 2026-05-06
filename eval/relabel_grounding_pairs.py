@@ -152,10 +152,23 @@ def main() -> int:
             if cat in by_cat:
                 by_cat[cat][0] += 1
 
+    # Atomic write (round-3 round-2 senior-dev H1): SIGINT mid-write of the
+    # final v2 jsonl would corrupt the file the κ eval consumes. The judge
+    # cache is append-only and resumable, but the v2 jsonl is regenerated
+    # whole. Write to .tmp then os.replace for crash-safety.
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open("w") as f:
-        for rec in kept:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    tmp_out = args.out.with_suffix(args.out.suffix + f".tmp.{os.getpid()}")
+    try:
+        with tmp_out.open("w") as f:
+            for rec in kept:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        os.replace(tmp_out, args.out)
+    except Exception:
+        try:
+            tmp_out.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
     summary = {
         "pre_n": len(pairs),
@@ -170,8 +183,18 @@ def main() -> int:
         "judge_model": os.environ["RC_GEN_MODEL"],
     }
     sys.stderr.write(json.dumps(summary, indent=2) + "\n")
+    # Same atomic-write pattern for the summary sidecar.
     summary_path = args.out.with_suffix(args.out.suffix + ".summary.json")
-    summary_path.write_text(json.dumps(summary, indent=2))
+    tmp_summary = summary_path.with_suffix(summary_path.suffix + f".tmp.{os.getpid()}")
+    try:
+        tmp_summary.write_text(json.dumps(summary, indent=2))
+        os.replace(tmp_summary, summary_path)
+    except Exception:
+        try:
+            tmp_summary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return 0
 
 
