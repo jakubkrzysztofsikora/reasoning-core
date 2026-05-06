@@ -289,8 +289,52 @@ def holm_bonferroni(pvals: Sequence[float], alpha: float = 0.05) -> list[float]:
     return out
 
 
+def sign_test(wins: int, total: int, *, alternative: str = "greater") -> float:
+    """Binomial sign-test p-value for the iter-2 falsifiable goal.
+
+    Plan §"Falsifiable goal": ≥7/8 task-mean wins; sign-test 8/8 → p=0.0039,
+    7/8 → p=0.035 (binomial under H0: P(win)=0.5, one-sided).
+
+    Args:
+        wins: number of tasks Setup B beat Setup A (≥1.0 BARS gap).
+        total: total comparable tasks.
+        alternative: "greater" (B>A; default — matches the plan's claim),
+                     "less" (B<A), or "two-sided".
+
+    Returns:
+        One-sided (or two-sided) p-value under the binomial null P=0.5.
+        Uses scipy.stats.binomtest when available, stdlib fallback otherwise.
+    """
+    if total < 1 or wins < 0 or wins > total:
+        raise ValueError(f"sign_test: invalid wins={wins}/total={total}")
+    if alternative not in ("greater", "less", "two-sided"):
+        raise ValueError(f"unknown alternative: {alternative}")
+
+    try:
+        from scipy.stats import binomtest  # type: ignore
+        return float(binomtest(wins, total, p=0.5, alternative=alternative).pvalue)
+    except ImportError:
+        pass
+
+    # Stdlib fallback — exact binomial via cumulative sum.
+    from math import comb
+
+    def _pmf(k: int, n: int) -> float:
+        return comb(n, k) / (2.0 ** n)
+
+    if alternative == "greater":
+        return sum(_pmf(k, total) for k in range(wins, total + 1))
+    if alternative == "less":
+        return sum(_pmf(k, total) for k in range(0, wins + 1))
+    # two-sided: 2 * min(P(X>=wins), P(X<=wins)), clamped to 1.
+    p_hi = sum(_pmf(k, total) for k in range(wins, total + 1))
+    p_lo = sum(_pmf(k, total) for k in range(0, wins + 1))
+    return min(1.0, 2.0 * min(p_hi, p_lo))
+
+
 __all__ = [
     "paired_wilcoxon",
     "bca_bootstrap",
     "holm_bonferroni",
+    "sign_test",
 ]

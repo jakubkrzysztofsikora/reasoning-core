@@ -304,17 +304,46 @@ def main() -> None:
     GUARDED_PATHS = (
         "/.claude/settings.json",
         "/.claude/settings.local.json",
+        # Original hooks
         "/src/hooks/pre_edit_guard.py",
         "/src/hooks/pre_bash_guard.py",
         "/src/hooks/post_bash_revive.py",
         "/src/hooks/pre_plan_guard.py",
         "/src/hooks/pre_task_guard.py",
         "/src/hooks/audit_log.py",
+        # P-1 / P3 / P5 / P7 hook helpers (round-3 senior-dev: agent could
+        # rewrite these to plant `# rc:skip-all` or no-op the calibration
+        # gate. Front door + back door now both locked.)
+        "/src/hooks/_calibration_gate.py",
+        "/src/hooks/_kill_switches.py",
+        "/src/hooks/_magic_comments.py",
+        "/src/hooks/_session_manifest.py",
+        "/src/hooks/_shadow_mode.py",
+        "/src/hooks/_mock_detector.py",
+        "/src/hooks/_plan_quality.py",
+        "/src/hooks/_audit_rotation.py",
+        "/src/hooks/_ood_detector.py",
+        "/src/hooks/pre_compact_guard.py",
+        "/src/hooks/session_start_manifest.py",
+        "/src/hooks/session_resume_inject.py",
+        "/src/hooks/post_batch_lang_audit.py",
+        # Sidecar + supervisor + generative client
+        "/src/sidecar_supervisor.py",
+        "/src/_supervisor_env.py",
+        "/src/_supervisor_broker.py",
+        "/src/_supervisor_recalibrate.py",
+        "/src/gen_client.py",
+        "/src/calibration.py",
+        # Sidecar core (existing)
         "/src/s2_core.py",
         "/src/grammars.py",
         "/src/ssm_backbone.py",
         "/src/mcp_reasoner.py",
+        # Operator CLI (rewrite would let agent fake `rc status`)
+        "/src/rc_cli.py",
+        # Boot scripts
         "/scripts/start-sidecar.sh",
+        "/scripts/start-gen-sidecar.sh",
     )
     is_retry = audit_log.is_retry_after_block(file_path)
     if (
