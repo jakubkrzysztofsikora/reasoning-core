@@ -320,6 +320,53 @@ def _check_specificity(content: str) -> List[Dict[str, Any]]:
     }]
 
 
+_FRAMEWORK_PIVOT_HINTS = {
+    "csharp": (re.compile(r"\b(?:pip install|requirements\.txt|pytest|import unittest|venv|virtualenv)\b"), "python"),
+    "python": (re.compile(r"\b(?:dotnet (?:add|new|build)|nuget|<PackageReference)\b"), "csharp"),
+    "javascript": (re.compile(r"\b(?:pip install|requirements\.txt|venv|virtualenv|gem install)\b"), "python_or_ruby"),
+}
+
+
+def _check_framework_pivot(content: str) -> List[Dict[str, Any]]:
+    """P3 Invariant 5: framework pivot in plan markdown.
+
+    If a plan declares technology specific to a different language family
+    than the session manifest's declared language, surface a block warning.
+    Only fires under RC_LANG_LOCK=1 + a manifest exists.
+    """
+    if os.environ.get("RC_LANG_LOCK") != "1":
+        return []
+    try:
+        from pathlib import Path as _Path
+        hooks_dir = _Path(__file__).resolve().parent
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        import _session_manifest  # type: ignore
+        cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+        task_spec = os.environ.get("RC_TASK_SPEC") or ""
+        key = _session_manifest.manifest_key(cwd, task_spec)
+        mani = _session_manifest.load(key)
+        if not mani:
+            return []
+        declared = mani.get("declared_language")
+        if not declared or declared not in _FRAMEWORK_PIVOT_HINTS:
+            return []
+        pattern, foreign = _FRAMEWORK_PIVOT_HINTS[declared]
+        matches = pattern.findall(content)
+        if not matches:
+            return []
+        return [{
+            "rule_id": "framework_pivot_in_plan",
+            "severity": "block",
+            "declared_language": declared,
+            "foreign_indicator": foreign,
+            "matched": matches[:5],
+            "message": f"Plan references {foreign}-family tooling but session declared {declared}.",
+        }]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _gather_warnings(content: str, project_dir: str) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
     warnings.extend(_check_per_file_loc(content))
@@ -327,6 +374,7 @@ def _gather_warnings(content: str, project_dir: str) -> List[Dict[str, Any]]:
     warnings.extend(_check_boundary_prose(content))
     warnings.extend(_check_novelty(content, project_dir))
     warnings.extend(_check_specificity(content))
+    warnings.extend(_check_framework_pivot(content))
     return warnings
 
 

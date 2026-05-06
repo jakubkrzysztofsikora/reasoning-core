@@ -49,10 +49,12 @@ def _emit_advisory(text: str) -> None:
 def main() -> None:
     if os.environ.get("RC_LANG_LOCK") != "1":
         sys.exit(0)
+    # Default 0.33 — anything below 1/3 cross-language is plausibly polyglot
+    # tooling. Reviewer-flagged: 0.20 was too noisy (10cs+3py = 0.23 → warn).
     try:
-        threshold = float(os.environ.get("RC_LANG_AUDIT_THRESHOLD", "0.20"))
+        threshold = float(os.environ.get("RC_LANG_AUDIT_THRESHOLD", "0.33"))
     except ValueError:
-        threshold = 0.20
+        threshold = 0.33
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     task_spec = os.environ.get("RC_TASK_SPEC") or ""
     key = _sm.manifest_key(cwd, task_spec)

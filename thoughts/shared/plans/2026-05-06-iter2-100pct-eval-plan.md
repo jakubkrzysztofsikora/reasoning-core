@@ -452,6 +452,16 @@ the must-haves. Tracked here so promotion gates remain honest.
 | 18 | Docs-drift sweep: 11 stale `/tmp/rc-events/` references in README/ARCHITECTURE/board.json | follow-up | P3 / P4 |
 | 19 | Mock-detector lexicon coverage gaps (responses, vi.mock CallExpression vs setupServer false-pos) | corpus + adversarial calibration | P4 |
 | 20 | Lexicon-Goodhart hardening for NRD (fixed list invites buzzword-stuffing) | adversarial CGS corpus | P4 |
+| 21 | 9th risk dim `integration_authenticity` wired into `_compute_risk_vector` (currently flows via audit `signal_source` field, not as a dedicated 8→9 dim refactor) | s2_core risk-vector refactor + threshold recalibration | P7 |
+| 22 | `eval/spawner.py` pre-flight smoke probe (eval framework lives in a separate repo at /Users/jakubsikora/research-claude-code-setup-eval-scripts/) | eval-framework repo work, out of reasoning-core scope | external |
+| 23 | `tests/test_plan_quality_adversarial.py` (red-team 20 cosmetically-padded plans) | needs adversarial corpus from P4 | P4 |
+| 24 | Stryker correlation evidence (Spearman r ≥ 0.6 between heuristic and mutation score on 30-file labeled corpus) | corpus collection during shadow window | P4 |
+| 25 | LLM scientist's Goodhart attack on `declared=None` worktrees — agent learns "low-signal worktree = unguarded". Mitigation: route declared=None warning to log file, not stderr | follow-up to P3 hardening | P4 |
+| 26 | post_batch_lang_audit threshold uncalibrated (default 0.33 was reviewer-tuned, not data-driven) | calibration corpus | P4 |
+| 27 | Bash regex still misses obscure write paths (`dd of=`, `awk > path`, `install`, base64-decoded `eval`) | follow-up to P3 part-2 | P3 follow-up |
+| 28 | `rc decisions --since=1h --kind=shadow_blocked` CLI for operator visibility into shadow-mode | follow-up to P-1 CLI | P4 |
+| 29 | Manifest staleness drift across 24h refresh boundary — re-walk could legitimize agent drift | persist original declared_language as immutable | P4 |
+| 30 | Anchor blurb cross-session bleed protection requires CLAUDE_SESSION_ID env (not always set) — soft-mitigation only | upstream Claude Code env contract | P4 |
 
 Promotion criteria (already in §P4): an enforcement flip from shadow → real
 block requires (a) labeled-corpus FPR ≤ 2%, (b) zero blocks on the 50-edit

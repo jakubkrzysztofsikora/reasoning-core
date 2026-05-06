@@ -539,6 +539,63 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             pass
 
+        # P3 Invariant 2: cumulative_drift gate. Sidecar emits the value but
+        # nothing previously gated on it. Placeholder thresholds 4.0 (warn) /
+        # 6.0 (deny) per v2 plan §P3 — recalibrated from synthetic CUSUM
+        # injections in P7. Override: RC_DRIFT_OVERRIDE=1.
+        if (
+            isinstance(report, dict)
+            and os.environ.get("RC_DRIFT_OVERRIDE") != "1"
+        ):
+            try:
+                drift = report.get("cumulative_drift")
+                if isinstance(drift, (int, float)):
+                    drift_warn = float(os.environ.get("RC_DRIFT_WARN", "4.0"))
+                    drift_deny = float(os.environ.get("RC_DRIFT_DENY", "6.0"))
+                    if drift > drift_deny and not isinstance(report, dict):
+                        pass  # unreachable; type guard
+                    if drift > drift_deny:
+                        if os.environ.get("RC_SHADOW_MODE") == "1":
+                            shadow_hit = True
+                            audit_log.record_shadow_block(file_path)
+                            _emit_audit(
+                                tool_name=tool_name,
+                                decision="shadow_blocked",
+                                file_path=file_path,
+                                started=started,
+                                before_src=before_src,
+                                after_src=after_src,
+                                report=report,
+                                reason=f"cumulative_drift_exceeds:{drift:.2f}>{drift_deny}",
+                                signal_source="drift_gate",
+                            )
+                            continue
+                        audit_log.record_block(file_path)
+                        _emit_audit(
+                            tool_name=tool_name,
+                            decision="blocked",
+                            file_path=file_path,
+                            started=started,
+                            before_src=before_src,
+                            after_src=after_src,
+                            report=report,
+                            reason=f"cumulative_drift_exceeds:{drift:.2f}>{drift_deny}",
+                            signal_source="drift_gate",
+                        )
+                        _exit(
+                            2,
+                            f"[hybrid-reasoner] BLOCKED: cumulative_drift {drift:.2f} "
+                            f"exceeds threshold {drift_deny:.2f}",
+                        )
+                        return  # pragma: no cover
+                    elif drift > drift_warn:
+                        sys.stderr.write(
+                            f"[hybrid-reasoner] WARN: cumulative_drift {drift:.2f} "
+                            f"exceeds warn threshold {drift_warn:.2f}\n"
+                        )
+            except (TypeError, ValueError):
+                pass
+
         if report.get("regression_detected") is True:
             # RC_SHADOW_MODE=1: log decision but DO NOT enforce. Used during
             # P4 calibration window so shadow-FPR can be measured before

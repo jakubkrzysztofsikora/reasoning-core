@@ -21,11 +21,25 @@ if str(_HOOKS_DIR) not in sys.path:
 import _session_manifest as _sm  # type: ignore  # noqa: E402
 
 
-def _emit_additional_context(blurb: str) -> None:
+def _read_event_name() -> str:
+    """Hook stdin payload carries hook_event_name. Fallback to UserPromptSubmit."""
+    try:
+        raw = sys.stdin.read()
+        if raw:
+            data = json.loads(raw)
+            evt = data.get("hook_event_name") or data.get("hookEventName")
+            if isinstance(evt, str) and evt:
+                return evt
+    except (ValueError, OSError):
+        pass
+    return "UserPromptSubmit"
+
+
+def _emit_additional_context(blurb: str, event_name: str) -> None:
     """Print the JSON shape Claude Code expects for additionalContext."""
     out = {
         "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
+            "hookEventName": event_name,
             "additionalContext": blurb,
         }
     }
@@ -35,6 +49,7 @@ def _emit_additional_context(blurb: str) -> None:
 def main() -> None:
     if os.environ.get("RC_LANG_LOCK") != "1":
         sys.exit(0)
+    event_name = _read_event_name()
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     task_spec = os.environ.get("RC_TASK_SPEC") or ""
     key = _sm.manifest_key(cwd, task_spec)
@@ -47,14 +62,25 @@ def main() -> None:
     except (OSError, ValueError):
         sys.exit(0)
     blurb = data.get("blurb")
-    age = time.time() - float(data.get("created_ts", 0))
+    try:
+        age = time.time() - float(data.get("created_ts") or 0)
+    except (TypeError, ValueError):
+        age = 9999
+    # Cross-session bleed protection: only consume the anchor if it was
+    # written by the SAME session_id that's now consuming it. Otherwise
+    # the anchor leaks across `claude --resume` boundaries within the
+    # 1h TTL.
+    anchor_sid = data.get("session_id") or ""
+    cur_sid = os.environ.get("CLAUDE_SESSION_ID") or ""
+    if anchor_sid and cur_sid and anchor_sid != cur_sid:
+        sys.exit(0)
     if not blurb or age > 3600:
         try:
             anchor_path.unlink()
         except OSError:
             pass
         sys.exit(0)
-    _emit_additional_context(blurb)
+    _emit_additional_context(blurb, event_name)
     try:
         anchor_path.unlink()  # consumed-on-read
     except OSError:

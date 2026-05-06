@@ -107,6 +107,44 @@ def _detect_guarded_paths(prompt: str) -> List[str]:
     return out
 
 
+_LANG_PIVOT_HINTS = {
+    "csharp": re.compile(r"\b(?:pip install|requirements\.txt|pytest|import unittest|venv|virtualenv)\b"),
+    "python": re.compile(r"\b(?:dotnet (?:add|new|build)|nuget)\b"),
+    "javascript": re.compile(r"\b(?:pip install|requirements\.txt|venv)\b"),
+}
+
+
+def _detect_language_pivot(prompt: str) -> tuple:
+    """P3 Invariant 4: subagent language pivot.
+
+    If the manifest declares lang X but the subagent prompt names tooling
+    canonical to lang Y, return (declared, foreign_pattern_hits).
+    """
+    if os.environ.get("RC_LANG_LOCK") != "1":
+        return ("", [])
+    try:
+        from pathlib import Path as _P
+        hooks_dir = _P(__file__).resolve().parent
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        import _session_manifest  # type: ignore
+        cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+        task_spec = os.environ.get("RC_TASK_SPEC") or ""
+        key = _session_manifest.manifest_key(cwd, task_spec)
+        mani = _session_manifest.load(key)
+        if not mani:
+            return ("", [])
+        declared = mani.get("declared_language")
+        if not declared or declared not in _LANG_PIVOT_HINTS:
+            return ("", [])
+        hits = _LANG_PIVOT_HINTS[declared].findall(prompt)
+        if hits:
+            return (declared, hits)
+        return ("", [])
+    except Exception:  # noqa: BLE001
+        return ("", [])
+
+
 def screen_prompt(prompt: str) -> Dict[str, Any]:
     """Return a screening result dict.
 
@@ -115,6 +153,18 @@ def screen_prompt(prompt: str) -> Dict[str, Any]:
     """
     verbs = _detect_mutation_verbs(prompt)
     paths = _detect_guarded_paths(prompt)
+    declared_lang, lang_pivot_hits = _detect_language_pivot(prompt)
+    # Invariant 4: subagent prompt names foreign-language tooling against
+    # the session manifest. Block (or shadow) regardless of mutation verbs
+    # — the subagent shouldn't be working in the wrong language.
+    if lang_pivot_hits and os.environ.get("RC_LANG_OVERRIDE") != "1":
+        return {
+            "verbs": verbs,
+            "guarded_paths": paths,
+            "decision": "shadow_blocked" if os.environ.get("RC_SHADOW_MODE") == "1" else "blocked",
+            "reason": f"language_pivot_in_subagent:{declared_lang}->foreign",
+            "lang_pivot_hits": lang_pivot_hits[:5],
+        }
 
     if not verbs:
         return {"verbs": [], "guarded_paths": paths, "decision": "allowed", "reason": "no_mutation_verb"}

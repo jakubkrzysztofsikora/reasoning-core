@@ -203,6 +203,17 @@ _LANG_LOCK_WRITE_RE = re.compile(
     r"(?:>\s*|>>\s*|tee\b[^|;&]*\s|sed\b[^|;&]*-i\b[^|;&]*|<<\s*[A-Za-z_]+\s+>\s*)"
     r"['\"]?([^|;&\s]*?\.[A-Za-z]{1,6})\b"
 )
+# Reviewer-flagged Bash escape gap: cp / mv / install / rsync / python -c
+# open() / node -e writeFileSync route around the > redirect family.
+_LANG_LOCK_COPY_RE = re.compile(
+    r"\b(?:cp|mv|install|rsync)\b[^|;&]+\s(\S+\.[A-Za-z]{1,6})(?:\s|$|;|\|)"
+)
+_LANG_LOCK_PY_OPEN_RE = re.compile(
+    r"""(?:python(?:3)?)\b[^|;&]*-c\b[^|;&]*open\s*\(\s*['"]([^'"]+\.[A-Za-z]{1,6})['"]\s*,\s*['"][wa]['"]"""
+)
+_LANG_LOCK_NODE_WRITE_RE = re.compile(
+    r"""(?:node)\b[^|;&]*-e\b[^|;&]*writeFileSync\s*\(\s*['"]([^'"]+\.[A-Za-z]{1,6})['"]"""
+)
 
 
 def _manifest_disallowed_extension(cmd: str) -> Optional[str]:
@@ -229,10 +240,17 @@ def _manifest_disallowed_extension(cmd: str) -> Optional[str]:
         mani = _session_manifest.load(key)
         if not mani:
             return None
-        for m in _LANG_LOCK_WRITE_RE.finditer(cmd):
-            target = m.group(1)
-            if not _session_manifest.is_path_allowed(mani, target):
-                return target
+        all_regexes = (
+            _LANG_LOCK_WRITE_RE,
+            _LANG_LOCK_COPY_RE,
+            _LANG_LOCK_PY_OPEN_RE,
+            _LANG_LOCK_NODE_WRITE_RE,
+        )
+        for rex in all_regexes:
+            for m in rex.finditer(cmd):
+                target = m.group(1)
+                if not _session_manifest.is_path_allowed(mani, target):
+                    return target
     except Exception:  # noqa: BLE001
         return None
     return None

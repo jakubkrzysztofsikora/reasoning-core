@@ -32,17 +32,22 @@ def main() -> None:
     if not mani:
         sys.exit(0)
     declared = mani.get("declared_language") or "unknown"
+    # Blurb is operator-facing context only — does NOT enumerate override
+    # paths (would contradict the directive on agent-visible bypass routes).
     blurb = (
         f"Session task language: {declared}. "
-        f"Stay in this language family for production code; "
-        f"top-level scripts/ tools/ bin/ paths are allow-listed."
+        f"Stay in this language family for production code."
     )
+    # Stamp session_id so cross-session bleed via SessionStart consume is
+    # avoided — session_resume_inject only consumes if the session_id matches.
+    session_id = os.environ.get("CLAUDE_SESSION_ID") or ""
     state_dir = Path(os.path.expanduser("~/.local/state/reasoning-core/sessions"))
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
         anchor_path = state_dir / f"{key}.anchor.json"
         anchor_path.write_text(json.dumps({
             "key": key,
+            "session_id": session_id,
             "declared_language": declared,
             "blurb": blurb,
             "created_ts": time.time(),

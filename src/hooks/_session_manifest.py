@@ -75,11 +75,15 @@ def load(key: str) -> Optional[dict]:
 
 
 def save(manifest: dict) -> None:
+    """Atomic write — temp+rename so concurrent SessionStart hooks don't
+    corrupt each other's manifest. Reviewer-flagged race condition.
+    """
     try:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
-        manifest_path(manifest["key"]).write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8",
-        )
+        target = manifest_path(manifest["key"])
+        tmp = target.with_suffix(f".tmp.{os.getpid()}")
+        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        os.replace(tmp, target)
     except OSError:
         pass
 
@@ -155,7 +159,9 @@ def detect_initial_language(cwd: str, max_files: Optional[int] = None) -> tuple[
         dirnames[:] = [d for d in dirnames if d not in {
             ".git", "node_modules", "dist", "build", ".venv", "venv",
             "__pycache__", ".cache", "coverage", "target", "obj",
-        }]
+            "vendor", "_build", "Pods", ".gradle", ".next", "out",
+            "packages",
+        } and not d.startswith("cmake-build-")]
         for f in filenames:
             ext = Path(f).suffix.lower()
             if ext:
