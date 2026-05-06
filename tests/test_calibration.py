@@ -25,6 +25,14 @@ def test_fit_basic():
     assert m.threshold > 0
     assert m.threshold_ci95[0] <= m.threshold <= m.threshold_ci95[1]
     assert m.n == 200
+    assert m.threshold_ci_width >= 0
+
+
+def test_threshold_ci_width_serialized():
+    X = _make_benign(200)
+    m = calibration.fit(X)
+    parsed = calibration.json.loads(m.to_json())
+    assert "threshold_ci_width" in parsed
 
 
 def test_score_at_centroid_is_zero():
@@ -46,30 +54,30 @@ def test_decide_flags_far_outliers():
 
 def test_fpr_calibration_holds_on_held_out():
     """Threshold fit at target FPR should hold approximately on a held-out
-    benign sample drawn from the same distribution."""
+    benign sample. Round-2 fix: tightened from 0.06 → 0.035 (was hiding
+    3x bias)."""
     fit_X = _make_benign(500, seed=1)
     test_X = _make_benign(2000, seed=2)
     m = calibration.fit(fit_X, fpr_target=0.02)
     fpr = np.mean([calibration.decide(m, x) for x in test_X])
-    # Within ±2% of the 2% target on n=2000 (sampling noise)
-    assert fpr < 0.06, f"held-out FPR {fpr:.3f} too high vs target 0.02"
+    assert fpr < 0.035, f"held-out FPR {fpr:.3f} too high vs target 0.02"
 
 
 def test_fit_rejects_too_few_samples():
+    # Round-2 fix: floor raised from 10 to 50 (5x dim rule of thumb).
     with pytest.raises(ValueError):
-        calibration.fit(_make_benign(5))
+        calibration.fit(_make_benign(20))
 
 
 def test_fit_per_kind_shrinks_sparse_kinds():
     rng = np.random.default_rng(3)
-    n_dense, n_sparse = 200, 4  # sparse < 5 → falls back to global
+    n_dense, n_sparse = 200, 10  # sparse < 50 → falls back to global
     X_dense = rng.normal(0, 1, size=(n_dense, 9))
     X_sparse = rng.normal(0, 1, size=(n_sparse, 9))
     X = np.vstack([X_dense, X_sparse])
     kinds = ["source"] * n_dense + ["plan"] * n_sparse
     models = calibration.fit_per_kind(X, kinds)
     assert "source" in models and "plan" in models
-    # Sparse kind ('plan') should fall back to global threshold
     global_m = calibration.fit(X)
     assert abs(models["plan"].threshold - global_m.threshold) < 1e-6
 
@@ -81,3 +89,20 @@ def test_calibration_model_serializes():
     assert m2.n == m.n
     assert m2.threshold == m.threshold
     assert m2.threshold_ci95 == m.threshold_ci95
+
+
+def test_from_json_rejects_missing_keys():
+    with pytest.raises(ValueError, match="missing keys"):
+        calibration.CalibrationModel.from_json('{"mean": [0]}')
+
+
+def test_save_load_per_kind_roundtrip(tmp_path):
+    rng = np.random.default_rng(7)
+    X = rng.normal(0, 1, size=(300, 9))
+    kinds = ["source"] * 150 + ["test"] * 150
+    models = calibration.fit_per_kind(X, kinds)
+    path = tmp_path / "models.json"
+    calibration.save_models(models, path)
+    loaded = calibration.load_models(path)
+    assert set(loaded.keys()) == {"source", "test"}
+    assert abs(loaded["source"].threshold - models["source"].threshold) < 1e-9

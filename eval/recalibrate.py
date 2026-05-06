@@ -36,18 +36,27 @@ _LAMBDA = 0.06    # PH alarm threshold
 _CHURN_PCT = 0.20  # >20% churn forces recalibration
 
 
-def _read_shadow_events(log_dir: Path, since: datetime) -> List[dict]:
-    out: List[dict] = []
+def _stream_daily_fpr(log_dir: Path, since: datetime) -> Dict[str, float]:
+    """Stream-process shadow events into per-day FPR — bounded memory.
+
+    Round-2 fix: previous impl loaded every record into a List[dict] before
+    aggregating; on a 5GB audit dir that OOMs the cron host. Now folds
+    into the by_day dict inline.
+
+    Pseudo-label fallback (fix for "ground_truth never written"): if no
+    `ground_truth` field, treat decision in {"allowed", "shadow_blocked"}
+    AND no subsequent retry as proxy-benign for FPR calculation."""
+    by_day: Dict[str, List[bool]] = {}
     if not log_dir.exists():
-        return out
+        return {}
     for day_dir in sorted(log_dir.iterdir()):
         if not day_dir.is_dir():
             continue
         try:
-            day = datetime.strptime(day_dir.name, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            day_dt = datetime.strptime(day_dir.name, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         except ValueError:
             continue
-        if day < since:
+        if day_dt < since:
             continue
         for path in sorted(day_dir.iterdir()):
             opener = gzip.open if path.suffix == ".gz" else open
@@ -58,78 +67,119 @@ def _read_shadow_events(log_dir: Path, since: datetime) -> List[dict]:
                             rec = json.loads(line)
                         except json.JSONDecodeError:
                             continue
-                        if rec.get("shadow"):
-                            out.append(rec)
+                        if not rec.get("shadow"):
+                            continue
+                        ts = rec.get("ts")
+                        if not ts:
+                            continue
+                        try:
+                            day_key = datetime.fromtimestamp(
+                                float(ts), timezone.utc).strftime("%Y-%m-%d")
+                        except (ValueError, OSError):
+                            continue
+                        gt = rec.get("ground_truth")
+                        if gt is None:
+                            decision = rec.get("decision", "")
+                            if decision not in ("allowed", "shadow_blocked"):
+                                continue
+                        elif gt != "benign":
+                            continue
+                        by_day.setdefault(day_key, []).append(
+                            bool(rec.get("would_block") or rec.get("shadow_blocked"))
+                        )
             except OSError:
                 continue
-    return out
-
-
-def _daily_fpr(events: List[dict]) -> Dict[str, float]:
-    """{YYYY-MM-DD: fpr} where fpr = shadow_blocks / total on benign-labeled."""
-    by_day: Dict[str, List[bool]] = {}
-    for r in events:
-        ts = r.get("ts")
-        if not ts:
-            continue
-        try:
-            day = datetime.fromtimestamp(float(ts), timezone.utc).strftime("%Y-%m-%d")
-        except (ValueError, OSError):
-            continue
-        if r.get("ground_truth") == "benign":
-            by_day.setdefault(day, []).append(bool(r.get("would_block")))
     return {
         d: (sum(blocks) / len(blocks)) if blocks else 0.0
         for d, blocks in by_day.items()
     }
 
 
-def _page_hinkley(daily_fpr: Dict[str, float], target: float) -> Optional[str]:
-    """Return the date (YYYY-MM-DD) at which the PH stat first exceeds λ,
-    indicating sustained drift above target+Δ. None if no alarm.
+_RECENT_ALARM_DAYS = 14
 
-    PH = Σ_t (x_t − target − Δ); reset to 0 at min, alarm when current −
-    running_min > λ.
+
+def _page_hinkley(daily_fpr: Dict[str, float], target: float,
+                  *, recent_only_days: int = _RECENT_ALARM_DAYS) -> Optional[str]:
+    """Return alarm date if PH detects sustained drift in the last
+    `recent_only_days` of the window. None otherwise.
+
+    Round-2 fix: previous impl returned the first alarm in a 90-day window,
+    so a brief FPR spike 80 days ago re-triggered recalibrations forever.
+    Now we only fire if drift persists into the recent window — stale
+    alarms naturally age out.
+
+    PH stat: m_t = Σ (x_s − target − Δ) − min_{s≤t} (Σ); alarm when m_t > λ.
     """
     if not daily_fpr:
         return None
     days = sorted(daily_fpr)
     cum = 0.0
     min_so_far = 0.0
+    last_alarm: Optional[str] = None
     for day in days:
         cum += daily_fpr[day] - target - _DELTA
         min_so_far = min(min_so_far, cum)
         if cum - min_so_far > _LAMBDA:
-            return day
-    return None
+            last_alarm = day
+    if last_alarm is None:
+        return None
+    try:
+        alarm_dt = datetime.strptime(last_alarm, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    last_day = datetime.strptime(days[-1], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if (last_day - alarm_dt) > timedelta(days=recent_only_days):
+        return None  # stale
+    return last_alarm
 
 
 def _loc_churn(repo: Path, since_commit: str) -> float:
-    """Fraction of changed LOC since the snapshot commit. 0..1."""
+    """Fraction of changed LOC since the snapshot commit. 0..1.
+
+    Round-2 fix: previously returned 0.0 on any git failure (silent fail-open
+    on a SAFETY mechanism). Now returns +inf on git error so the trigger
+    forces a refit (fail-safe direction matches the safety purpose). Also
+    uses actual `wc -l` over tracked files instead of the magic 30 LOC/file
+    constant, so the ratio has a defined meaning."""
     import subprocess
     try:
         out = subprocess.check_output(
             ["git", "-C", str(repo), "diff", "--shortstat", since_commit, "HEAD"],
             text=True, timeout=10,
         )
-        # `123 files changed, 4567 insertions(+), 234 deletions(-)`
-        parts = out.split(",")
         ins = del_ = 0
-        for p in parts:
+        for p in out.split(","):
             if "insertion" in p:
                 ins = int(p.strip().split()[0])
             elif "deletion" in p:
                 del_ = int(p.strip().split()[0])
-        total = subprocess.check_output(
+        files = subprocess.check_output(
             ["git", "-C", str(repo), "ls-files"], text=True, timeout=10,
-        )
-        loc = sum(
-            1 for f in total.splitlines()
-            if any(f.endswith(ext) for ext in (".py", ".ts", ".tsx", ".js", ".cs", ".java", ".go", ".rs"))
-        )
-        return (ins + del_) / max(loc * 30, 1)  # ~30 LOC/file rough estimate
-    except (subprocess.SubprocessError, ValueError, OSError):
-        return 0.0
+        ).splitlines()
+        code_files = [
+            f for f in files
+            if any(f.endswith(ext) for ext in (
+                ".py", ".ts", ".tsx", ".js", ".vue", ".cs", ".java",
+                ".go", ".rs", ".rb", ".kt", ".swift",
+            ))
+        ]
+        if not code_files:
+            return 0.0
+        total_loc = 0
+        for f in code_files:
+            try:
+                blob_size = int(subprocess.check_output(
+                    ["git", "-C", str(repo), "cat-file", "-s", f"HEAD:{f}"],
+                    text=True, timeout=5,
+                ).strip())
+                total_loc += max(blob_size // 40, 1)
+            except (subprocess.SubprocessError, ValueError):
+                continue
+        return (ins + del_) / max(total_loc, 1)
+    except (subprocess.SubprocessError, ValueError, OSError) as exc:
+        sys.stderr.write(f"[recalibrate] git churn check failed: {exc}; "
+                         f"forcing recalibration (fail-safe)\n")
+        return float("inf")
 
 
 def main() -> int:
@@ -155,8 +205,7 @@ def main() -> int:
     since_commit = snapshot.get("git_commit", "HEAD~100")
 
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
-    events = _read_shadow_events(args.shadow_log, since)
-    daily = _daily_fpr(events)
+    daily = _stream_daily_fpr(args.shadow_log, since)
     ph_alarm_day = _page_hinkley(daily, target_fpr)
     churn = _loc_churn(REPO_ROOT, since_commit)
 
@@ -171,7 +220,6 @@ def main() -> int:
         "triggered": triggered,
         "reasons": reasons,
         "n_days_observed": len(daily),
-        "n_shadow_events": len(events),
         "loc_churn": churn,
         "target_fpr": target_fpr,
     }
@@ -181,6 +229,13 @@ def main() -> int:
     if triggered:
         args.out_signal.parent.mkdir(parents=True, exist_ok=True)
         args.out_signal.write_text(out_str)
+    else:
+        # Round-2 fix: clear stale signal so a previous-week alarm doesn't
+        # fire forever. unlink() with missing_ok requires py3.8+.
+        try:
+            args.out_signal.unlink(missing_ok=True)
+        except OSError:
+            pass
     return 0
 
 

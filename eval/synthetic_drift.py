@@ -31,8 +31,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
-import random
 import sys
 from pathlib import Path
 from typing import List, Tuple
@@ -57,23 +55,37 @@ def _benign_walk(rng: np.random.Generator, T: int, dim: int,
 
 
 def _pivot_walk(rng: np.random.Generator, T: int, dim: int, *,
-                sigma: float = 0.3, delta: float = 2.0) -> Tuple[np.ndarray, int]:
-    """Walk with mean shift at a random pivot t*."""
+                sigma: float = 0.3, delta: float = 2.0,
+                mode: str = "step") -> Tuple[np.ndarray, int]:
+    """Walk with mean shift at a random pivot t*.
+
+    mode='step' (default): post-pivot draws have constant offset δ — the
+    realistic single-commit pivot. mode='ramp': linear drift post-pivot
+    (legacy; kept for backwards-compat tests)."""
     t_star = rng.integers(T // 4, max(T // 4 + 1, 3 * T // 4))
     seq = _benign_walk(rng, T, dim, sigma)
     direction = rng.normal(size=dim)
     direction /= np.linalg.norm(direction) + 1e-9
     shift = delta * direction
-    seq[t_star:] += np.cumsum(np.tile(shift / max(T - t_star, 1), (T - t_star, 1)), axis=0)
+    if mode == "step":
+        seq[t_star:] += shift
+    else:  # ramp
+        seq[t_star:] += np.cumsum(
+            np.tile(shift / max(T - t_star, 1), (T - t_star, 1)), axis=0
+        )
     return seq, int(t_star)
 
 
 def _cusum(scores: np.ndarray, *, ref: float = 0.0,
            drift: float = 0.5) -> np.ndarray:
-    """Cumulative-sum statistic. scores: per-step distance.
-    Returns running max of (S_t - drift) - min."""
+    """Standard Page-Hinkley CUSUM statistic for upward shifts.
+
+    M_t = S_t - min_{s<=t} S_s where S = cumsum(scores - ref - drift).
+    Round-2 fix: previous impl used `S.min(initial=0)` (global min) which
+    leaked future information into past timesteps.
+    """
     S = np.cumsum(scores - ref - drift)
-    return np.maximum.accumulate(S) - S.min(initial=0.0)
+    return S - np.minimum.accumulate(S)
 
 
 def main() -> int:
@@ -116,8 +128,12 @@ def main() -> int:
     warn_thr = float(np.quantile(benign_stats, 1.0 - args.type_I))
     # Deny threshold = quantile that achieves power_target on pivot stats.
     deny_thr = float(np.quantile(pivot_stats, 1.0 - args.power_target))
+    deny_thr_fallback = False
     if deny_thr < warn_thr:
-        deny_thr = warn_thr * 1.5  # safety floor
+        # Power target unreachable on synthetic distribution — surface as
+        # explicit flag so callers can refuse to promote thresholds.
+        deny_thr = warn_thr * 1.5
+        deny_thr_fallback = True
 
     type_I_at_warn = float((benign_stats > warn_thr).mean())
     power_at_deny = float((pivot_stats > deny_thr).mean())
@@ -125,6 +141,7 @@ def main() -> int:
     out = {
         "warn_thr": warn_thr,
         "deny_thr": deny_thr,
+        "deny_thr_fallback": deny_thr_fallback,
         "type_I_at_warn": type_I_at_warn,
         "power_at_deny": power_at_deny,
         "n_sequences": args.n,
@@ -137,7 +154,13 @@ def main() -> int:
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(payload)
-    sys.stdout.write(payload + "\n")
+        # Round-2 fix: when --out set, send human summary to stderr so CI can
+        # capture clean JSON via `python -m eval.synthetic_drift > thr.json`.
+        sys.stderr.write(f"[synthetic-drift] wrote {args.out}; "
+                         f"warn={warn_thr:.3f} deny={deny_thr:.3f} "
+                         f"fallback={deny_thr_fallback}\n")
+    else:
+        sys.stdout.write(payload + "\n")
     return 0
 
 

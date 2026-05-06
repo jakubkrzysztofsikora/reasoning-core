@@ -535,6 +535,21 @@ Tracked here so promotion gates remain honest.
 | 59 | `_supervisor_broker._BrokerHealthHandler` does not authenticate — anyone with localhost access reads child status. Acceptable for dev; tighten if exposed via tunneling | bind to unix socket OR add `RC_BROKER_TOKEN` shared-secret check | P5 follow-up |
 | 60 | Healthcheck grace (`last_ok < 30s`) tolerates inference-load blips but masks legitimate brownouts — if model genuinely degrades to >30s response time, supervisor takes ≥30s+5×5s=55s to circuit-break | expose grace via `RC_HEALTH_GRACE_S` env knob; tune from shadow-mode telemetry | P5 follow-up |
 
+### P7 round-2 review — items deferred to follow-up (CRITICAL/HIGH/MEDIUM patched in commit pending)
+
+| # | Issue | Fix idea | When |
+|---|---|---|---|
+| 61 | `pre_edit_guard.py` does not load `eval/runs/calibration.json` — placeholders 4.0/6.0 remain in code; calibration is shipped but not consumed | wire `pre_edit_guard.py` to lazy-load `CalibrationModel.from_json` and call `decide(model, risk_vector)` behind `RC_CALIBRATION_ENABLED` knob (default off until P4 corpus exists) | P4/P7 wiring |
+| 62 | James-Stein stability test at n_kind=5 boundary missing — current test exercises sparse fallback only | add test fitting per-kind at n_kind=5 and asserting threshold variance bound across seeds | P7 follow-up |
+| 63 | `signal_source: "bm25_fallback"` events in `events/gen_fallback.jsonl` not consumed by `recalibrate.py` | scope decision: is gen-fallback rate a recalibration trigger? If yes, fold into PH stat | P7 follow-up |
+| 64 | ✅ CLOSED in round-2 P7 — `CalibrationModel.threshold_ci_width` property + serialized in `to_json` | — | — |
+| 65 | Labeled-benign FPR ≤5% gate validated against synthetic Gaussian only; real labeled corpus blocked on P4 | run `fit` on real shadow-mode benign once P4 producer lands | P4 |
+| 66 | P7 "concurrent with shadow" is structural-only — `recalibrate._stream_daily_fpr` is a consumer with no producer (no shadow events written yet) | `pre_edit_guard.py` already wires `RC_SHADOW_MODE`; ensure decisions flow into `audit_log` daily dirs with the schema `recalibrate.py` expects | P4 |
+| 67 | `recalibrate.signal` written but no consumer auto-refits + atomic-writes `eval/runs/calibration.json` | add to `sidecar_supervisor` tick: poll signal, run `eval.calibration_corpus → calibration.fit → save_models → unlink signal` | P7 follow-up |
+| 68 | `rc status` does not surface calibration state (mtime, threshold, CI width, last recalibrate signal) | add `calibration:` section to `src/rc_cli.py::cmd_status` | P-1/P7 follow-up |
+| 69 | `_DELTA = 0.02` and `_LAMBDA = 0.06` hard-coded in `recalibrate.py` — should derive from σ of rolling 90-d benign FPR | once P4 corpus lands, estimate σ at runtime: `λ = 3σ * sqrt(ARL₀)` | P7 follow-up |
+| 70 | Bootstrap uses `random.Random(11)` while `np.random` already in scope — vectorized resample is ~10× faster | swap to `np.random.default_rng(seed).integers(0, n, size=(n_boot, n))` | P7 follow-up |
+
 Promotion criteria (already in §P4): an enforcement flip from shadow → real
 block requires (a) labeled-corpus FPR ≤ 2%, (b) zero blocks on the 50-edit
 golden set, (c) for mock-detector: heuristic↔mutation Spearman r ≥ 0.6, (d)
