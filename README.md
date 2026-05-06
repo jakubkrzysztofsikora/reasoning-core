@@ -300,6 +300,22 @@ export PATH="$PWD/bin:$PATH"                 # so `rc` shim resolves
 
 Secrets / personal toggles → `.envrc.local` (gitignored, sourced last).
 
+### 4b. (Optional, non–Apple-silicon) Use Scaleway-hosted generative critic
+
+On Linux / CI / Intel Mac the local `mlx_lm.server` path is unavailable.
+Point the generative critic at Scaleway's hosted OpenAI-compatible API
+instead (Bearer auth via `RC_GEN_API_KEY` or `SCALEWAY_API_KEY`):
+
+```bash
+export RC_REASONER_BACKEND=remote
+export RC_GEN_URL=https://api.scaleway.ai/v1/chat/completions
+export RC_GEN_API_KEY=$(scw config get secret-key --profile circit)  # or your own key
+export RC_GEN_MODEL=qwen3-coder-30b-a3b-instruct                     # or devstral-2-123b-instruct-2512
+export RC_GEN_BUDGET_MS=15000
+```
+
+Apple-silicon users keep the local path — no changes needed.
+
 ### 5. Launch Claude from this folder
 
 ```bash
