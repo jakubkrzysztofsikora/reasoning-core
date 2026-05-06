@@ -55,6 +55,7 @@ DEFAULT_JUDGES = (
 )
 
 PILOT_IDS_PATH = REPO_ROOT / "eval" / "datasets" / "grounding_pilot50_ids.txt"
+PILOT100_IDS_PATH = REPO_ROOT / "eval" / "datasets" / "grounding_pilot100_ids.txt"
 
 # Rough per-call cost estimate (USD). Scaleway pricing varies per model;
 # ~$0.02/call is conservative-high blended estimate (1-2k input + ~50 output).
@@ -78,11 +79,16 @@ def _load_pairs(path: Path) -> List[dict]:
     return out
 
 
-def _load_pilot_indices() -> List[int]:
-    if not PILOT_IDS_PATH.exists():
-        raise SystemExit(f"[v3] missing {PILOT_IDS_PATH}; run pre-flight ID gen")
+def _load_pilot_indices(pilot_size: int = 50) -> List[int]:
+    """Load pilot indices. pilot_size=50 (default) or 100.
+    Round-2 fix: widened gate evaluation to n=100 reduces small-sample
+    convergence noise that gave the original 50-pair gate a false-positive
+    on cross-family judges (max kappa ~0.77-0.83 across 4 attempts)."""
+    path = PILOT100_IDS_PATH if pilot_size == 100 else PILOT_IDS_PATH
+    if not path.exists():
+        raise SystemExit(f"[v3] missing {path}; run pre-flight ID gen")
     out: List[int] = []
-    for line in PILOT_IDS_PATH.read_text().splitlines():
+    for line in path.read_text().splitlines():
         line = line.strip()
         if not line:
             continue
@@ -154,9 +160,9 @@ def _cohens_kappa(a: List[int], b: List[int]) -> float:
     return (agree - chance) / (1.0 - chance)
 
 
-def _select_pair_indices(mode: str, total: int) -> List[int]:
+def _select_pair_indices(mode: str, total: int, pilot_size: int = 50) -> List[int]:
     if mode == "pilot":
-        return _load_pilot_indices()
+        return _load_pilot_indices(pilot_size=pilot_size)
     if mode == "full":
         return list(range(total))
     raise SystemExit(f"[v3] unknown mode {mode!r}")
@@ -381,13 +387,18 @@ def main() -> int:
         help="Fallback: keep pairs based on judge majority alone "
              "(skip teacher-agreement filter).",
     )
+    ap.add_argument(
+        "--pilot-size", type=int, default=50, choices=[50, 100],
+        help="Pilot subset size (50 default; 100 reduces small-sample noise "
+             "in independence test per round-2 plan widening).",
+    )
     args = ap.parse_args()
 
     judges = [j.strip() for j in args.judges.split(",") if j.strip()]
     if len(judges) < 2:
         raise SystemExit("[v3] need >= 2 judges")
     pairs = _load_pairs(args.inp)
-    pilot_idx = _load_pilot_indices()
+    pilot_idx = _load_pilot_indices(pilot_size=args.pilot_size)
 
     if args.check_independence:
         _check_independence(judges, pairs, pilot_idx, args.out)
@@ -399,7 +410,7 @@ def main() -> int:
         sys.stderr.write("[v3] judge endpoint health check failed\n")
         return 2
 
-    indices = _select_pair_indices(args.mode, len(pairs))
+    indices = _select_pair_indices(args.mode, len(pairs), pilot_size=args.pilot_size)
     cost_state: Dict[str, float] = {"calls": 0, "spent": 0.0}
     caches = _run_judge_pass(judges, pairs, indices, args.out, cost_state)
 
