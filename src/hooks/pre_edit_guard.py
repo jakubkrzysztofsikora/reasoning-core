@@ -36,6 +36,7 @@ if _HOOKS_DIR not in sys.path:
     sys.path.insert(0, _HOOKS_DIR)
 
 import audit_log  # type: ignore  # noqa: E402
+import _guard_paths  # type: ignore  # noqa: E402
 from _block_format import format_block as _format_block  # type: ignore  # noqa: E402
 
 # Centralized shadow-mode helper. Falls back to None on import error so the
@@ -300,63 +301,10 @@ def main() -> None:
     # a guard-bypass primitive — an agent could rewrite the hooks themselves.
     # Edits to the hook scripts, settings.json, sidecar source, or grammar
     # loader are denied unless the operator explicitly set RC_ALLOW_GUARD_EDIT=1
-    # in the shell that started Claude.
-    GUARDED_PATHS = (
-        "/.claude/settings.json",
-        "/.claude/settings.local.json",
-        # Original hooks
-        "/src/hooks/pre_edit_guard.py",
-        "/src/hooks/pre_bash_guard.py",
-        "/src/hooks/post_bash_revive.py",
-        "/src/hooks/pre_plan_guard.py",
-        "/src/hooks/pre_task_guard.py",
-        "/src/hooks/audit_log.py",
-        # P-1 / P3 / P5 / P7 hook helpers (round-3 senior-dev: agent could
-        # rewrite these to plant `# rc:skip-all` or no-op the calibration
-        # gate. Front door + back door now both locked.)
-        "/src/hooks/_calibration_gate.py",
-        "/src/hooks/_kill_switches.py",
-        "/src/hooks/_magic_comments.py",
-        "/src/hooks/_session_manifest.py",
-        "/src/hooks/_shadow_mode.py",
-        "/src/hooks/_mock_detector.py",
-        "/src/hooks/_plan_quality.py",
-        "/src/hooks/_audit_rotation.py",
-        "/src/hooks/_ood_detector.py",
-        "/src/hooks/pre_compact_guard.py",
-        "/src/hooks/session_start_manifest.py",
-        "/src/hooks/session_resume_inject.py",
-        "/src/hooks/post_batch_lang_audit.py",
-        # Sidecar + supervisor + generative client
-        "/src/sidecar_supervisor.py",
-        "/src/_supervisor_env.py",
-        "/src/_supervisor_broker.py",
-        "/src/_supervisor_recalibrate.py",
-        "/src/gen_client.py",
-        "/src/calibration.py",
-        # Sidecar core (existing)
-        "/src/s2_core.py",
-        "/src/grammars.py",
-        "/src/ssm_backbone.py",
-        "/src/mcp_reasoner.py",
-        # Operator CLI (rewrite would let agent fake `rc status`)
-        "/src/rc_cli.py",
-        # Boot scripts
-        "/scripts/start-sidecar.sh",
-        "/scripts/start-gen-sidecar.sh",
-    )
+    # in the shell that started Claude. Discovery + matching live in
+    # `_guard_paths` so a new hook script is auto-locked at import (Phase 0).
     is_retry = audit_log.is_retry_after_block(file_path)
-    # Round-3 round-2 senior-dev H2: normalize to absolute path BEFORE the
-    # substring check. Claude Code always passes absolute paths via tool_input,
-    # but defensive normalization closes a false-negative where any caller
-    # (test, MCP bridge, future tooling) passes a relative path and bypasses
-    # the lock entirely. abspath() on an already-absolute path is a no-op.
-    _norm_path = os.path.abspath(file_path) if file_path else file_path
-    if (
-        _norm_path
-        and any(g in _norm_path for g in GUARDED_PATHS)
-        and os.environ.get("RC_ALLOW_GUARD_EDIT") != "1"
-    ):
+    if _guard_paths.is_guarded(file_path) and not _guard_paths.is_override_active():
         audit_log.record_block(file_path)
         _emit_audit(
             tool_name=tool_name,
