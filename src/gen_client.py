@@ -59,12 +59,18 @@ def _audit_emit(reason: str, **fields: Any) -> None:
 
 
 def health_ok(url: Optional[str] = None) -> bool:
-    """Liveness probe. mlx_lm.server has no /health — probe /v1/models."""
+    """Liveness probe. mlx_lm.server has no /health — probe /v1/models.
+    Hosted endpoints (Scaleway etc.) require auth — pass Bearer token."""
     target = url or _default_url()
     parsed = urllib.parse.urlsplit(target)
     base = f"{parsed.scheme}://{parsed.netloc}"
+    headers = {}
+    api_key = os.environ.get("RC_GEN_API_KEY") or os.environ.get("SCALEWAY_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
-        with urllib.request.urlopen(f"{base}/v1/models", timeout=2.0) as resp:
+        req = urllib.request.Request(f"{base}/v1/models", headers=headers)
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
             return 200 <= resp.status < 300
     except (urllib.error.URLError, OSError, ValueError):
         return False
@@ -72,10 +78,14 @@ def health_ok(url: Optional[str] = None) -> bool:
 
 def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, Any]]:
     raw = json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    api_key = os.environ.get("RC_GEN_API_KEY") or os.environ.get("SCALEWAY_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
         url,
         data=raw,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -93,13 +103,19 @@ def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, 
         return None
 
 
-def critic_call(prompt: str, *, model: str = "qwen2.5-coder-1.5b-instruct",
+def _default_model() -> str:
+    return os.environ.get(
+        "RC_GEN_MODEL", "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit"
+    )
+
+
+def critic_call(prompt: str, *, model: Optional[str] = None,
                 budget_ms: Optional[int] = None,
                 max_tokens: int = 512) -> Optional[str]:
     if not _backend_active():
         return None
     body = {
-        "model": model,
+        "model": model or _default_model(),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
         "max_tokens": max_tokens,
@@ -114,12 +130,36 @@ def critic_call(prompt: str, *, model: str = "qwen2.5-coder-1.5b-instruct",
 
 
 _GROUNDING_PROMPT = (
-    "Decide if the plan claim is supported by the diff hunk. "
-    "Respond with EXACTLY one token: YES or NO. No prose, no punctuation.\n\n"
+    "You are auditing whether a plan claim is implemented by a code diff.\n"
+    "Answer the 3 rubric questions, then give a final verdict.\n\n"
     "PLAN CLAIM:\n{claim}\n\n"
     "DIFF HUNK:\n{hunk}\n\n"
-    "ANSWER:"
+    "RUBRIC (answer Y or N):\n"
+    "1. Does the diff change a file or symbol that the plan claim names?\n"
+    "2. Does the diff introduce or modify behavior that matches the claim's intent\n"
+    "   (not just whitespace, comments, or unrelated edits)?\n"
+    "3. Could a reviewer reading only the diff conclude the claim is delivered?\n\n"
+    "If at least 2 of 3 are Y → VERDICT: YES. Otherwise → VERDICT: NO.\n"
+    "Respond with the rubric answers (one line each) then a final line\n"
+    "starting with 'VERDICT:' followed by exactly YES or NO. Nothing else.\n"
 )
+
+
+def _parse_verdict(text: str) -> Optional[int]:
+    """Parse the rubric-prompt 'VERDICT: YES|NO' line. Falls back to bare
+    YES/NO scan if no VERDICT line found (legacy prompt compat)."""
+    if not text:
+        return None
+    upper = text.strip().upper()
+    for line in upper.splitlines()[::-1]:
+        line = line.strip().lstrip("-* ").rstrip(".:,")
+        if line.startswith("VERDICT"):
+            tail = line.split(":", 1)[-1].strip() if ":" in line else line
+            if "YES" in tail and "NO" not in tail:
+                return 1
+            if "NO" in tail and "YES" not in tail:
+                return 0
+    return _parse_yesno(text)
 
 
 _YES_WORD = re.compile(r"\bYES\b")
@@ -158,9 +198,9 @@ def score_plan_grounding(plan_claim: str, diff_hunk: str) -> Dict[str, int]:
     claim = (plan_claim or "")[:500]
     out = critic_call(
         _GROUNDING_PROMPT.format(claim=claim, hunk=hunk),
-        max_tokens=8,
+        max_tokens=128,  # rubric needs ~3 lines + verdict
     )
-    parsed = _parse_yesno(out or "")
+    parsed = _parse_verdict(out or "")
     if parsed is None:
         return {"supported": 0, "total": 0}
     return {"supported": parsed, "total": 1}

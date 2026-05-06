@@ -51,6 +51,50 @@ def _print_kv(k: str, v: str) -> None:
     sys.stdout.write(f"  {k:<32} {v}\n")
 
 
+def _calibration_status() -> dict:
+    """Read calibration sentinel files for `rc status` block.
+
+    Looks at: eval/runs/calibration.json (Mahalanobis model),
+              eval/runs/qwen_kappa_gate.json (CDGS gate),
+              eval/runs/recalibrate.signal (pending refit).
+    """
+    import time
+    repo = Path(__file__).resolve().parent.parent
+    runs = repo / "eval" / "runs"
+    out: dict = {}
+    calib_path = runs / "calibration.json"
+    if calib_path.exists():
+        try:
+            d = json.loads(calib_path.read_text())
+            out["calibration_threshold"] = d.get("threshold")
+            ci = d.get("threshold_ci95")
+            if ci:
+                out["calibration_ci_width"] = round(ci[1] - ci[0], 4)
+            out["calibration_n"] = d.get("n")
+            out["calibration_mtime_age_h"] = round(
+                (time.time() - calib_path.stat().st_mtime) / 3600, 1
+            )
+        except (OSError, ValueError):
+            out["calibration"] = "<corrupt>"
+    else:
+        out["calibration"] = "<not fitted>"
+
+    kappa_path = runs / "qwen_kappa_gate.json"
+    if kappa_path.exists():
+        try:
+            d = json.loads(kappa_path.read_text())
+            out["qwen_kappa"] = round(d.get("kappa", 0.0), 3)
+            out["qwen_gate_pass"] = d.get("gate_pass")
+        except (OSError, ValueError):
+            out["qwen_kappa"] = "<corrupt>"
+    else:
+        out["qwen_kappa"] = "<not run>"
+
+    signal_path = runs / "recalibrate.signal"
+    out["recalibrate_signal"] = "PENDING" if signal_path.exists() else "none"
+    return out
+
+
 def cmd_status(_args: argparse.Namespace) -> int:
     sys.stdout.write("== reasoning-core status ==\n\nenv knobs:\n")
     for k in _KNOBS:
@@ -60,6 +104,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
     _print_kv("bypass_next", str(snap.get("bypass_next", False)))
     _print_kv("skip_files", str(snap.get("skip_files", [])))
     _print_kv("disable_until", str(snap.get("disable_until")))
+    sys.stdout.write("\ncalibration:\n")
+    for k, v in _calibration_status().items():
+        _print_kv(k, str(v))
     sys.stdout.write("\naudit log:\n")
     _print_kv("root", str(_audit_root()))
     today = _today_dir()

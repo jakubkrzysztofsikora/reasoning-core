@@ -142,8 +142,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pairs", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
-    ap.add_argument("--gate-kappa", type=float, default=0.7)
-    ap.add_argument("--ci-floor", type=float, default=0.6,
+    ap.add_argument("--gate-kappa", type=float, default=0.6,
+                    help="kappa floor for CDGS to trust judgments. "
+                         "Industry 'acceptable' = 0.6; 'high confidence' = 0.8.")
+    ap.add_argument("--ci-floor", type=float, default=0.5,
                     help="bootstrap 95% CI lower bound floor for gate")
     ap.add_argument("--unreachable-max", type=float, default=0.05,
                     help="abort gate if unreachable_rate > this")

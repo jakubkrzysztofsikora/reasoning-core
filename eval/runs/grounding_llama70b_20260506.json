@@ -1,0 +1,19 @@
+{
+  "n": 200,
+  "n_total": 200,
+  "unreachable": 0,
+  "unreachable_rate": 0.0,
+  "kappa": 0.2779783393501804,
+  "kappa_ci95": [
+    0.18790496760259182,
+    0.37591418820087774
+  ],
+  "accuracy": 0.6,
+  "gate_kappa": 0.7,
+  "gate_ci_floor": 0.6,
+  "gate_unreachable_max": 0.05,
+  "gate_pass": false,
+  "elapsed_s": 39.734622955322266,
+  "prompt_hash": "29e038d6f6ae97e2",
+  "bootstrap_seed": 7
+}
