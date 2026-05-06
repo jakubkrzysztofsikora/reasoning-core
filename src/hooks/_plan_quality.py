@@ -19,8 +19,12 @@ Signals:
 """
 from __future__ import annotations
 
+import json
+import os
 import re
-from typing import NamedTuple
+import sys
+from pathlib import Path
+from typing import List, NamedTuple, Optional, Tuple
 
 # --- Lexicons --------------------------------------------------------------
 
@@ -140,6 +144,69 @@ class CGSResult(NamedTuple):
     gpas: float
     slr: float
     decision: str  # accept | warn | reject
+
+
+def _kappa_gate_passed() -> bool:
+    """CDGS only trusts Qwen judgments after the κ gate passes."""
+    sentinel_path = os.environ.get(
+        "RC_QWEN_KAPPA_SENTINEL",
+        str(Path(__file__).resolve().parent.parent.parent
+            / "eval" / "runs" / "qwen_kappa_gate.json"),
+    )
+    try:
+        with open(sentinel_path) as f:
+            return bool(json.load(f).get("gate_pass"))
+    except (OSError, ValueError):
+        return False
+
+
+_CLAIM_LINE_RE = re.compile(r"^[ \t]*[-*+]\s+(.+)$", re.MULTILINE)
+
+
+def _extract_claims(plan: str, *, limit: int = 8) -> List[str]:
+    """Pull bullet-point claims from a plan markdown. Caps at `limit` to bound
+    Qwen budget per gate (8 * 2.5s = 20s p99)."""
+    claims = [m.group(1).strip() for m in _CLAIM_LINE_RE.finditer(plan)]
+    claims = [c for c in claims if 20 <= len(c) <= 500]
+    return claims[:limit]
+
+
+def cdgs(plan: str, diff_hunks: List[str]) -> Tuple[float, str]:
+    """Claim-to-Diff Grounding Score via P5 generative critic.
+
+    Returns (score, source) where source ∈ {"qwen", "bm25", "skipped"}.
+    Skipped if κ gate hasn't passed or backend is off — caller treats as
+    a non-signal (no penalty, no reward)."""
+    if not _kappa_gate_passed():
+        return 0.0, "skipped"
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        import gen_client  # type: ignore
+    except ImportError:
+        return 0.0, "skipped"
+    if not gen_client._backend_active() or not diff_hunks:
+        return 0.0, "skipped"
+
+    claims = _extract_claims(plan)
+    if not claims:
+        return 0.0, "skipped"
+
+    supported = 0
+    total = 0
+    for claim in claims:
+        # Score against best-matching hunk (any-of). Cap hunks per claim
+        # to bound budget.
+        for hunk in diff_hunks[:4]:
+            res = gen_client.score_plan_grounding(claim, hunk)
+            if res["total"] == 0:
+                continue
+            total += 1
+            if res["supported"]:
+                supported += 1
+                break  # one supporting hunk is enough per claim
+    if total == 0:
+        return 0.0, "bm25"  # all calls failed — caller falls back
+    return supported / total, "qwen"
 
 
 def composite_gate_score(plan: str) -> CGSResult:

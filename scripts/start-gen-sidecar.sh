@@ -26,7 +26,10 @@ case "$BACKEND" in
     fi
     MODEL="${RC_GEN_MODEL:-mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit}"
     echo "[gen-sidecar] starting mlx_lm.server: model=$MODEL port=$PORT" >&2
-    exec mlx_lm.server --model "$MODEL" --port "$PORT" >>"$LOG_FILE" 2>&1
+    # Round-2 fix: drop double-redirect. Supervisor owns log routing via Popen
+    # stdout=f. Shell-level >>"$LOG_FILE" left dead-coded child output invisible
+    # to /tmp/rc-gen.log. Inherit supervisor's FDs.
+    exec mlx_lm.server --model "$MODEL" --port "$PORT"
     ;;
   llama)
     if ! python3 -c "import llama_cpp" 2>/dev/null; then
@@ -42,7 +45,7 @@ case "$BACKEND" in
       exit 1
     fi
     echo "[gen-sidecar] starting llama-cpp-python: model=$MODEL_PATH port=$PORT" >&2
-    exec python3 -m llama_cpp.server --model "$MODEL_PATH" --port "$PORT" >>"$LOG_FILE" 2>&1
+    exec python3 -m llama_cpp.server --model "$MODEL_PATH" --port "$PORT"
     ;;
   remote)
     echo "[gen-sidecar] backend=remote — no local sidecar to start." >&2

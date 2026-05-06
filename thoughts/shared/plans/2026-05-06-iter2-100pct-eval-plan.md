@@ -509,6 +509,31 @@ Tracked here so promotion gates remain honest.
 | 38 | `_PLAN_PATTERNS` matches only `thoughts/shared/plans/*.md`, `PLAN.md`, `*.plan.md` — bareword no-ext / arbitrary-path plans don't trigger plan-guard at all (skip-framework directive moot for those) | broaden plan-detection or document supported plan-file naming | P4 |
 | 39 | `framework_pivot` lexicon misses ~80% of modern Python tooling (poetry, uv, pdm, tox, nox, hatch, pdm, conda, mamba, pipx) and most C# / JS tooling beyond top-level (yarn, pnpm, bun, dotnet test variants) | extend lexicon; ideally derive from `_session_manifest._LANG_FAMILY` map | P4 |
 | 40 | Inv 3 (PreCompact handoff) is shipped functionally (`pre_compact_guard.py` + `session_resume_inject.py`) but lacks an integration test; not in `tests/test_lang_invariants.py` | end-to-end test: write anchor → resume → consume; verify session_id match | P4 |
+| 41 | P5 supervisor `/score` and `/critic` HTTP endpoints (plan §P5 promised broker exposes these to hooks). Currently broker only health-aggregates; clients still hit child ports directly | clarify: hooks call `gen_client.critic_call` directly to child port; broker only does /health aggregation | open (semantic; low priority) |
+| 42 | ✅ CLOSED in round-2 P5 — broker `/health` HTTP listener now bound to `RC_BROKER_PORT` (default 8764) returning `_broker_health()` JSON via `_supervisor_broker.py`. | — | — |
+| 43 | ✅ CLOSED in round-2 P5 — `cdgs()` shipped in `src/hooks/_plan_quality.py`; gated on κ-sentinel (`eval/runs/qwen_kappa_gate.json`). Composite still uses 4 heuristic signals; CDGS available standalone (item #58 wires it into composite when n≥60 plans). | — | — |
+| 44 | ✅ CLOSED in round-2 P5 — `score_with_iteration` removed from `gen_client.py`. Re-introduce only with consumer (item #57). | — | — |
+| 45 | WWDS (What/Why Differentiation) — still deferred. `_plan_quality.py` ships heuristics-only | implement WWDS scorer using `gen_client.critic_call` per plan-step | P5 follow-up |
+| 46 | ✅ CLOSED in round-2 P5 — `gen_client._post` failures emit JSONL events to `~/.local/share/reasoning-core/events/gen_fallback.jsonl` with `signal_source: "bm25_fallback"` and reason (`gen_5xx`, `gen_timeout_or_unreachable`, `gen_decode_error`). | — | — |
+| 47 | ✅ CLOSED in round-2 P5 — `launchd/com.reasoning-core.supervisor.plist` now `{Crashed: true, SuccessfulExit: false}`. | — | — |
+| 48 | ✅ CLOSED in round-2 P5 — `qwen_grounding_eval.py` writes sentinel `eval/runs/qwen_kappa_gate.json` with `{gate_pass, kappa}`; `_plan_quality._kappa_gate_passed()` reads it; `cdgs()` returns `("skipped", 0.0)` when gate hasn't passed. | — | — |
+| 49 | ✅ CLOSED — `eval/datasets/grounding_pairs.jsonl` committed at `74e7dff` (200 pairs, 120 pos / 40 shuf neg / 40 hard neg, deterministic seed=42). | — | — |
+| 50 | `RC_GEN_URL=remote` mode — `gen_client.health_ok()` now probes `/v1/models` (works on most hosted OpenAI-compat endpoints). Edge case: hosted endpoints that don't expose `/v1/models` (rare) will still fail-open | document required endpoint shape OR skip health probe when backend=="remote" | P5 follow-up |
+| 51 | `start-gen-sidecar.sh` Linux path errors out if GGUF missing — no automatic download script. Plan promised reproducible Linux CI path; CI will fail until operator manually runs `hf download`. No `scripts/fetch-gguf.sh` exists | add `scripts/fetch-gguf.sh` invoked by start script when model absent and `RC_AUTO_FETCH=1`; or document the manual step in plan as accepted | P5 follow-up |
+
+### P5 round-2 review — LOW items deferred (CRITICAL/HIGH/MEDIUM patched in commit pending)
+
+| # | Issue | Fix idea | When |
+|---|---|---|---|
+| 52 | `qwen_grounding_eval._bootstrap_ci` percentile uses `int(0.025*n)` (rounds down) — off-by-one vs conventional `(n-1)*p` interpolation. Acceptable at n_boot=1000; worse at small n | switch to `numpy.percentile` or proper linear interpolation | P5 follow-up |
+| 53 | `start-gen-sidecar.sh:41` `$(dirname $MODEL_PATH)` unquoted — breaks on paths with spaces | quote it: `"$(dirname "$MODEL_PATH")"` | P5 follow-up |
+| 54 | `sidecar_supervisor` reads `RC_REASONER_BACKEND` only at startup; toggling backend requires full supervisor restart | document or watch env via SIGHUP reload | P5 follow-up |
+| 55 | n=200 is statistically underpowered for κ≥0.7 + CI≥0.6 gate (LLM-sci review C2). Realistic n is ~500. Dataset shipped with 200; gate may need to ingest extra pairs or relax CI floor | grow `eval/datasets/grounding_pairs.jsonl` to 500 pairs, OR run gate at `--ci-floor 0.55` initially with explicit power note | P5 follow-up |
+| 56 | YES/NO via free-text head-token at 1.5B+Q4 (LLM-sci H3) — `_parse_yesno` is robust but doesn't use logit-bias / logprob constrained decoding. mlx_lm and llama.cpp both expose `logit_bias` | switch to `logit_bias={YES_TOK: 100, NO_TOK: 100}` + `max_tokens=1` once both backends confirmed to support it | P5 follow-up |
+| 57 | `score_with_iteration` removed from `gen_client.py` (was dead code, zero callers — auditor #44 closed by deletion). If iteration *is* desired in future, it must be wired into a consumer at the same time | re-introduce only when wiring a consumer (e.g., WWDS scorer) | P5 follow-up |
+| 58 | `cdgs()` in `_plan_quality.py` is implemented but not yet called from `composite_gate_score` — composite still uses 4 heuristic signals only. CDGS available as standalone fn for callers that pass diff hunks | wire CDGS into composite when n≥60 labeled plans exist for re-weighting | P5 follow-up |
+| 59 | `_supervisor_broker._BrokerHealthHandler` does not authenticate — anyone with localhost access reads child status. Acceptable for dev; tighten if exposed via tunneling | bind to unix socket OR add `RC_BROKER_TOKEN` shared-secret check | P5 follow-up |
+| 60 | Healthcheck grace (`last_ok < 30s`) tolerates inference-load blips but masks legitimate brownouts — if model genuinely degrades to >30s response time, supervisor takes ≥30s+5×5s=55s to circuit-break | expose grace via `RC_HEALTH_GRACE_S` env knob; tune from shadow-mode telemetry | P5 follow-up |
 
 Promotion criteria (already in §P4): an enforcement flip from shadow → real
 block requires (a) labeled-corpus FPR ≤ 2%, (b) zero blocks on the 50-edit

@@ -32,7 +32,17 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+
+from _supervisor_env import build_child_env, gen_extra_env
+from _supervisor_broker import broker_health_snapshot, start_broker_http
+
+
+_LOG_ROTATE_BYTES = 100 * 1024 * 1024
+_HEALTH_TIMEOUT_S = 3.0
+_FAILURE_THRESHOLD = 5
+_HEALTH_GRACE_S = 30.0
+_BROKER_PORT = int(os.environ.get("RC_BROKER_PORT", "8764"))
 
 
 @dataclass
@@ -43,31 +53,47 @@ class _Child:
     proc: Optional[subprocess.Popen] = None
     last_ok: float = 0.0
     failures: int = 0
-    open_until: float = 0.0  # circuit-breaker cooldown deadline
+    open_until: float = 0.0
     backoff_s: float = 1.0
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
-def _spawn(child: _Child) -> None:
+def _rotate_log(path: Path) -> None:
+    try:
+        if path.exists() and path.stat().st_size > _LOG_ROTATE_BYTES:
+            rotated = path.with_suffix(path.suffix + ".1")
+            try:
+                if rotated.exists():
+                    rotated.unlink()
+            except OSError:
+                pass
+            path.rename(rotated)
+    except OSError:
+        pass
+
+
+def _spawn(child: _Child, *, extra_env: Optional[Dict[str, str]] = None) -> None:
     log_path = Path(f"/tmp/rc-{child.name}.log")
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        f = open(log_path, "ab")
-        child.proc = subprocess.Popen(
-            child.cmd,
-            stdout=f,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            env=os.environ.copy(),
-        )
+        _rotate_log(log_path)
+        with open(log_path, "ab") as f:
+            child.proc = subprocess.Popen(
+                child.cmd,
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                env=build_child_env(extra_env),
+            )
         sys.stderr.write(f"[supervisor] {child.name} started pid={child.proc.pid}\n")
     except (OSError, ValueError) as exc:
         sys.stderr.write(f"[supervisor] {child.name} spawn failed: {exc}\n")
 
 
-def _health(url: str, timeout: float = 1.0) -> bool:
+def _health(url: str, timeout: float = _HEALTH_TIMEOUT_S) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return resp.status == 200
+            return 200 <= resp.status < 300
     except (urllib.error.URLError, OSError, ValueError):
         return False
 
@@ -76,72 +102,70 @@ def _is_alive(child: _Child) -> bool:
     return child.proc is not None and child.proc.poll() is None
 
 
-def _supervise_one(child: _Child, *, stop: threading.Event) -> None:
+def _supervise_one(child: _Child, *, stop: threading.Event,
+                   extra_env: Optional[Dict[str, str]] = None) -> None:
     while not stop.is_set():
         now = time.time()
-        if now < child.open_until:
-            time.sleep(min(5.0, child.open_until - now))
+        with child.lock:
+            cooldown_left = child.open_until - now
+        if cooldown_left > 0:
+            stop.wait(min(5.0, cooldown_left))
             continue
         if not _is_alive(child):
             sys.stderr.write(f"[supervisor] {child.name} not alive; spawning\n")
-            _spawn(child)
-            time.sleep(child.backoff_s)
-            child.backoff_s = min(child.backoff_s * 2, 8.0)
+            _spawn(child, extra_env=extra_env)
+            with child.lock:
+                wait_s = child.backoff_s
+                child.backoff_s = min(child.backoff_s * 2, 8.0)
+            stop.wait(wait_s)
             continue
-        if _health(child.health_url):
-            child.last_ok = now
-            child.failures = 0
-            child.backoff_s = 1.0
-        else:
-            child.failures += 1
-            if child.failures >= 3:
-                sys.stderr.write(
-                    f"[supervisor] {child.name} circuit-break (60s cooldown)\n"
-                )
-                child.open_until = now + 60.0
-                if child.proc and child.proc.poll() is None:
-                    try:
-                        child.proc.terminate()
-                    except OSError:
-                        pass
+        ok = _health(child.health_url)
+        with child.lock:
+            if ok:
+                child.last_ok = now
                 child.failures = 0
-        time.sleep(5.0)
+                child.backoff_s = 1.0
+            elif now - child.last_ok < _HEALTH_GRACE_S and child.last_ok > 0:
+                pass  # transient inference-load latency; ignore
+            else:
+                child.failures += 1
+                if child.failures >= _FAILURE_THRESHOLD:
+                    sys.stderr.write(
+                        f"[supervisor] {child.name} circuit-break "
+                        f"({_FAILURE_THRESHOLD} consec, 60s cooldown)\n"
+                    )
+                    child.open_until = now + 60.0
+                    child.failures = 0
+                    child.backoff_s = 1.0
+                    if child.proc and child.proc.poll() is None:
+                        try:
+                            child.proc.terminate()
+                        except OSError:
+                            pass
+        stop.wait(5.0)
 
 
-def _broker_health(children: List[_Child]) -> dict:
-    return {
-        "supervisor": "ok",
-        "children": [
-            {
-                "name": c.name,
-                "alive": _is_alive(c),
-                "last_ok_age_s": time.time() - c.last_ok if c.last_ok else None,
-                "failures": c.failures,
-                "circuit_open_for_s": max(0.0, c.open_until - time.time()),
-            }
-            for c in children
-        ],
-    }
+def _broker_health(children: List[_Child]) -> Dict[str, Any]:
+    return broker_health_snapshot(children)
 
 
 def _build_children(repo_root: Path) -> List[_Child]:
     children: List[_Child] = []
-    # Mamba sidecar (always required).
     mamba_port = int(os.environ.get("S2_PORT", "8765"))
     children.append(_Child(
         name="mamba",
         cmd=["bash", str(repo_root / "scripts" / "start-sidecar.sh")],
         health_url=f"http://127.0.0.1:{mamba_port}/health",
     ))
-    # Generative sidecar (optional — only if RC_REASONER_BACKEND configured
-    # and not 'remote').
     backend = os.environ.get("RC_REASONER_BACKEND", "").lower()
     if backend in ("mlx", "llama"):
         gen_port = int(os.environ.get("RC_GEN_PORT", "8766"))
+        # mlx_lm.server has NO /health endpoint — probe /v1/models which
+        # returns 200 once the model is loaded. Works on llama_cpp.server too.
         children.append(_Child(
             name="gen",
             cmd=["bash", str(repo_root / "scripts" / "start-gen-sidecar.sh")],
-            health_url=f"http://127.0.0.1:{gen_port}/health",
+            health_url=f"http://127.0.0.1:{gen_port}/v1/models",
         ))
     return children
 
@@ -164,9 +188,21 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
 
+    try:
+        broker = start_broker_http(children, _BROKER_PORT)
+    except OSError as exc:
+        sys.stderr.write(f"[supervisor] broker http bind failed: {exc}\n")
+        broker = None
+
     threads = []
     for c in children:
-        t = threading.Thread(target=_supervise_one, args=(c,), kwargs={"stop": stop}, daemon=True)
+        extra = gen_extra_env() if c.name == "gen" else None
+        t = threading.Thread(
+            target=_supervise_one,
+            args=(c,),
+            kwargs={"stop": stop, "extra_env": extra},
+            daemon=True,
+        )
         t.start()
         threads.append(t)
 
@@ -176,12 +212,14 @@ def main() -> int:
     )
 
     while not stop.is_set():
-        time.sleep(10.0)
-        snap = _broker_health(children)
-        sys.stderr.write("[supervisor] " + json.dumps(snap) + "\n")
+        stop.wait(10.0)
+        if not stop.is_set():
+            sys.stderr.write("[supervisor] " + json.dumps(_broker_health(children)) + "\n")
 
     for t in threads:
         t.join(timeout=2.0)
+    if broker is not None:
+        broker.shutdown()
     return 0
 
 

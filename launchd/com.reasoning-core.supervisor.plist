@@ -20,8 +20,10 @@
 
     <key>KeepAlive</key>
     <dict>
-        <key>NetworkState</key>
+        <key>Crashed</key>
         <true/>
+        <key>SuccessfulExit</key>
+        <false/>
     </dict>
 
     <key>ThrottleInterval</key>

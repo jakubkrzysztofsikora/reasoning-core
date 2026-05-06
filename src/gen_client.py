@@ -18,34 +18,59 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, Optional
 
 
-_DEFAULT_URL = os.environ.get("RC_GEN_URL", "http://127.0.0.1:8766/v1/chat/completions")
-_DEFAULT_BUDGET_MS = int(os.environ.get("RC_GEN_BUDGET_MS", "2500"))
+def _default_url() -> str:
+    return os.environ.get("RC_GEN_URL", "http://127.0.0.1:8766/v1/chat/completions")
+
+
+def _default_budget_ms() -> int:
+    return int(os.environ.get("RC_GEN_BUDGET_MS", "2500"))
 
 
 def _backend_active() -> bool:
-    """True if a generative backend is configured. Off by default."""
     return os.environ.get("RC_REASONER_BACKEND", "").lower() in ("mlx", "llama", "remote")
 
 
-def health_ok(url: str = _DEFAULT_URL) -> bool:
-    """Quick liveness probe. Substitutes /v1/chat/completions path with /health."""
-    base = url.split("/v1/")[0] if "/v1/" in url else url
+def _audit_emit(reason: str, **fields: Any) -> None:
+    """Emit a JSONL event so CDGS BM25 fallback is visible in audit."""
     try:
-        with urllib.request.urlopen(f"{base}/health", timeout=1.0) as resp:
-            return resp.status == 200
+        path = os.environ.get(
+            "RC_GEN_FALLBACK_LOG",
+            os.path.expanduser("~/.local/share/reasoning-core/events/gen_fallback.jsonl"),
+        )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a") as f:
+            f.write(json.dumps({
+                "ts": time.time(),
+                "signal_source": "bm25_fallback",
+                "reason": reason,
+                **fields,
+            }) + "\n")
+    except OSError:
+        pass
+
+
+def health_ok(url: Optional[str] = None) -> bool:
+    """Liveness probe. mlx_lm.server has no /health — probe /v1/models."""
+    target = url or _default_url()
+    parsed = urllib.parse.urlsplit(target)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    try:
+        with urllib.request.urlopen(f"{base}/v1/models", timeout=2.0) as resp:
+            return 200 <= resp.status < 300
     except (urllib.error.URLError, OSError, ValueError):
         return False
 
 
 def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, Any]]:
-    """Synchronous POST with hard timeout. Returns parsed JSON or None."""
     raw = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -57,26 +82,29 @@ def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, 
         with urllib.request.urlopen(req, timeout=budget_ms / 1000.0) as resp:
             data = resp.read().decode("utf-8")
         return json.loads(data)
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+    except urllib.error.HTTPError as exc:
+        _audit_emit("gen_5xx" if exc.code >= 500 else "gen_4xx", code=exc.code)
+        return None
+    except (urllib.error.URLError, OSError) as exc:
+        _audit_emit("gen_timeout_or_unreachable", error=str(exc))
+        return None
+    except ValueError as exc:
+        _audit_emit("gen_decode_error", error=str(exc))
         return None
 
 
 def critic_call(prompt: str, *, model: str = "qwen2.5-coder-1.5b-instruct",
-                budget_ms: int = _DEFAULT_BUDGET_MS) -> Optional[str]:
-    """Single generative critic pass. Temperature pinned to 0 for gate paths.
-
-    Returns the assistant message text on success, None on timeout/5xx.
-    Caller falls open to BM25 / heuristic on None.
-    """
+                budget_ms: Optional[int] = None,
+                max_tokens: int = 512) -> Optional[str]:
     if not _backend_active():
         return None
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
-        "max_tokens": 512,
+        "max_tokens": max_tokens,
     }
-    res = _post(_DEFAULT_URL, body, budget_ms)
+    res = _post(_default_url(), body, budget_ms or _default_budget_ms())
     if not res:
         return None
     try:
@@ -85,47 +113,54 @@ def critic_call(prompt: str, *, model: str = "qwen2.5-coder-1.5b-instruct",
         return None
 
 
-def score_plan_grounding(plan_claim: str, diff_hunk: str) -> Dict[str, int]:
-    """CDGS support: ask critic if claim is grounded in diff hunk.
+_GROUNDING_PROMPT = (
+    "Decide if the plan claim is supported by the diff hunk. "
+    "Respond with EXACTLY one token: YES or NO. No prose, no punctuation.\n\n"
+    "PLAN CLAIM:\n{claim}\n\n"
+    "DIFF HUNK:\n{hunk}\n\n"
+    "ANSWER:"
+)
 
-    Returns {"supported": 0|1, "total": 1}. Caller aggregates over claims.
-    Server-side iteration cap = 1 here (per-claim); aggregator runs N claims.
+
+_YES_WORD = re.compile(r"\bYES\b")
+_NO_WORD = re.compile(r"\bNO\b")
+
+
+def _parse_yesno(text: str) -> Optional[int]:
+    """Robust YES/NO extraction. Returns 1, 0, or None (unparseable).
+
+    Uses word boundaries to avoid false-positives like 'know' matching NO.
     """
-    if not _backend_active():
-        return {"supported": 0, "total": 0}
-    prompt = (
-        "Decide if the plan claim is supported by the diff hunk. "
-        "Respond with one word: YES or NO.\n\n"
-        f"PLAN CLAIM:\n{plan_claim}\n\n"
-        f"DIFF HUNK:\n{diff_hunk}\n\n"
-        "ANSWER:"
-    )
-    out = critic_call(prompt)
-    if not out:
-        return {"supported": 0, "total": 0}
-    head = out.strip().split()[0].upper() if out.strip() else ""
-    return {"supported": 1 if head.startswith("YES") else 0, "total": 1}
-
-
-def score_with_iteration(prompt: str, *, max_iters: int = 3,
-                         total_budget_ms: int = 6000) -> Optional[str]:
-    """Server-side iteration loop with hard cap.
-
-    Per agent-harness reviewer: do NOT expose iteration to the agent.
-    Internal-only. Each iteration consumes proportionally from the total
-    wall budget; once budget exhausts, return last-best.
-    """
-    if not _backend_active():
+    if not text:
         return None
-    deadline = time.time() + (total_budget_ms / 1000.0)
-    last: Optional[str] = None
-    for i in range(max_iters):
-        remaining_ms = max(int((deadline - time.time()) * 1000), 100)
-        if remaining_ms < 200:
-            break
-        out = critic_call(prompt, budget_ms=remaining_ms)
-        if out:
-            last = out
-        if last and "FINAL" in last.upper():
-            break
-    return last
+    upper = text.strip().upper()
+    yes_m = _YES_WORD.search(upper)
+    no_m = _NO_WORD.search(upper)
+    if yes_m and not no_m:
+        return 1
+    if no_m and not yes_m:
+        return 0
+    if yes_m and no_m:
+        return 1 if yes_m.start() < no_m.start() else 0
+    return None
+
+
+def score_plan_grounding(plan_claim: str, diff_hunk: str) -> Dict[str, int]:
+    """CDGS support. Returns {"supported": 0|1, "total": 1} on success,
+    {"supported": 0, "total": 0} on failure (caller falls back to BM25).
+
+    P5 round-2 fix: hunk truncated to ~3000 chars (mlx_lm prefill p99 budget),
+    max_tokens=8 (not 512 — single classification token + slack), stop on \n.
+    """
+    if not _backend_active():
+        return {"supported": 0, "total": 0}
+    hunk = (diff_hunk or "")[:3000]
+    claim = (plan_claim or "")[:500]
+    out = critic_call(
+        _GROUNDING_PROMPT.format(claim=claim, hunk=hunk),
+        max_tokens=8,
+    )
+    parsed = _parse_yesno(out or "")
+    if parsed is None:
+        return {"supported": 0, "total": 0}
+    return {"supported": parsed, "total": 1}
