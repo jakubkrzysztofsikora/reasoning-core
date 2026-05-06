@@ -96,10 +96,12 @@ def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, 
         _audit_emit("gen_5xx" if exc.code >= 500 else "gen_4xx", code=exc.code)
         return None
     except (urllib.error.URLError, OSError) as exc:
-        _audit_emit("gen_timeout_or_unreachable", error=str(exc))
+        # Round-3 fix (SD-H1): never log str(exc) — defense-in-depth against
+        # future redirect/URL-with-key paths leaking auth into JSONL.
+        _audit_emit("gen_timeout_or_unreachable", exc_type=type(exc).__name__)
         return None
     except ValueError as exc:
-        _audit_emit("gen_decode_error", error=str(exc))
+        _audit_emit("gen_decode_error", exc_type=type(exc).__name__)
         return None
 
 
@@ -130,35 +132,44 @@ def critic_call(prompt: str, *, model: Optional[str] = None,
 
 
 _GROUNDING_PROMPT = (
-    "You are auditing whether a plan claim is implemented by a code diff.\n"
-    "Answer the 3 rubric questions, then give a final verdict.\n\n"
+    "You audit whether a plan claim is implemented by a code diff.\n"
+    "Answer 3 rubric questions on separate lines. Each line MUST be exactly\n"
+    "'Q1: Y' or 'Q1: N' (and so on). Code computes the verdict from your\n"
+    "Y/N answers — do NOT emit a VERDICT line.\n\n"
     "PLAN CLAIM:\n{claim}\n\n"
     "DIFF HUNK:\n{hunk}\n\n"
-    "RUBRIC (answer Y or N):\n"
-    "1. Does the diff change a file or symbol that the plan claim names?\n"
-    "2. Does the diff introduce or modify behavior that matches the claim's intent\n"
-    "   (not just whitespace, comments, or unrelated edits)?\n"
-    "3. Could a reviewer reading only the diff conclude the claim is delivered?\n\n"
-    "If at least 2 of 3 are Y → VERDICT: YES. Otherwise → VERDICT: NO.\n"
-    "Respond with the rubric answers (one line each) then a final line\n"
-    "starting with 'VERDICT:' followed by exactly YES or NO. Nothing else.\n"
+    "RUBRIC:\n"
+    "Q1: Does the diff change a file or symbol that the plan claim names?\n"
+    "Q2: Does the diff introduce or modify behavior matching the claim's intent\n"
+    "    (not just whitespace, comments, or unrelated edits)?\n"
+    "Q3: Could a reviewer reading only the diff conclude the claim is delivered?\n\n"
+    "Respond with EXACTLY three lines, in order: 'Q1: Y' or 'Q1: N', then Q2,\n"
+    "then Q3. Nothing else.\n"
 )
+
+_QLINE_RE = re.compile(r"^\s*Q([123])\s*[:\-]\s*([YN])\b", re.IGNORECASE | re.MULTILINE)
 
 
 def _parse_verdict(text: str) -> Optional[int]:
-    """Parse the rubric-prompt 'VERDICT: YES|NO' line. Falls back to bare
-    YES/NO scan if no VERDICT line found (legacy prompt compat)."""
+    """Round-3 fix (LLM-sci H2 + AH H2): parse the 3 rubric Y/N answers from
+    the model output and recompute the verdict in code (≥2 of 3 = YES).
+    Ignores any model-emitted VERDICT line. Falls back to legacy bare YES/NO
+    only when zero Q-lines are detected (legacy prompt compat)."""
     if not text:
         return None
-    upper = text.strip().upper()
-    for line in upper.splitlines()[::-1]:
-        line = line.strip().lstrip("-* ").rstrip(".:,")
-        if line.startswith("VERDICT"):
-            tail = line.split(":", 1)[-1].strip() if ":" in line else line
-            if "YES" in tail and "NO" not in tail:
-                return 1
-            if "NO" in tail and "YES" not in tail:
-                return 0
+    matches = _QLINE_RE.findall(text)
+    if matches:
+        seen: Dict[str, str] = {}
+        for q, ans in matches:
+            seen.setdefault(q, ans.upper())
+        ys = sum(1 for v in seen.values() if v == "Y")
+        ns = sum(1 for v in seen.values() if v == "N")
+        if ys + ns == 0:
+            return None
+        # Need at least 2 answers to make a confident call; fewer = unparseable.
+        if ys + ns < 2:
+            return None
+        return 1 if ys >= 2 else 0
     return _parse_yesno(text)
 
 
@@ -198,7 +209,7 @@ def score_plan_grounding(plan_claim: str, diff_hunk: str) -> Dict[str, int]:
     claim = (plan_claim or "")[:500]
     out = critic_call(
         _GROUNDING_PROMPT.format(claim=claim, hunk=hunk),
-        max_tokens=128,  # rubric needs ~3 lines + verdict
+        max_tokens=64,  # 3 short Q-lines = ~30 tokens
     )
     parsed = _parse_verdict(out or "")
     if parsed is None:

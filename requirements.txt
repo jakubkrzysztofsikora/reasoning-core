@@ -26,10 +26,10 @@ tree-sitter-yaml>=0.7
 # wheel for one of these doesn't break the others.
 tree-sitter-css>=0.20
 tree-sitter-html>=0.20
-tree-sitter-vue>=0.2
 tree-sitter-dockerfile>=0.2
-# tree-sitter-scss not consistently available on PyPI for Py 3.13; loader
-# falls back gracefully. Add here if a wheel becomes available.
+# tree-sitter-vue and tree-sitter-scss are not published on PyPI as of 2026-05.
+# src/grammars.py wraps every parser import in try/except ImportError, so the
+# loader falls back gracefully for these languages. Add here if wheels appear.
 
 # --- Real Mamba SSM backbone ---
 transformers>=4.39,<5.0

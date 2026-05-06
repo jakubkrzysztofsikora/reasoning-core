@@ -45,6 +45,11 @@ try:
 except ImportError:
     _shadow_mode = None  # type: ignore
 
+try:
+    import _calibration_gate  # type: ignore
+except ImportError:
+    _calibration_gate = None  # type: ignore
+
 SIDECAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDECAR_URL}/score"
 
@@ -608,6 +613,60 @@ def main() -> None:
                         )
             except (TypeError, ValueError):
                 pass
+
+        # P7: Mahalanobis calibration gate (RC_CALIBRATION_ENABLED=1).
+        # Default OFF — wired DARK until P4 benign corpus exists. When on,
+        # scores the risk_vector through a per-kind CalibrationModel and
+        # logs the result alongside the existing per-dim signals so
+        # operators can compare both rules during the shadow window.
+        calibration_result: Optional[Dict[str, Any]] = None
+        if (
+            _calibration_gate is not None
+            and isinstance(report, dict)
+            and _calibration_gate.is_enabled()
+        ):
+            try:
+                rv = report.get("risk_vector") or []
+                fk = report.get("file_kind")
+                calibration_result = _calibration_gate.evaluate(rv, file_kind=fk)
+            except Exception:  # noqa: BLE001
+                calibration_result = None
+            if calibration_result is not None:
+                # Surface on the report so audit row + downstream consumers
+                # see calibration score next to per-dim scores.
+                report = dict(report)
+                report["calibration"] = calibration_result
+                if calibration_result.get("anomaly") and not report.get("regression_detected"):
+                    # Calibration disagrees with the per-dim rule. Treat as
+                    # advisory anomaly — enforce per existing shadow posture.
+                    if _shadow_mode is not None and _shadow_mode.is_active():
+                        shadow_hit = True
+                        audit_log.record_shadow_block(file_path)
+                        _emit_audit(
+                            tool_name=tool_name,
+                            decision="shadow_blocked",
+                            file_path=file_path,
+                            started=started,
+                            before_src=before_src,
+                            after_src=after_src,
+                            report=report,
+                            reason=(
+                                f"calibration_anomaly:score={calibration_result['score']:.2f}"
+                                f">thr={calibration_result['threshold']:.2f}"
+                                f":kind={calibration_result['kind_used']}"
+                            ),
+                            signal_source="calibration",
+                        )
+                        continue
+                    # Shadow OFF: log advisory but do NOT block (P7 dark
+                    # rollout — calibration is in a comparison window, not
+                    # an enforcement role yet).
+                    sys.stderr.write(
+                        f"[hybrid-reasoner] calibration anomaly "
+                        f"(score={calibration_result['score']:.2f} > "
+                        f"thr={calibration_result['threshold']:.2f}, "
+                        f"kind={calibration_result['kind_used']}) — advisory only\n"
+                    )
 
         if report.get("regression_detected") is True:
             # RC_SHADOW_MODE=1: log decision but DO NOT enforce. Used during

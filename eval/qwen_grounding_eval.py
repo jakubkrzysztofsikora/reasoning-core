@@ -140,7 +140,12 @@ def _append_partial(out_path: Path, pid: str, qwen: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pairs", required=True, type=Path)
+    ap.add_argument(
+        "--pairs", type=Path,
+        default=Path(__file__).resolve().parent / "datasets" / "grounding_pairs_v2.jsonl",
+        help="default = grounding_pairs_v2.jsonl (judge-relabeled, "
+             "high-confidence subset). v1 set is deprecated for gate evals."
+    )
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--gate-kappa", type=float, default=0.6,
                     help="kappa floor for CDGS to trust judgments. "

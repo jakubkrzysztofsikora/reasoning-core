@@ -66,11 +66,25 @@ def _setup_env() -> None:
     os.environ["RC_REASONER_BACKEND"] = "remote"
     os.environ["RC_GEN_URL"] = "https://api.scaleway.ai/v1/chat/completions"
     if not os.environ.get("RC_GEN_API_KEY"):
-        key = subprocess.check_output(
-            ["scw", "config", "get", "secret-key", "--profile", "circit"],
-            text=True,
-        ).strip()
-        os.environ["RC_GEN_API_KEY"] = key
+        # Round-3 fix (AH-H3): fall through to env-only auth in CI where
+        # `scw` is not installed. Operator must export RC_GEN_API_KEY or
+        # SCALEWAY_API_KEY in that case.
+        try:
+            key = subprocess.check_output(
+                ["scw", "config", "get", "secret-key", "--profile", "circit"],
+                text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+            if key:
+                os.environ["RC_GEN_API_KEY"] = key
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            scaleway = os.environ.get("SCALEWAY_API_KEY")
+            if scaleway:
+                os.environ["RC_GEN_API_KEY"] = scaleway
+            else:
+                raise SystemExit(
+                    "[relabel] no RC_GEN_API_KEY / SCALEWAY_API_KEY in env, "
+                    "and `scw` CLI not available. Set one and retry."
+                )
     os.environ["RC_GEN_MODEL"] = "devstral-2-123b-instruct-2512"
     os.environ["RC_GEN_BUDGET_MS"] = os.environ.get("RC_GEN_BUDGET_MS", "25000")
 

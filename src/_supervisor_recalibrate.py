@@ -187,9 +187,16 @@ def recalibrate_watcher(stop: threading.Event, repo_root: Path, *,
                         poll_s: Optional[float] = None,
                         mine_fn=None, score_fn=None,
                         fit_fn=None, save_fn=None) -> None:
-    """Daemon-thread loop. Wake on `stop` for prompt SIGTERM exit."""
-    interval = poll_s if poll_s is not None else _poll_seconds()
+    """Daemon-thread loop. Wake on `stop` for prompt SIGTERM exit.
+
+    Round-3 fix (SD-H2): poll interval re-read each tick from
+    RC_RECALIBRATE_POLL_S so operators can hot-tune without restart.
+    The `poll_s` kwarg, if explicitly passed, pins the interval (used by
+    tests).
+    """
+    pinned = poll_s
     while not stop.is_set():
+        interval = pinned if pinned is not None else _poll_seconds()
         try:
             _tick(repo_root, mine_fn=mine_fn, score_fn=score_fn,
                   fit_fn=fit_fn, save_fn=save_fn)
