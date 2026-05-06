@@ -114,13 +114,23 @@ _LANG_PIVOT_HINTS = {
 }
 
 
+_SUBAGENT_LANG_OVERRIDE_TOKEN = "[rc:allow-foreign-lang]"
+
+
 def _detect_language_pivot(prompt: str) -> tuple:
     """P3 Invariant 4: subagent language pivot.
 
     If the manifest declares lang X but the subagent prompt names tooling
     canonical to lang Y, return (declared, foreign_pattern_hits).
+
+    Per-prompt override: prompt contains literal sentinel
+    `[rc:allow-foreign-lang]` (operator-authored). Sentinel must not look
+    like an agent-self-introduced override — operator includes it when
+    dispatching the Task tool intentionally with cross-language work.
     """
     if os.environ.get("RC_LANG_LOCK") != "1":
+        return ("", [])
+    if _SUBAGENT_LANG_OVERRIDE_TOKEN in (prompt or ""):
         return ("", [])
     try:
         from pathlib import Path as _P

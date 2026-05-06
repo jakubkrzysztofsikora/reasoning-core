@@ -540,9 +540,15 @@ def main() -> None:
             pass
 
         # P3 Invariant 2: cumulative_drift gate. Sidecar emits the value but
-        # nothing previously gated on it. Placeholder thresholds 4.0 (warn) /
-        # 6.0 (deny) per v2 plan §P3 — recalibrated from synthetic CUSUM
-        # injections in P7. Override: RC_DRIFT_OVERRIDE=1.
+        # nothing previously gated on it.
+        #
+        # PLACEHOLDER THRESHOLDS: 4.0 (warn) / 6.0 (deny) are reviewer-tuned,
+        # NOT data-driven. P7 recalibrates from synthetic CUSUM injections at
+        # 5% type-I error rate. Until then operators flipping RC_SHADOW_MODE=0
+        # block at thresholds whose statistical meaning is undefined.
+        # See deferred tracker #19 + #21.
+        # Override: RC_DRIFT_OVERRIDE=1 (hard-denied in pre_bash_guard so
+        # agent cannot self-arm via Bash command-line prefix).
         if (
             isinstance(report, dict)
             and os.environ.get("RC_DRIFT_OVERRIDE") != "1"

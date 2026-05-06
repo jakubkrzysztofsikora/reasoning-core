@@ -333,6 +333,9 @@ def _check_framework_pivot(content: str) -> List[Dict[str, Any]]:
     If a plan declares technology specific to a different language family
     than the session manifest's declared language, surface a block warning.
     Only fires under RC_LANG_LOCK=1 + a manifest exists.
+
+    Override: # rc:skip-framework or # rc:skip-lang on first 20 lines of
+    the plan markdown.
     """
     if os.environ.get("RC_LANG_LOCK") != "1":
         return []
@@ -341,6 +344,10 @@ def _check_framework_pivot(content: str) -> List[Dict[str, Any]]:
         hooks_dir = _Path(__file__).resolve().parent
         if str(hooks_dir) not in sys.path:
             sys.path.insert(0, str(hooks_dir))
+        import _magic_comments  # type: ignore
+        directive = _magic_comments.parse(content)
+        if _magic_comments.bypasses(directive, "framework") or _magic_comments.bypasses(directive, "lang"):
+            return []
         import _session_manifest  # type: ignore
         cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
         task_spec = os.environ.get("RC_TASK_SPEC") or ""

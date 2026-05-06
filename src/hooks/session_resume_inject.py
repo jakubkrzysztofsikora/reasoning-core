@@ -21,18 +21,34 @@ if str(_HOOKS_DIR) not in sys.path:
 import _session_manifest as _sm  # type: ignore  # noqa: E402
 
 
-def _read_event_name() -> str:
-    """Hook stdin payload carries hook_event_name. Fallback to UserPromptSubmit."""
+def _read_payload() -> dict:
+    """Read full hook stdin payload once; reused for event name and session_id."""
     try:
         raw = sys.stdin.read()
         if raw:
             data = json.loads(raw)
-            evt = data.get("hook_event_name") or data.get("hookEventName")
-            if isinstance(evt, str) and evt:
-                return evt
+            if isinstance(data, dict):
+                return data
     except (ValueError, OSError):
         pass
+    return {}
+
+
+def _event_name(payload: dict) -> str:
+    evt = payload.get("hook_event_name") or payload.get("hookEventName")
+    if isinstance(evt, str) and evt:
+        return evt
     return "UserPromptSubmit"
+
+
+def _session_id_from(payload: dict) -> str:
+    """Reviewer fix: CLAUDE_SESSION_ID env is NOT exported by Claude Code.
+    The session_id lives on the stdin payload only. Fall back to env if
+    payload is empty (backwards-compat with hand-fired tests)."""
+    sid = payload.get("session_id")
+    if isinstance(sid, str) and sid:
+        return sid
+    return os.environ.get("CLAUDE_SESSION_ID") or ""
 
 
 def _emit_additional_context(blurb: str, event_name: str) -> None:
@@ -49,7 +65,8 @@ def _emit_additional_context(blurb: str, event_name: str) -> None:
 def main() -> None:
     if os.environ.get("RC_LANG_LOCK") != "1":
         sys.exit(0)
-    event_name = _read_event_name()
+    payload = _read_payload()
+    event_name = _event_name(payload)
     cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     task_spec = os.environ.get("RC_TASK_SPEC") or ""
     key = _sm.manifest_key(cwd, task_spec)
@@ -66,12 +83,11 @@ def main() -> None:
         age = time.time() - float(data.get("created_ts") or 0)
     except (TypeError, ValueError):
         age = 9999
-    # Cross-session bleed protection: only consume the anchor if it was
-    # written by the SAME session_id that's now consuming it. Otherwise
-    # the anchor leaks across `claude --resume` boundaries within the
-    # 1h TTL.
+    # Cross-session bleed protection: anchor.session_id must match the
+    # current session's session_id (read from STDIN payload, not env —
+    # Claude Code doesn't export CLAUDE_SESSION_ID).
     anchor_sid = data.get("session_id") or ""
-    cur_sid = os.environ.get("CLAUDE_SESSION_ID") or ""
+    cur_sid = _session_id_from(payload)
     if anchor_sid and cur_sid and anchor_sid != cur_sid:
         sys.exit(0)
     if not blurb or age > 3600:

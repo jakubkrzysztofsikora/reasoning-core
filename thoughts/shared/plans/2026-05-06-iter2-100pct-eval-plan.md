@@ -506,7 +506,11 @@ Tracked here so promotion gates remain honest.
 | 27 | Bash regex still misses obscure write paths (`dd of=`, `awk > path`, `install`, base64-decoded `eval`) | follow-up to P3 part-2 | P3 follow-up |
 | 28 | `rc decisions --since=1h --kind=shadow_blocked` CLI for operator visibility into shadow-mode | follow-up to P-1 CLI | P4 |
 | 29 | Manifest staleness drift across 24h refresh boundary — re-walk could legitimize agent drift | persist original declared_language as immutable | P4 |
-| 30 | Anchor blurb cross-session bleed protection requires CLAUDE_SESSION_ID env (not always set) — soft-mitigation only | upstream Claude Code env contract | P4 |
+| 30 | Anchor blurb cross-session bleed protection requires session_id from stdin payload (not env) — fixed in `465dd77`+ | none | shipped 465dd77+ |
+| 31 | `eval/calibration_corpus.py` — git-history mining of merged-stable / reverted-7d labels with amend/force-push/cross-file-revert filters | corpus from shadow window + git history sweep | P4 |
+| 32 | `eval/golden_set.py` — 50 hand-curated benign edits as zero-blocks regression gate before promotion | manual curation pass | P4 |
+| 33 | `src/hooks/_ood_detector.py` — kNN density estimator on plan embeddings; routes far-from-manifold plans to human review | embedder fitness pass + corpus | P4 |
+| 34 | `eval/shadow_mode.py` as a dedicated module file — currently RC_SHADOW_MODE is honored across hooks (`pre_edit_guard`, `pre_task_guard`) but no central module wraps the logic | refactor follow-up — function ships, file does not | P4 |
 
 Promotion criteria (already in §P4): an enforcement flip from shadow → real
 block requires (a) labeled-corpus FPR ≤ 2%, (b) zero blocks on the 50-edit

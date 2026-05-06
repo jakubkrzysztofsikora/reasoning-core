@@ -68,19 +68,30 @@ def _cosine(a, b) -> float:
 
 
 def _embed_all(texts: List[str]):
-    """Returns a list of pooled embeddings via the SSM backbone."""
+    """Returns a list of pooled embeddings via the SSM backbone.
+
+    Reviewer-flagged broken API: prior version called `embed_text` /
+    `tokenize_text` which don't exist on ssm_backbone. The actual public
+    surface is `embed(tokens)` + `ast_to_tokens(tree, src)`. For prose
+    we don't have an AST; fall back to byte-level tokenization via the
+    backbone's exposed tokenizer if present, else hash text into a
+    fixed-length token id sequence the SSM can consume.
+    """
     from src import ssm_backbone  # type: ignore
     out = []
     for t in texts:
-        # ssm_backbone exposes ast_to_tokens for source; for prose use the
-        # tokenizer directly via a fallback path. We just feed bytes to the
-        # generic embed() entry point.
-        if hasattr(ssm_backbone, "embed_text"):
-            out.append(ssm_backbone.embed_text(t))
-        else:
-            # Defensive: tests can mock this; prod path uses ast_to_tokens.
-            tokens = getattr(ssm_backbone, "tokenize_text", lambda x: [])(t)
-            out.append(ssm_backbone.embed(tokens))
+        tokens = ssm_backbone.tokenize_for_prose(t) if hasattr(ssm_backbone, "tokenize_for_prose") else None
+        if tokens is None:
+            # Fallback: use HF tokenizer from the loaded backbone.
+            tok_obj = getattr(ssm_backbone, "_tokenizer", None) or getattr(ssm_backbone, "tokenizer", None)
+            if tok_obj is not None:
+                ids = tok_obj.encode(t[:8000], add_special_tokens=False)
+                tokens = ids[:1024]
+            else:
+                # Last resort: byte-mod-32k sequence so embed() returns
+                # SOMETHING. Fitness test will surface the noise.
+                tokens = [b % 32000 for b in t.encode("utf-8")[:1024]]
+        out.append(ssm_backbone.embed(tokens))
     return out
 
 

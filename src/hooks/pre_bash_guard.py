@@ -82,6 +82,13 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"kill_switches\.json"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
+    # Reviewer-flagged: agent could prefix a Bash command with
+    # RC_DRIFT_OVERRIDE=1 to defeat Invariant 2 cumulative_drift gate.
+    # Block all *_OVERRIDE env-var settings on the command line.
+    re.compile(r"\bRC_DRIFT_OVERRIDE\s*=\s*1\b"),
+    re.compile(r"\bRC_LANG_OVERRIDE\s*=\s*1\b"),
+    re.compile(r"\bRC_ALLOW_GUARD_EDIT\s*=\s*1\b"),
+    re.compile(r"\bRC_ALLOW_SUBAGENT_GUARD_EDIT\s*=\s*1\b"),
 )
 
 # Source-write patterns: shell-level writes that target source files inside
