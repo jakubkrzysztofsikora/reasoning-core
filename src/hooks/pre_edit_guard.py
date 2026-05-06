@@ -38,6 +38,13 @@ if _HOOKS_DIR not in sys.path:
 import audit_log  # type: ignore  # noqa: E402
 from _block_format import format_block as _format_block  # type: ignore  # noqa: E402
 
+# Centralized shadow-mode helper. Falls back to None on import error so the
+# hook keeps working in degraded environments.
+try:
+    import _shadow_mode  # type: ignore
+except ImportError:
+    _shadow_mode = None  # type: ignore
+
 SIDECAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDECAR_URL}/score"
 
@@ -412,7 +419,7 @@ def main() -> None:
                 )
             )
             if mani and not lang_skip and not _session_manifest.is_path_allowed(mani, file_path):
-                shadow = os.environ.get("RC_SHADOW_MODE") == "1"
+                shadow = _shadow_mode.is_active() if _shadow_mode else False
                 decision = "shadow_blocked" if shadow else "blocked"
                 _emit_audit(
                     tool_name=tool_name,
@@ -449,7 +456,7 @@ def main() -> None:
         except SidecarUnavailable as exc:
             # SHADOW=1 honored at sidecar-unavailable too. Calibration window
             # must not produce hard-blocks on infra flake. (Reviewer #7.)
-            if _fail_closed() and os.environ.get("RC_SHADOW_MODE") != "1":
+            if _fail_closed() and not (_shadow_mode.is_active() if _shadow_mode else False):
                 _emit_audit(
                     tool_name=tool_name,
                     decision="blocked",
@@ -561,7 +568,7 @@ def main() -> None:
                     if drift > drift_deny and not isinstance(report, dict):
                         pass  # unreachable; type guard
                     if drift > drift_deny:
-                        if os.environ.get("RC_SHADOW_MODE") == "1":
+                        if _shadow_mode.is_active() if _shadow_mode else False:
                             shadow_hit = True
                             audit_log.record_shadow_block(file_path)
                             _emit_audit(
@@ -606,7 +613,7 @@ def main() -> None:
             # RC_SHADOW_MODE=1: log decision but DO NOT enforce. Used during
             # P4 calibration window so shadow-FPR can be measured before
             # promoting any P1-P3 invariant to enforcement.
-            if os.environ.get("RC_SHADOW_MODE") == "1":
+            if _shadow_mode.is_active() if _shadow_mode else False:
                 shadow_hit = True
                 # Record into shadow-marker namespace, NOT the main retry
                 # marker. Otherwise legit operator retries after a shadow

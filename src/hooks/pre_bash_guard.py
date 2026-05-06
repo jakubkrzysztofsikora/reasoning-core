@@ -82,25 +82,27 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"kill_switches\.json"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
-    # Reviewer-flagged: agent could prefix a Bash command with
-    # RC_*_OVERRIDE=<anything-truthy> to defeat the corresponding gate.
-    # Block ANY assignment to these vars regardless of value (operator
-    # uses session-boot env, not Bash command-line). Reviewer round-2:
-    # `="1"`, `=01`, `=true`, `=yes` were all slipping the strict-=1
-    # version. Now we trip on the variable name itself.
-    re.compile(r"\bRC_DRIFT_OVERRIDE\s*=\s*\S"),
-    re.compile(r"\bRC_LANG_OVERRIDE\s*=\s*\S"),
-    re.compile(r"\bRC_ALLOW_GUARD_EDIT\s*=\s*\S"),
-    re.compile(r"\bRC_ALLOW_SUBAGENT_GUARD_EDIT\s*=\s*\S"),
-    re.compile(r"\bRC_SHADOW_MODE\s*=\s*\S"),
-    re.compile(r"\bS2_FAIL_CLOSED\s*=\s*\S"),
-    re.compile(r"\bRC_LANG_LOCK\s*=\s*\S"),
-    re.compile(r"\bRC_PLAN_BLOCK\s*=\s*\S"),
-    re.compile(r"\bRC_MOCK_DETECTOR\s*=\s*\S"),
-    re.compile(r"\bRC_PLAN_QUALITY\s*=\s*\S"),
-    re.compile(r"\bRC_DRIFT_(?:DENY|WARN)\s*=\s*\S"),
-    re.compile(r"\bRC_RISK_DIM_THRESHOLD\s*=\s*\S"),
-    re.compile(r"\bRC_COHERENCE_THRESHOLD\s*=\s*\S"),
+    # Reviewer-flagged (3-reviewer convergent on commit c2cc135):
+    # bare `\bRC_*\s*=\s*\S` over-blocks heredoc bodies, doc generators,
+    # and comments containing the literal string. Anchored on COMMAND
+    # POSITION (start of cmd, after `;`/`&&`/`||`/newline, optionally
+    # preceded by `export`). The variable name alone is the trip signal —
+    # value irrelevant to the threat model.
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_DRIFT_OVERRIDE\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_LANG_OVERRIDE\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_ALLOW_GUARD_EDIT\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_ALLOW_SUBAGENT_GUARD_EDIT\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_SHADOW_MODE\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?S2_FAIL_CLOSED\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_LANG_LOCK\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_PLAN_BLOCK\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_MOCK_DETECTOR\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_PLAN_QUALITY\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_DRIFT_(?:DENY|WARN)\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_RISK_DIM_THRESHOLD\s*="),
+    re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_COHERENCE_THRESHOLD\s*="),
+    # The classic "agent prefixes a real command with override" form:
+    # `RC_X=val real_command args` — same anchor catches it.
 )
 
 # Source-write patterns: shell-level writes that target source files inside

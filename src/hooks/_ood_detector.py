@@ -60,23 +60,33 @@ def _knn_distance(plan_vec, corpus_vecs: Iterable, k: int = 3) -> float:
     return 1.0 - mean_sim
 
 
-def is_ood(plan_text: str, repo_root: Optional[Path] = None, k: int = 3, threshold: float = 0.40) -> bool:
-    """True if plan is far from the manifold of approved plans.
+def _corpus_cache_path(repo_root: Path) -> Path:
+    """Disk-persistent corpus cache. Survives per-hook process restarts."""
+    import hashlib
+    digest = hashlib.sha1(str(repo_root).encode("utf-8")).hexdigest()[:12]
+    return Path.home() / ".local" / "state" / "reasoning-core" / f"ood_corpus.{digest}.npz"
 
-    Threshold is a v0 placeholder — recalibrated in P7 once labeled corpus
-    accumulates. Returning True doesn't block; consumer routes to human.
+
+def _build_or_load_corpus(repo_root: Path, approved: list):
+    """Load corpus_vecs from cache if fresh, else embed once + persist.
+
+    Reviewer-flagged: prior code embedded all approved plans on every
+    is_ood() call → O(N) SSM forwards per hook fire (~150-250s on 50-plan
+    corpus). Hot path now reads cache; (re)build only when plan-corpus
+    mtime advances past the cache mtime.
     """
-    if not plan_text:
-        return False
-    if repo_root is None:
-        repo_root = Path.cwd()
-    approved = _list_approved_plans(repo_root)
-    if len(approved) < 5:
-        # Insufficient corpus for kNN; abstain.
-        return False
-    plan_vec = _embed_text(plan_text)
-    if plan_vec is None:
-        return False
+    cache = _corpus_cache_path(repo_root)
+    try:
+        if cache.exists():
+            cache_mtime = cache.stat().st_mtime
+            stale = any(p.stat().st_mtime > cache_mtime for p in approved)
+            if not stale:
+                import numpy as np
+                data = np.load(cache, allow_pickle=False)
+                return [data[k] for k in data.files]
+    except (OSError, Exception):  # noqa: BLE001
+        pass
+    # Rebuild
     corpus_vecs = []
     for p in approved:
         try:
@@ -85,5 +95,34 @@ def is_ood(plan_text: str, repo_root: Optional[Path] = None, k: int = 3, thresho
                 corpus_vecs.append(v)
         except OSError:
             continue
+    try:
+        import numpy as np
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        # Convert torch tensors to numpy for npz
+        np.savez(cache, *[v.detach().cpu().numpy() if hasattr(v, "detach") else v for v in corpus_vecs])
+    except Exception:  # noqa: BLE001
+        pass
+    return corpus_vecs
+
+
+def is_ood(plan_text: str, repo_root: Optional[Path] = None, k: int = 3, threshold: float = 0.40) -> bool:
+    """True if plan is far from the manifold of approved plans.
+
+    Threshold is a v0 placeholder — recalibrated in P7 once labeled corpus
+    accumulates. Returning True doesn't block; consumer routes to human.
+    Disk-cache for corpus embeddings prevents O(N) SSM forwards on every
+    call.
+    """
+    if not plan_text:
+        return False
+    if repo_root is None:
+        repo_root = Path.cwd()
+    approved = _list_approved_plans(repo_root)
+    if len(approved) < 5:
+        return False
+    plan_vec = _embed_text(plan_text)
+    if plan_vec is None:
+        return False
+    corpus_vecs = _build_or_load_corpus(repo_root, approved)
     dist = _knn_distance(plan_vec, corpus_vecs, k=k)
     return dist > threshold

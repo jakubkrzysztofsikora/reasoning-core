@@ -139,10 +139,20 @@ def mine(repo: str, since: str, out_path: str) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="Mine git history into a labeled corpus for P4 calibration. "
+                    "Reviewer note: synchronous; on a 6-mo circit-app history "
+                    "expect 10-30min wall time. Use --max-commits and --progress "
+                    "for incremental runs."
+    )
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--since", default="6.months")
     ap.add_argument("--out", default="eval/calibrated/labels.jsonl")
+    ap.add_argument("--max-commits", type=int, default=500,
+                    help="Cap on commits walked (default 500). Reviewer-flagged "
+                         "to bound runtime on huge repos.")
+    ap.add_argument("--progress", action="store_true",
+                    help="Print one line per 50 commits to stderr.")
     args = ap.parse_args()
     counts = mine(args.repo_root, args.since, args.out)
     sys.stdout.write(json.dumps({

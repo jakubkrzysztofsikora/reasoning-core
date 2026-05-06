@@ -281,6 +281,28 @@ def _check_novelty(content: str, project_dir: str) -> List[Dict[str, Any]]:
     return []
 
 
+def _check_ood(content: str) -> List[Dict[str, Any]]:
+    """P4 OOD plan detector. Advisory only — never blocks; flags for human."""
+    if os.environ.get("RC_PLAN_QUALITY") != "1":
+        return []
+    try:
+        from pathlib import Path as _Path
+        hooks_dir = _Path(__file__).resolve().parent
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        import _ood_detector  # type: ignore
+        repo_root = _Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+        if _ood_detector.is_ood(content, repo_root):
+            return [{
+                "rule_id": "ood_plan",
+                "severity": "warn",
+                "message": "Plan is far from the manifold of approved plans; recommended for human review.",
+            }]
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
 def _check_specificity(content: str) -> List[Dict[str, Any]]:
     """P2 plan-quality: composite gate score over heuristic specificity signals.
 
@@ -382,6 +404,7 @@ def _gather_warnings(content: str, project_dir: str) -> List[Dict[str, Any]]:
     warnings.extend(_check_novelty(content, project_dir))
     warnings.extend(_check_specificity(content))
     warnings.extend(_check_framework_pivot(content))
+    warnings.extend(_check_ood(content))
     return warnings
 
 
@@ -433,8 +456,21 @@ def main() -> None:
 
     # Decide exit code first; audit always runs.
     block_env = os.environ.get("RC_PLAN_BLOCK", "0") == "1"
-    will_block = block_env and has_warn
-    decision = "blocked" if will_block else ("degraded" if warnings else "allowed")
+    # P3-fix: honor RC_SHADOW_MODE — auditor-flagged that pre_plan_guard
+    # ignored shadow flag entirely, breaking §P4 success criterion.
+    try:
+        from pathlib import Path as _P
+        hooks_dir = _P(__file__).resolve().parent
+        if str(hooks_dir) not in sys.path:
+            sys.path.insert(0, str(hooks_dir))
+        import _shadow_mode  # type: ignore
+        shadow_active = _shadow_mode.is_active()
+    except Exception:  # noqa: BLE001
+        shadow_active = os.environ.get("RC_SHADOW_MODE") == "1"
+    will_block = block_env and has_warn and not shadow_active
+    decision = "shadow_blocked" if (block_env and has_warn and shadow_active) else (
+        "blocked" if will_block else ("degraded" if warnings else "allowed")
+    )
 
     audit_log.append_event(audit_log.new_event(
         tool_name=TOOL_NAME,

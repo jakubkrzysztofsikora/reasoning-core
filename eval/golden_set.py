@@ -43,11 +43,23 @@ def load(path: Path = GOLDEN_SET_PATH) -> list:
 def replay_against_sidecar(rows: Iterable[dict], sidecar_url: str = "http://127.0.0.1:8765") -> dict:
     """POST each row to sidecar /score; tally blocks vs allowed.
 
-    Returns {"total": N, "blocked": K, "allowed": M, "errors": E}.
-    Promotion gate requires blocked == 0.
+    Returns {"total": N, "blocked": K, "allowed": M, "errors": E,
+             "sidecar_reachable": bool}.
+    Promotion gate requires blocked == 0 AND errors == 0 AND sidecar_reachable.
+    Reviewer-flagged: a sidecar-down replay used to silently pass — every
+    row errored, blocked stayed 0, gate vacuously green.
     """
     import urllib.request
-    counts = {"total": 0, "blocked": 0, "allowed": 0, "errors": 0}
+    import urllib.error
+    counts = {"total": 0, "blocked": 0, "allowed": 0, "errors": 0,
+              "sidecar_reachable": False}
+    # Pre-flight health check; abort if sidecar is unreachable.
+    try:
+        with urllib.request.urlopen(f"{sidecar_url}/health", timeout=5) as resp:
+            if resp.status == 200:
+                counts["sidecar_reachable"] = True
+    except (urllib.error.URLError, OSError):
+        return counts
     for row in rows:
         counts["total"] += 1
         body = json.dumps({
