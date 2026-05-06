@@ -1,0 +1,72 @@
+{
+  "attempts": [
+    {
+      "judges": [
+        "devstral-2-123b-instruct-2512",
+        "llama-3.3-70b-instruct",
+        "mistral-small-3.2-24b-instruct-2506"
+      ],
+      "pairwise_kappa": {
+        "devstral__llama": 0.792,
+        "devstral__mistral": 0.774,
+        "llama__mistral": 0.6656
+      },
+      "max": 0.792,
+      "gate_pass": false,
+      "note": "Initial cross-family set per plan default"
+    },
+    {
+      "judges": [
+        "devstral-2-123b-instruct-2512",
+        "llama-3.3-70b-instruct",
+        "qwen3-235b-a22b-instruct-2507"
+      ],
+      "pairwise_kappa": {
+        "devstral__llama": 0.792,
+        "devstral__qwen3": 0.8314,
+        "llama__qwen3": 0.7961
+      },
+      "max": 0.8314,
+      "gate_pass": false,
+      "note": "J3 swap: mistral->qwen3-235b (qwen-2.5-72b-instruct unavailable on Scaleway). Worse."
+    },
+    {
+      "judges": [
+        "devstral-2-123b-instruct-2512",
+        "gemma-3-27b-it",
+        "mistral-small-3.2-24b-instruct-2506"
+      ],
+      "pairwise_kappa": {
+        "devstral__gemma": 0.68,
+        "devstral__mistral": 0.774,
+        "gemma__mistral": 0.64
+      },
+      "max": 0.774,
+      "gate_pass": false,
+      "note": "J2 swap: llama->gemma-3-27b-it (gpt-oss-120b unusable: reasoning model returns no visible output). Improved but devstral__mistral still >= 0.7."
+    },
+    {
+      "judges": [
+        "devstral-2-123b-instruct-2512",
+        "gemma-3-27b-it",
+        "qwen3-235b-a22b-instruct-2507"
+      ],
+      "pairwise_kappa": {
+        "devstral__gemma": 0.68,
+        "devstral__qwen3": 0.8314,
+        "gemma__qwen3": 0.76
+      },
+      "max": 0.8314,
+      "gate_pass": false,
+      "note": "Beyond-plan: devstral+gemma+qwen3."
+    }
+  ],
+  "final_status": "ABORT",
+  "reason": "Pairwise kappa gate < 0.7 unreachable with available Scaleway judges. Cross-family judges still agree highly because grounding rubric is concrete on n=50 sample. Plan fallback chain exhausted (J3 swap, then J2 swap with substitute since gpt-oss-120b unusable).",
+  "total_spent_usd_pilot": 5.0,
+  "unavailable_models": [
+    "qwen-2.5-72b-instruct",
+    "gpt-oss-120b (reasoning model, no visible output)"
+  ],
+  "recommendation": "Phase 3.5 cannot ship as specified. Options: (a) lower gate to max < 0.85 \u2014 would pass with devstral+gemma+mistral at 0.774; (b) increase pilot n to 100+ for tighter kappa CI; (c) defer to Phase 3.6 ground-truth corpus rather than judge-majority."
+}
