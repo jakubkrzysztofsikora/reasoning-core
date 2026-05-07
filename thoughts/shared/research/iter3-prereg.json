@@ -38,7 +38,7 @@
     "threshold_sensitivity_grid_defined": true,
     "all_self_integrity_shas_pinned": true,
     "iter4_h_codebase_locked": false,
-    "validate_prereg_cli_implemented": false,
+    "validate_prereg_cli_implemented": true,
     "phase_1_judge_set_validated": false
   },
 
