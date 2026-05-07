@@ -1,0 +1,142 @@
+{
+  "_setup_id": "B",
+  "_note": "Setup B — reasoning-core active. Iter-2 formalization. Hook commands resolve via $RC_REPO so this file is portable across machines; the spawner exports RC_REPO=/Users/jakubsikora/Repos/personal/reasoning-core (or whatever is current).",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(dotnet:*)",
+      "Bash(npx cypress:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)"
+    ],
+    "deny": [
+      "Bash(rm:-rf:*)",
+      "Bash(sudo:*)",
+      "Bash(curl:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/pre_plan_guard.py",
+            "timeout": 15000
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/pre_edit_guard.py",
+            "timeout": 60000
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/pre_bash_guard.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/pre_task_guard.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/post_bash_revive.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/post_batch_lang_audit.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/session_start_manifest.py",
+            "timeout": 30000
+          },
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/session_resume_inject.py",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/session_start_best_effort.py",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/pre_compact_guard.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/session_resume_inject.py",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "hybrid-reasoner": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-m", "src.mcp_reasoner"],
+      "cwd": "${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}"
+    }
+  }
+}

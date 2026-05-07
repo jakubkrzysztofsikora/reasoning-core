@@ -36,20 +36,22 @@ def _run(env_extra: dict | None = None) -> subprocess.CompletedProcess:
     )
 
 
-def test_unset_emits_nothing():
+def test_unset_emits_no_envelope_to_stdout():
+    """Env unset → no stdout envelope. Audit receipt is still written
+    (decision=skipped) so a reviewer can prove the hook ran but did not fire."""
     r = _run()
     assert r.returncode == 0
     assert r.stdout == ""
     assert r.stderr == ""
 
 
-def test_zero_emits_nothing():
+def test_zero_emits_no_envelope():
     r = _run({"RC_BEST_EFFORT_SPEC": "0"})
     assert r.returncode == 0
     assert r.stdout == ""
 
 
-def test_empty_emits_nothing():
+def test_empty_emits_no_envelope():
     r = _run({"RC_BEST_EFFORT_SPEC": ""})
     assert r.returncode == 0
     assert r.stdout == ""
@@ -76,3 +78,61 @@ def test_additional_context_matches_module_constant():
     r = _run({"RC_BEST_EFFORT_SPEC": "1"})
     payload = json.loads(r.stdout)
     assert payload["hookSpecificOutput"]["additionalContext"] == ssbe._OVERLAY
+
+
+def test_audit_receipt_on_fire(tmp_path):
+    """Reviewer-mandated symmetric receipt: when RC_BEST_EFFORT_SPEC=1, hook
+    writes an audit-log line with decision=injected, signal_source=best_effort_spec,
+    overlay_sha set. Lets a reviewer prove the lever fired from artifacts alone.
+
+    Uses RC_AUDIT_ROOT to redirect the audit log into tmp_path.
+    """
+    audit_root = tmp_path / "audit"
+    r = _run({
+        "RC_BEST_EFFORT_SPEC": "1",
+        "RC_AUDIT_ROOT": str(audit_root),
+    })
+    assert r.returncode == 0
+    # Find the JSONL the hook wrote.
+    jsonl_files = list(audit_root.rglob("*.jsonl"))
+    assert jsonl_files, f"no audit JSONL written under {audit_root}"
+    rows = []
+    for f in jsonl_files:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+    receipts = [r for r in rows if r.get("signal_source") == "best_effort_spec"]
+    assert len(receipts) == 1, f"expected 1 receipt, got {len(receipts)}: {receipts}"
+    rec = receipts[0]
+    assert rec["decision"] == "injected"
+    assert rec["tool_name"] == "SessionStart"
+    assert rec.get("overlay_sha"), "overlay_sha must be set on fire path"
+    assert "rc_best_effort_spec=1" in rec.get("reason", "")
+
+
+def test_audit_receipt_on_skip(tmp_path):
+    """Symmetric receipt on the skip path: when env unset/=0, hook still
+    writes a decision=skipped audit line so reviewer can prove the hook
+    ran (vs. unregistered) and the lever was NOT active."""
+    audit_root = tmp_path / "audit"
+    r = _run({
+        "RC_BEST_EFFORT_SPEC": "0",
+        "RC_AUDIT_ROOT": str(audit_root),
+    })
+    assert r.returncode == 0
+    jsonl_files = list(audit_root.rglob("*.jsonl"))
+    assert jsonl_files, "skip path must still emit audit receipt"
+    rows = []
+    for f in jsonl_files:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    receipts = [r for r in rows if r.get("signal_source") == "best_effort_spec"]
+    assert len(receipts) == 1
+    rec = receipts[0]
+    assert rec["decision"] == "skipped"
+    assert rec.get("overlay_sha") is None, "overlay_sha must be null on skip"
+    assert "rc_best_effort_spec=0" in rec.get("reason", "")

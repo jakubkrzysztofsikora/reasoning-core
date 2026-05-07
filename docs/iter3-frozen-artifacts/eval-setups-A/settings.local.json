@@ -1,0 +1,4 @@
+{
+  "_setup_id": "A",
+  "_note": "Setup A — vanilla Claude Code. Empty overlay so the agent inherits the user-level ~/.claude/settings.json (global plugins, skills, MCP servers, hooks) and the repo's project-level .claude/settings.json without any setup-specific override. Underscored fields are ignored by Claude Code."
+}

@@ -1,0 +1,44 @@
+{
+  "iteration": 3,
+  "frozen_at_reasoning_core_sha": "9f87316",
+  "frozen_at_iso": "2026-05-07",
+  "purpose": "Pinning expected SHA-256 hashes of eval-setup files outside this repo so an external reviewer can verify the iter-3 symmetry guarantee (Setup A unchanged) and Setup B configuration without trusting author word.",
+  "verification_note": "/Users/jakubsikora/eval-setups/ is not a git repository, so SHA pinning by git revision is unavailable. This manifest captures sha256sum of each file at iter-3 freeze; reviewer reproduces by `shasum -a 256 <path>` and comparing.",
+  "setup_a": {
+    "_envrc_path": "/Users/jakubsikora/eval-setups/A/.envrc",
+    "_envrc_sha256": "216ff754edf7ebdf3c9bb4c769dc7210a62c2694a1a5022e3f3fcbddcef36e5c",
+    "settings_local_json_path": "/Users/jakubsikora/eval-setups/A/settings.local.json",
+    "settings_local_json_sha256": "0aa3999ceca4f8ee32b666937f11d922be2270617ddef685fa8780735cc4b10d",
+    "iter2_v3_inheritance_claim": "These SHAs match the iter-2 v3 frozen manifest. Setup A has received zero changes from the reasoning-core side."
+  },
+  "setup_b": {
+    "_envrc_path": "/Users/jakubsikora/eval-setups/B/.envrc",
+    "_envrc_sha256": "c5e0fceaa02873f77fe56a8aaa7c5f9e0d3001ae04831b9ec635962aa329e5ca",
+    "settings_local_json_path": "/Users/jakubsikora/eval-setups/B/settings.local.json",
+    "settings_local_json_sha256": "bfbc985dd03fa7268a8f55f4c0a5c61a2be23867be8d47159f1a43d43c409086",
+    "iter3_levers_enabled": ["RC_BEST_EFFORT_SPEC=1", "RC_PLAN_GROUNDING=1"]
+  },
+  "reasoning_core_lever_code_shas": {
+    "src/hooks/_plan_paths.py": "df1043b8b3b8bc0ead972684fd34c02f8148fa1c1ec98f3e5fa867ca7d144cb7",
+    "src/hooks/session_start_best_effort.py": "812c72435b0b5b2263f09326105a8845600820f0abcc2da20ef69b18cbd12d5a",
+    "src/hooks/_dispatch.py": "fb88cd561dd326ccd64e3e6f15672d5e0860a96d712c824214ebd50bd3cd5f1f"
+  },
+  "frozen_file_artifacts": {
+    "purpose": "Newsletter v4 review: hashes alone don't help reviewers without filesystem access to /Users/jakubsikora/eval-setups/. Embed the actual file bytes in this repo so the symmetry guarantee is verifiable from a clone alone.",
+    "directory": "docs/iter3-frozen-artifacts/",
+    "contents": [
+      "eval-setups-A/envrc.txt (mirror of /Users/jakubsikora/eval-setups/A/.envrc)",
+      "eval-setups-A/settings.local.json (mirror of /Users/jakubsikora/eval-setups/A/settings.local.json)",
+      "eval-setups-B/envrc.txt (mirror of /Users/jakubsikora/eval-setups/B/.envrc)",
+      "eval-setups-B/settings.local.json (mirror of /Users/jakubsikora/eval-setups/B/settings.local.json)"
+    ],
+    "verification": "shasum -a 256 docs/iter3-frozen-artifacts/eval-setups-A/envrc.txt MUST match setup_a._envrc_sha256 above. Same for setup_b and the .json files. Note: envrc.txt is the suffixed copy (direnv .envrc files start with `.` and are sometimes filtered)."
+  },
+  "reviewer_verification_steps": [
+    "1. Setup A unchanged: `shasum -a 256 /Users/jakubsikora/eval-setups/A/.envrc` MUST match setup_a._envrc_sha256 above.",
+    "2. Setup B intent: `shasum -a 256 /Users/jakubsikora/eval-setups/B/.envrc` MUST match setup_b._envrc_sha256 above.",
+    "3. Setup B hook registered: `grep -c session_start_best_effort /Users/jakubsikora/eval-setups/B/settings.local.json` MUST equal 1.",
+    "4. Lever fired per-run: `jq 'select(.signal_source==\"best_effort_spec\" and .decision==\"injected\")' ~/.local/share/reasoning-core/events/<DATE>/*.jsonl | wc -l` MUST equal the run count for sessions in Setup B during the eval window.",
+    "5. Lever NOT fired on A: same `jq` filter against Setup A sessions MUST yield 0 OR yield only `decision=\"skipped\"` receipts (proving the hook ran but the env var was off)."
+  ]
+}

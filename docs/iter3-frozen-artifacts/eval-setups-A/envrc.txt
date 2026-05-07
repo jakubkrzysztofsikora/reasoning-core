@@ -1,0 +1,11 @@
+# Setup A — vanilla Claude Code
+#
+# This file is intentionally a no-op. Setup A runs Claude Code with no
+# per-setup environment overrides; the agent inherits the user shell's
+# environment + the global ~/.claude/settings.json + repo-level
+# .claude/settings.json + global ~/.claude/CLAUDE.md as-is.
+#
+# The spawner still copies this file into the worktree and runs `direnv exec`,
+# which simply contributes nothing extra to the environment when this file
+# only declares EVAL_SETUP_ID.
+export EVAL_SETUP_ID="A"

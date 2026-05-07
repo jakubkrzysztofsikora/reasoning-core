@@ -1,6 +1,52 @@
 # Iter-3 Levers
 
-> **Symmetry guarantee.** All three levers default OFF. Setup A receives **zero** changes from the reasoning-core side in iter-3 — its `.envrc` and `settings.local.json` are bit-identical to iter-2 v3. Setup B receives the levers only if the eval team enables them in their own `eval-setups/B/`. Reasoning-core ships levers; the eval team turns them on. This separation dissolves the iter-2 v1 "B hand-engineered for the eval" framing.
+> **Symmetry guarantee.** All three levers default OFF in `reasoning-core/.envrc`. Setup A's exported environment is bit-identical to iter-2 v3 — the iter-3 lever vars resolve to `0` (no overlay, no gate). Only Setup B opts in by exporting `=1` in its own `eval-setups/B/.envrc`. Reasoning-core ships levers; the eval team turns them on.
+
+**Reviewer SHA-pin verification.** `/Users/jakubsikora/eval-setups/` is not a git repository, so SHA pinning by git revision is not available. Iter-3 freeze captures expected SHAs in [`docs/iter3-frozen-manifest.json`](iter3-frozen-manifest.json) (this repo). Reviewer reproduces via:
+
+```bash
+# 1. Setup A unchanged from iter-2 v3 (symmetry guarantee).
+shasum -a 256 /Users/jakubsikora/eval-setups/A/.envrc
+shasum -a 256 /Users/jakubsikora/eval-setups/A/settings.local.json
+# Both MUST match docs/iter3-frozen-manifest.json setup_a.*_sha256.
+
+# 2. Setup B hook actually registered (catches env-var theatre).
+grep -c session_start_best_effort /Users/jakubsikora/eval-setups/B/settings.local.json
+# MUST equal 1.
+```
+
+**Audit-log verification** (run after iter-3 sweep collects).
+
+Audit-log location depends on whether `RC_AUDIT_ROOT` is set:
+
+- **Default path** (no override, hook fires from a normal Claude Code session):
+  `~/.local/share/reasoning-core/events/<DATE>/<session_id>.jsonl`
+- **Eval-team-redirected path** (eval framework typically redirects per-run for isolation):
+  `$RC_AUDIT_ROOT/<DATE>/<session_id>.jsonl` where `RC_AUDIT_ROOT` is set per run by the eval spawner. Common pattern: `RC_AUDIT_ROOT=<eval-folder>/runs/<setup>/<task>/run-<N>/audit/`.
+
+A reviewer must check **both** locations OR have the eval team document which root was used. Iter-3 freeze recommendation: eval team adds `audit_root_per_run` to its frozen manifest so reviewers know exactly where to look.
+
+```bash
+# Aggregate over BOTH default and any RC_AUDIT_ROOT-redirected location.
+# Substitute <DATE> with the iter-3 sweep date(s); substitute <RC_AUDIT_ROOT>
+# with the eval team's per-run root if they overrode it.
+
+DEFAULT_ROOT="$HOME/.local/share/reasoning-core/events"
+EVAL_ROOTS="<RC_AUDIT_ROOT_GLOB_PATTERN>"  # e.g. /path/to/iter3-eval/runs/B/*/run-*/audit/
+
+# Setup B sessions: must contain best_effort_spec receipts with decision=injected.
+jq -r 'select(.signal_source=="best_effort_spec" and .decision=="injected") | .session_id' \
+   "$DEFAULT_ROOT"/<DATE>/*.jsonl $EVAL_ROOTS/<DATE>/*.jsonl 2>/dev/null \
+   | sort -u | wc -l
+# MUST equal the count of distinct Setup B sessions in the iter-3 window.
+
+# Setup A sessions: must yield ZERO injected receipts. Will have decision="skipped"
+# receipts IF the hook is also registered for Setup A (recommended for falsifiability
+# — see iter-4 ablation #4 below).
+jq -r 'select(.signal_source=="best_effort_spec" and .decision=="injected") | .session_id' \
+   <Setup-A-audit-paths> 2>/dev/null | sort -u | wc -l
+# MUST be 0.
+```
 
 Reasoning-core ships three default-off levers in iter-3. The eval team independently decides whether to enable them via their own `eval-setups/B/.envrc` and `settings.local.json`.
 

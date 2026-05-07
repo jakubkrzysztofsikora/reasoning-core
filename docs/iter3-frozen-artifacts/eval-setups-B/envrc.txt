@@ -1,0 +1,151 @@
+# Setup B — reasoning-core active
+# Loaded by direnv when the eval spawner enters the worktree.
+#
+# Iter-1 established that reasoning-core hooks fire during eval runs via
+# inherited settings (repo-level .claude/settings.json + user-level
+# settings). Iter-2 formalizes Setup B as a reproducible, version-controlled
+# definition; the spawner reads this file as the canonical env source.
+
+export EVAL_SETUP_ID="B"
+
+# Reasoning-core repo path. Used by every hook command in
+# settings.local.json (which references ${RC_REPO:-...} 11 times). The
+# spawner is documented as exporting this; export it here too as a belt
+# so direnv-only sessions (no spawner) still resolve hook paths
+# correctly. Falls back to the canonical author-machine path; override
+# in .envrc.local on other machines.
+export RC_REPO="${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}"
+
+# --- Sidecar tuning ---
+export S2_DEVICE="${S2_DEVICE:-cpu}"
+export S2_TIMEOUT=60
+export S2_FAIL_CLOSED=1
+export S2_PORT=8765
+export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
+
+# --- Cato VPN TLS interception ---
+# Cato Networks injects its own root CA; build certifi+Cato bundle once and
+# point urllib3 / requests / transformers / curl at it.
+_RC_CA_BUNDLE="$HOME/.cache/reasoning-core/ca-bundle.pem"
+if [[ ! -s "$_RC_CA_BUNDLE" ]] && command -v security >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$_RC_CA_BUNDLE")"
+  _RC_CERTIFI="$(python3 -c 'import certifi; print(certifi.where())' 2>/dev/null)"
+  if [[ -f "$_RC_CERTIFI" ]]; then
+    cat "$_RC_CERTIFI" > "$_RC_CA_BUNDLE"
+    security find-certificate -a -p -c "Cato Networks" /Library/Keychains/System.keychain >> "$_RC_CA_BUNDLE" 2>/dev/null || true
+  fi
+fi
+if [[ -s "$_RC_CA_BUNDLE" ]]; then
+  export SSL_CERT_FILE="$_RC_CA_BUNDLE"
+  export REQUESTS_CA_BUNDLE="$_RC_CA_BUNDLE"
+  export CURL_CA_BUNDLE="$_RC_CA_BUNDLE"
+fi
+unset _RC_CA_BUNDLE _RC_CERTIFI
+
+# --- Hook policy posture ---
+export RC_PLAN_BLOCK=1
+
+# --- Iter-2 feature flags ---
+# Setup B runs MEASUREMENT mode: shadow-mode OFF (decisions enforced) so the
+# eval pipeline can attribute outcomes to the gate.
+export RC_MOCK_DETECTOR=1
+export RC_PLAN_QUALITY=1
+export RC_LANG_LOCK=1
+export RC_SHADOW_MODE=0   # ENFORCED for Setup B (default operator posture is shadow=1)
+# Polyglot escape hatch (round-2 P3 hot-fix): circit-app is bimodal C# backend
+# + TS frontend. detect_initial_language picks the dominant family (csharp,
+# 5884 .cs vs 1884 .ts) and the strict gate then rejects every .cy.ts write.
+# RC_LANG_ALLOW lets through frontend extensions while keeping the lock active
+# for unrelated languages (.py, .rb, .go, etc.). Full multi-language fix
+# (Option B) lands in iter-3.
+export RC_LANG_ALLOW=".ts,.tsx,.js,.jsx,.mjs,.vue,.cy.ts,.spec.ts,.css,.scss,.html"
+
+# --- Generative critic backend (P5) — ALL NEW FEATURES ENABLED ---
+# Setup B exercises the FULL framework surface: structural sidecar (mlx) +
+# Scaleway-hosted generative critic for CDGS plan-vs-diff grounding. The v3
+# cross-family kappa gate landed at 0.80 (sentinel eval/runs/qwen_kappa_gate.json
+# gate_pass: true), so CDGS trusts Qwen judgments cleanly.
+export RC_REASONER_BACKEND="remote"
+export RC_GEN_BUDGET_MS=15000   # bump from 2500ms — Scaleway p99 needs headroom
+export RC_GEN_URL="https://api.scaleway.ai/v1/chat/completions"
+export RC_GEN_MODEL="qwen3-coder-30b-a3b-instruct"
+# Lazy-load the API key only when scw is available (CI Linux skips it).
+# Symmetric unset (engineer v4 review): if scw is absent OR returns empty,
+# explicitly clear RC_GEN_API_KEY so a stale rotated/revoked key from a
+# prior load cannot persist. Mirrors the ANTHROPIC_AUTH_TOKEN pattern in
+# reasoning-core/.envrc.
+if command -v scw >/dev/null 2>&1; then
+  RC_GEN_API_KEY_VAL="$(scw config get secret-key --profile circit 2>/dev/null)"
+  if [[ -n "$RC_GEN_API_KEY_VAL" ]]; then
+    export RC_GEN_API_KEY="$RC_GEN_API_KEY_VAL"
+  else
+    unset RC_GEN_API_KEY
+  fi
+  unset RC_GEN_API_KEY_VAL
+else
+  unset RC_GEN_API_KEY
+fi
+
+# --- Calibration (P7) — ENABLED ---
+# Mahalanobis gate is wired in pre_edit_guard via _calibration_gate.py
+# (round-3 b7f0517). Falls open silently with warn-once if calibration.json
+# is missing — safe to enable before Phase 3.5 corpus is fitted.
+export RC_CALIBRATION_ENABLED=1
+export RC_RECALIBRATE_POLL_S="${RC_RECALIBRATE_POLL_S:-60}"
+export RC_BROKER_PORT="${RC_BROKER_PORT:-8764}"
+
+# --- Polyglot lang-lock — defense-in-depth (round-2 P3 03e5526) ---
+# Multi-language detect_initial_language now returns ['csharp','javascript']
+# on circit-app, so RC_LANG_ALLOW above is the primary mechanism. This env
+# adds a top-level subtree exemption as a safety net for any subdir whose
+# language doesn't match the polyglot manifest.
+export RC_LANG_LOCK_PATH_EXEMPT="Circit.Frontend/,Circit.Website/wwwroot/,docs/,DevTooling/"
+
+# --- Iter-3 levers — ENABLED for measurement (see docs/iter3-levers.md) ---
+# Three levers shipped in reasoning-core iter-3 phases 1-5 (commits
+# 73eb55a, c397141, c419a88, c11d9ac, 214a258). Setup B is the
+# measurement target — enable both. Setup A receives ZERO changes from
+# the reasoning-core side (symmetry guarantee per docs/iter3-levers.md).
+#
+# RC_BEST_EFFORT_SPEC=1: SessionStart-hook overlay injects the minimal
+# license-removal sentence ("Never ship a DIVERGENCES.md alone.") into
+# the agent's system context. Single-factor for iter-4 attribution: the
+# substitution recipe is NOT in this overlay — recipe variant deferred
+# to iter-4 under a separate env var (RC_BEST_EFFORT_RECIPE).
+export RC_BEST_EFFORT_SPEC=1
+#
+# IMPORTANT: enabling RC_BEST_EFFORT_SPEC requires registering the hook
+# in this folder's settings.local.json under hooks.SessionStart:
+#   {
+#     "hooks": [
+#       {
+#         "type": "command",
+#         "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/session_start_best_effort.py",
+#         "timeout": 10000
+#       }
+#     ]
+#   }
+#
+# RC_PLAN_GROUNDING=1: warn-only plan-impl drift signal. When the agent
+# edits a file not referenced in the run's PLAN.md, pre_edit_guard emits
+# a stderr advisory + audit event tagged signal_source=plan_grounding
+# decision=warn. NOT visible to the agent (audit-only) — neutralizes the
+# path-stuffing reward-hacking failure mode that v1 of the plan suffered
+# from. =2 escalates to hard block; iter-3 ships =1 only.
+export RC_PLAN_GROUNDING=1
+
+# --- Iter-3 lever self-check (newsletter v4 review) ---
+# Catch env-var theatre: lever set to 1 but corresponding hook never
+# registered in this folder's settings.local.json. WARN loudly at direnv
+# load so an operator notices BEFORE running the eval.
+_RC_SETTINGS_FILE="$(dirname "${BASH_SOURCE[0]}")/settings.local.json"
+if [[ "$RC_BEST_EFFORT_SPEC" == "1" ]] && [[ -f "$_RC_SETTINGS_FILE" ]]; then
+  # Tighter pattern (engineer round-3 review): match the actual hook command
+  # entry shape, not just the substring — avoids false-positives on filenames
+  # like `session_start_best_effort_disabled.py` or a JSON `_note` key that
+  # happens to contain the substring.
+  if ! grep -qE '"command"[^"]*"[^"]*session_start_best_effort\.py"' "$_RC_SETTINGS_FILE" 2>/dev/null; then
+    echo "[direnv] WARN: RC_BEST_EFFORT_SPEC=1 but session_start_best_effort.py not registered as a hook command in $_RC_SETTINGS_FILE — lever is INERT"
+  fi
+fi
+unset _RC_SETTINGS_FILE

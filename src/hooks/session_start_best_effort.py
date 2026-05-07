@@ -32,6 +32,7 @@ injection in this repo.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -47,7 +48,12 @@ _OVERLAY = (
 )
 
 
-def _emit() -> None:
+def _overlay_sha() -> str:
+    """Stable hash of the overlay text — pinnable in audit receipts."""
+    return hashlib.sha256(_OVERLAY.encode("utf-8")).hexdigest()[:12]
+
+
+def _emit_envelope() -> None:
     out = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
@@ -57,10 +63,43 @@ def _emit() -> None:
     sys.stdout.write(json.dumps(out))
 
 
+def _emit_receipt(*, fired: bool, env_value: str) -> None:
+    """Write one audit_log line per invocation — symmetric receipt.
+
+    Reviewer-mandated (scientist + newsletter v4): without an audit-visible
+    receipt, a reviewer cannot prove the lever fired vs. just being set in
+    env. Symmetric receipt = audit line emitted on BOTH fire AND skip paths.
+    Aggregator can confirm Setup B has N receipts with fired=True per run,
+    Setup A has zero (or N skip receipts with fired=False), per docs/iter3-levers.md.
+    """
+    try:
+        # audit_log lives next to this script; add hooks dir to sys.path so
+        # the import resolves without depending on caller's path injection.
+        _hooks_dir = os.path.dirname(os.path.abspath(__file__))
+        if _hooks_dir not in sys.path:
+            sys.path.insert(0, _hooks_dir)
+        import audit_log  # type: ignore
+    except Exception:  # noqa: BLE001
+        return  # never break SessionStart on audit failure
+    try:
+        audit_log.append_event(audit_log.new_event(
+            tool_name="SessionStart",
+            decision="injected" if fired else "skipped",
+            file_path=None,
+            signal_source="best_effort_spec",
+            reason=f"rc_best_effort_spec={env_value or '(unset)'}",
+            overlay_sha=_overlay_sha() if fired else None,
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
-    if os.environ.get("RC_BEST_EFFORT_SPEC") != "1":
-        return 0
-    _emit()
+    env_value = os.environ.get("RC_BEST_EFFORT_SPEC", "")
+    fired = env_value == "1"
+    if fired:
+        _emit_envelope()
+    _emit_receipt(fired=fired, env_value=env_value)
     return 0
 
 
