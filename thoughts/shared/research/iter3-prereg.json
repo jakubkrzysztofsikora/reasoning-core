@@ -4,6 +4,50 @@
   "prereg_status": "CALIBRATED_VIA_PHASE_0_3_AGAINST_ITER_2_FROZEN",
   "phase_0_3_calibration_completed_at": "2026-05-07T12:00:00Z",
   "phase_0_3_calibration_basis": "iter-2 frozen v3 grade artifacts (90 grader-llm-*.json files across 8 tasks \u00d7 2 setups \u00d7 2 judges); methodology: per (setup, dim) SD across 8 task-means computed from (run \u00d7 judge) within-cell aggregation; see thoughts/shared/research/iter3-prereg-calibration-report.json",
+  "prereg_freeze_commitment": {
+    "_purpose": "Per tech reviewer round-8 single-biggest-edit: end the churn narrative cleanly. Pre-registration is meaningful only if it stops drifting.",
+    "frozen_at_commit_sha": "PENDING_THIS_COMMIT_round_8",
+    "rule": "No further prereg edits after this commit SHA except: (a) Phase 0.5b κ result fill-in into the pre-structured result_placeholder slots, (b) Phase 0.5c atomic-rescue Jaccard result fill-in, (c) typo/whitespace corrections that do NOT change semantics. Any methodology change post-this-commit requires a new prereg file iter3-prereg-v2.json with explicit diff against this version.",
+    "what_counts_as_methodology_change": [
+      "any change to thresholds (gate floors, κ floors, MDE thresholds)",
+      "any change to estimators (lmer parameterization, bootstrap method)",
+      "any change to lex_order or tiebreak rules",
+      "any change to inferential scope (iter_3_inferential_scope_under_primary_lmer_estimator)",
+      "any change to honest_meta_lessons L1-L5",
+      "any change to iter4_methodology_inheritance rules",
+      "any change to kill_switch decision tree"
+    ],
+    "what_does_NOT_count_as_methodology_change": [
+      "filling Phase 0.5b result_placeholder slots (kappa_point_estimate, lower_95_ci, upper_95_ci, n_claims_per_fixture, n_parse_failures, fixture_shas_pinned)",
+      "filling Phase 0.5c atomic-rescue result fields",
+      "appending entries to amendment_log",
+      "appending entries to scope_claim_history.trajectory (each new entry must cite a commit SHA)",
+      "typo/whitespace fixes"
+    ],
+    "enforcement": "round-N+1 starts with: validate-prereg --diff-against-frozen <this_commit_sha>; any semantic change without iter3-prereg-v2.json in the same commit = pre-registration violation."
+  },
+
+  "commit_history_framing": {
+    "_purpose": "Per tech reviewer round-8 Q2: reframe commit count as discipline, not churn.",
+    "rule": "8 commits across rounds 1-7 = 8 reviewer rounds applied pre-sweep; zero commits post-sweep-fire. The trajectory IS the methodology contribution.",
+    "round_to_commit_map": [
+      {"round": "0.1+0.2",   "commit_sha": "73eb55a", "what": "initial prereg artifacts"},
+      {"round": "r2",        "commit_sha": "9b8f63d", "what": "round-2 reviewer fixes"},
+      {"round": "0.3",       "commit_sha": "d0d0600", "what": "calibrated rubric SDs from iter-2 raw 90 grades; 6→3 finding"},
+      {"round": "r3",        "commit_sha": "f09a3b7", "what": "selection-bias hypothesis + framing"},
+      {"round": "0.4 stats", "commit_sha": "3dd4e51", "what": "lmer-MDE redo + paired-SD + selection-bias falsification (3→8)"},
+      {"round": "0.4 CLI",   "commit_sha": "65a028d", "what": "validate-prereg + lock-iter4-codebase + 17 tests"},
+      {"round": "r4",        "commit_sha": "55e6f9a", "what": "scope_claim_history + discreteness + 4th conjunct"},
+      {"round": "1.3 PARTIAL","commit_sha": "3544b3c", "what": "probe-judges (Gemini+Vibe pass; Qwen deferred)"},
+      {"round": "iter-4 lock","commit_sha": "184d9ed", "what": "rails locked"},
+      {"round": "0.5 FAIL",   "commit_sha": "67005aa", "what": "decomposer reliability failed; fallback triggered"},
+      {"round": "r5",        "commit_sha": "5158430", "what": "archive + carve-outs + binary classifier rules"},
+      {"round": "r6",        "commit_sha": "4864e4e", "what": "validate-prereg security fix + lex demote + Phase 0.5b protocol"},
+      {"round": "r7",        "commit_sha": "09e016b", "what": "audit trail + Phase 0.5b/c stats tightening + sub-blocker split"},
+      {"round": "r8",        "commit_sha": "PENDING_THIS_COMMIT", "what": "freeze commitment + reframing + embedding pin + gate-4 tiebreak"}
+    ]
+  },
+
   "eval_scripts_audit_trail": {
     "_purpose": "Per engineer round-7 Q5 (BLOCKING): eval-scripts is a non-git repo; round-6 security fix to validate-prereg is undiscoverable to future rounds without out-of-band trust. SHAs pinned here for round-N+1 verification — if they drift, mutation occurred without prereg amendment.",
     "repo_path": "/Users/jakubsikora/research-claude-code-setup-eval-scripts",
@@ -25,7 +69,8 @@
   },
 
   "honest_meta_lessons": [
-    "L1 (per scientist round-5+6): the decomposer prompt was committed as load-bearing methodology and SHA-pinned in the prereg BEFORE measuring its inter-judge reliability. The reliability test ran fourth in the phase order; it should have run first. Pre-registered abort condition fired and fallback engaged, so the prereg discipline held — but the load order itself is the methodology bug. Iter-4 inverts: reliability gates precede SHA-pin.",
+    "L1 (per scientist round-5+6, tightened round-8 per tech reviewer Q6): Reliability gates must precede SHA-pin. We pinned a decomposer prompt as load-bearing methodology before measuring its inter-judge reliability; the test ran fourth in the phase order; it should have run first. Pre-registration discipline caught it. The load order is the bug.",
+    "L5 (per scientist round-8 Q8 — promoted from intersection_vs_union_sensitivity buried in fallback block): iter-3 verdict gating uses intersection_strict numerator only. If union_permissive numerator produces a verdict that diverges in DIRECTION (not magnitude), iter-3 paper §1 abstract sentence-1 surfaces the divergence — it does NOT bury in §10. Iter-4 inheritance rule 5 requires verdict robustness to combinator choice; iter-3 partially complies (reports both, gates on one). This asymmetry is acknowledged.",
     "L2 (per engineer round-6): validate-prereg's `is False` filter was sweep-permissive on string-valued failure statuses (FAILED_*/FALLBACK_*/PARTIAL_*). Strict semantics (`is not True`) required for any precondition gate that allows status-string values. Round-6 commit fixed; new regression test pinned.",
     "L3 (per scientist round-6): `intersection_of_judge_sets` for binary rubric silently discards genuine semantic disagreement (judge_A 'attempted' vs judge_B 'declared_divergent'). Iter-4 design must report dual numerators (intersection-strict + union-permissive) as sensitivity rather than collapse to one.",
     "L4 (per scientist round-6): exact (type, evidence_locator) Jaccard understates true semantic agreement when locator strings are free-form. Atomic-rescue path with fuzzy locator matching (Levenshtein/embedding cosine) deserves a Phase 0.5c probe before formal retirement of the atomic decomposer."
@@ -192,11 +237,16 @@
           "bootstrap_seed_pinned": "20260507"
         }
       },
-      "phase_0_5c_atomic_rescue_protocol_round_7_scientist_q9": {
+      "phase_0_5c_atomic_rescue_protocol_round_7_scientist_q9_round_8_pinned": {
         "_purpose": "Atomic decomposer rescue path under fuzzy locator matching. Pre-registered before Phase 0.5b runs so reviewers cannot accuse Phase 0.5c of being post-hoc 'second bite at the apple'.",
         "method": "re-score Phase 0.5 atomic Jaccard with bipartite-matched (type, evidence_locator) tuples using fuzzy similarity instead of exact-string match",
-        "fuzzy_thresholds": "Levenshtein-ratio ≥ 0.85 (file paths) AND embedding-cosine ≥ 0.80 (prose snippets); CONJUNCTION (round-7 scientist; pin numeric thresholds for reproducibility)",
-        "embedding_model": "TBD: sentence-transformers/all-MiniLM-L6-v2 (cheap, deterministic) — pin model+SHA before run",
+        "fuzzy_thresholds_PROVISIONAL_PRE_CALIBRATION": "Levenshtein-ratio ≥ 0.85 (file paths) AND embedding-cosine ≥ 0.80 (prose snippets); CONJUNCTION. Round-8 scientist Q3 flagged 0.80 as conservative without empirical anchor; round-9 Phase 0.5c-prep step computes embedding-cosine distribution on iter-2 PLAN.md fixtures, picks empirical knee, replaces 0.80 with data-driven value. Until then, 0.80 is a documented heuristic.",
+        "embedding_model_pinned_round_8": {
+          "primary": "sentence-transformers/all-MiniLM-L6-v2",
+          "primary_huggingface_revision": "TBD_FETCH_AT_RUN_TIME — pin in iter3-prereg-v2.json once embedding-knee calibration runs (per prereg_freeze_commitment, model SHA pin requires iter3-prereg-v2)",
+          "secondary_for_sensitivity_reporting": "sentence-transformers/all-mpnet-base-v2 (768-dim; ~5x slower; per scientist round-8 Q2 — recall ceiling check)",
+          "rationale": "MiniLM-L6 is deterministic + cheap (384-dim, ~80MB); mpnet-base-v2 reports as sensitivity to surface dimension-recall ceiling on file-path+prose locators. Both pinned with HuggingFace revision SHA at run-time before Phase 0.5c fires."
+        },
         "bootstrap_protocol": "B=1000 claim-paired resamples WITH TASK AS CLUSTER (matches Phase 0.5b; same script reused)",
         "gate_threshold_clean": "matched-Jaccard lower-95-CI ≥ 0.65 (cleaner pass; atomic survives as primary)",
         "gate_threshold_borderline_round_7_scientist_q7": "0.6 ≤ matched-Jaccard lower-95-CI < 0.65 → atomic survives ONLY as sensitivity in §10, not primary; binary remains primary if it passed Phase 0.5b; if neither cleanly passed, kill_switch fires to case-study branch",
@@ -275,6 +325,25 @@
     "honesty_signal_dimension_status": "Judges produced honesty_signal scores against the ad-hoc probe fixture without prior schema training. Real-sweep behaviour against Setup A/B artifacts may differ; iter-3 paper \u00a76 should report the per-dim \u03b1 including honesty.",
     "promotion_to_true_blocked_by": "Qwen-Coder probe (Phase 1.1)"
   },
+  "cannot_fire_sweep_until_categorized_per_tech_reviewer_round_8_q3": {
+    "_purpose": "Reframe 11-entry list as 2 categories so '4 gating + 7 polish' lands differently than '11 blockers'.",
+    "gating_results_pending": [
+      "phase_0_5b_binary_classifier_kappa_lower_ci_>=_0.6 (deterministic markdown parsing; ~minutes; $0)",
+      "phase_0_4_binary_retroactive_passed (Phase 0.4 c_at_a_min retroactive; ~50min LLM; ~$0.25; only if Phase 0.5b passes)",
+      "atomic_rescue_disposition_committed (Phase 0.5c fuzzy locator matching; ~deterministic + embedding lookup)",
+      "iter3_sweep_kill_switch_evaluated (decision tree fires once Phase 0.5b/c results land)"
+    ],
+    "methodology_polish_doc_edits_queued": [
+      "q2_lmer_formula_validated (Hedges&Hedberg 2007; documentation)",
+      "q4_t_crit_df_9_21_entries (table extension; documentation)",
+      "q7_honesty_sd_1_5x_inflation_applied (compute_mde_lmer.py edit)",
+      "q8_icc_bootstrap_lower_ci_b_1000 (compute_mde_lmer.py edit)",
+      "phase_1_judge_set_validated_full (Qwen-Coder Scaleway transport; Phase 1.1)",
+      "iter3_title_abstract_refresh_pending (paper §1 framing)",
+      "gate_4_expected_fire_rate_disclosed (DONE round-7; tiebreak rule chosen round-8 = wall_clock_s_lower fallback per operator + engineer recommendation)"
+    ]
+  },
+
   "cannot_fire_sweep_until": [
     "phase_0_5b_binary_classifier_kappa_lower_ci_>=_0.6 (eval binary-rubric-reliability run on same 10 fixtures \u00d7 2 judges; Cohen \u03ba on bipartite-matched per-claim binary labels with B\u22651000 bootstrap; lower-95-CI bound \u2014 not point estimate \u2014 must be \u2265 0.6)",
     "phase_0_4_binary_retroactive_passed (binary_c_at_a_min computed on iter-2 frozen 48 cells; flat-distribution check range > 0.05; H_iter3_falsification_selection_bias re-fires on binary metric)",
@@ -286,7 +355,7 @@
     "phase_1_judge_set_validated_full (eval probe-judges --judges gemini,vibe,qwen-coder returns rc=0; currently PARTIAL with Qwen-Coder transport pending Phase 1.1)",
     "iter3_sweep_kill_switch_evaluated (if Phase 0.5b \u03ba < 0.6 AND atomic-rescue Phase 0.5c < 0.6, iter-3 ships as methodology case study with NO sweep; iter-4 reruns full sweep with validated parser)",
     "iter3_title_abstract_refresh_pending (round-7 deferred-tracking add per scientist Q10; was orphaned without owner. Refresh title_candidates + abstract_lead_precommit to centre abort+fallback story not lmer-divergence; tech reviewer's 35-word draft in scope_claim_history.iter_3_paper_paragraph_1_draft_template)",
-    "gate_4_expected_fire_rate_disclosed (round-7 scientist Q4: at iter-2 base rate 0.85 with n=28 Bernoulli, P(X\u226526 | n=28, p=0.85) \u2248 0.36; gate fires for both arms ~36% of time under H0 \u2014 moderately discriminating not punishing. Risk: BOTH arms pass gate-4 and tiebreak undefined. Add tiebreak rule: when both arms pass, fall through to lex_quality dims + descriptive c_at_a_min before declaring winner.)"
+    "gate_4_expected_fire_rate_disclosed (round-7 scientist Q4: at iter-2 base rate 0.85 with n=28 Bernoulli, P(X\u226526 | n=28, p=0.85) \u2248 0.36; gate fires for both arms ~36% of time under H0 \u2014 moderately discriminating not punishing. ROUND-8 OPERATOR DECISION: tiebreak rule = fall through to wall_clock_s_lower per existing tiebreak_chain_after_lex_quality. Rationale: cheapest; preserves lex_order; deterministic; consistent with iter-3's faster-is-better operational claim. Trade-off acknowledged: mechanically rewards faster arm even when quality-equivalent. Sensitivity reported in \u00a710: also report 'tie' verdict under alternate rule.)"
   ],
   "previously_satisfied_preconditions_log": [
     "iter4_h_codebase_locked (rails; commit 184d9ed; LOCKED_PRE_ITER_3_SWEEP)",
