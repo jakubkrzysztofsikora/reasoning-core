@@ -4,12 +4,23 @@
 
 ## Quick Start (adopter — 5 min)
 
-You want the iter-3 levers active in your own Claude Code project (not the iter-3 eval). Three steps:
+You want the iter-3 levers active in your own Claude Code project (not the iter-3 eval). Four steps:
+
+**0. Verify wiring before enabling levers** (run from the reasoning-core repo root):
+
+```bash
+./scripts/iter3-preflight.sh
+# Must print "RESULT: GO" or "RESULT: GO with caveats" before proceeding.
+# RESULT: NO-GO means a wiring check failed — do NOT enable levers, fix
+# the failing check first (the script names which one).
+```
+
+The preflight runs eight wiring checks (`session_start_best_effort.py` injects audit receipts, `gate_plan_grounding` fires on drift, audit_only fires on missing PLAN.md, A-vs-B receipt symmetry holds, etc.) plus three operational dependency probes (Docker / scw / sidecar /health). The same checks run automatically in CI via `tests/test_iter3_wiring_smoke.py`.
 
 **1. Enable the levers in your project's `.envrc`** (or shell rc):
 
 ```bash
-export RC_BEST_EFFORT_SPEC=1   # SessionStart overlay: "Never ship a DIVERGENCES.md alone."
+export RC_BEST_EFFORT_SPEC=1   # SessionStart overlay v2 (round-6): see lever spec table below for full text.
 export RC_PLAN_GROUNDING=1      # warn on edits drifting from PLAN.md (audit-only, not visible to agent)
 ```
 
@@ -134,7 +145,7 @@ Reviews: LLM-scientist + agentic-AI engineer + AI-newsletter tech reviewer (RC-o
 
 | Env var | Default | Modes | Effect | Implementation |
 |---------|---------|-------|--------|----------------|
-| `RC_BEST_EFFORT_SPEC` | unset (off) | `1` = on; anything else = off | When on, `session_start_best_effort.py` emits a `hookSpecificOutput.additionalContext` JSON envelope at SessionStart with the iter-3 minimal overlay: *"Never ship a DIVERGENCES.md alone."* (Single-factor: license-removal sentence ONLY. Substitution-recipe variants are deferred to iter-4 under a separate env var so the two effects can be ablated cleanly.) | [`src/hooks/session_start_best_effort.py`](../src/hooks/session_start_best_effort.py) |
+| `RC_BEST_EFFORT_SPEC` | unset (off) | `1` = on; anything else = off | When on, `session_start_best_effort.py` emits a `hookSpecificOutput.additionalContext` JSON envelope at SessionStart with the iter-3 overlay v2: *"Never ship a DIVERGENCES.md alone — unless the contract requires no production change (e.g. rename already applied upstream, no behavioral change required), in which case ship a one-line PLAN.md stating why no edit is appropriate and produce no other artifact."* (Round-6 added the no-op carve-out so T8-style "cutover is no-op" tasks aren't pressured to invent fake edits.) Authoritative source: [`src/hooks/session_start_best_effort.py`](../src/hooks/session_start_best_effort.py) `_OVERLAY` constant. Substitution-recipe variants (e.g. "...and emit a compilable stub against the closest available contract") deferred to iter-4 under a separate env var; iter-4 must also add a `RC_BEST_EFFORT_SPEC=3` arm (license-removal WITHOUT carve-out) to isolate the carve-out's contribution. | [`src/hooks/session_start_best_effort.py`](../src/hooks/session_start_best_effort.py) |
 | `RC_PLAN_GROUNDING` | unset (`0`) | `0` = off; `1` = warn (audit-only); `2` = hard block | At `pre_edit_guard` time, cross-references the edit's `file_path` against paths mentioned in the run's `PLAN.md`. Mode 1 emits stderr advisory + audit event tagged `signal_source=plan_grounding decision=warn`. Mode 2 records audit block + exit 2. Audit-visible signal is NOT shown to the agent — neutralizes the path-stuffing failure mode. | [`src/hooks/_dispatch.py:gate_plan_grounding`](../src/hooks/_dispatch.py) |
 | `RC_RUN_DIR` | unset | (path) | Optional override for PLAN.md resolution. Precedence: `RC_RUN_DIR` > `CLAUDE_PROJECT_DIR` > `cwd`. | [`src/hooks/_dispatch.py:_resolve_plan_path`](../src/hooks/_dispatch.py) |
 
@@ -230,3 +241,5 @@ Documenting up-front so iter-4 measurement design accounts for them:
 | `tests/test_hook_block.py` | Three end-to-end integration cases |
 | `tests/test_plan_grounding_corpus.py` | Standalone precision/recall benchmark |
 | `tests/fixtures/plans/<task>/` | Five frozen iter-2 PLAN.md + edits.jsonl pairs |
+| `tests/test_iter3_wiring_smoke.py` | Round-6 self-contained CI smoke (5 wiring tests + Docker probe) — independent of eval framework |
+| `scripts/iter3-preflight.sh` | Round-6 operator-runnable preflight (8 wiring checks + 3 dependency probes) — runs before any iter-3 sweep kickoff |

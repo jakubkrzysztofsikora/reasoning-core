@@ -43,8 +43,21 @@ import sys
 # iter-4 ablation between license-removal-alone vs full-recipe variants. Per
 # scientist review v3, the recipe MUST live in a separate env-var (e.g.
 # RC_BEST_EFFORT_RECIPE=1) when iter-4 ships; this v3 string is the minimal arm.
+# Overlay v2 (sweep round-6 #3): no-op carve-out added.
+# Reviewer-flagged risk: on a "no production change needed" task (T8-style
+# cutover where the rename was already applied or no rename is required),
+# the v1 overlay "Never ship a DIVERGENCES.md alone" pressures the agent
+# to invent edits to satisfy the rule, harming impl_quality. The carve-out
+# preserves the license-removal intent while explicitly authorizing the
+# correct response when no edit is appropriate. Single-factor for iter-4
+# attribution: the no-op exception is the same construct (license shape),
+# not a substitution-recipe expansion (still deferred to iter-4 under
+# a separate env var).
 _OVERLAY = (
-    "Never ship a DIVERGENCES.md alone."
+    "Never ship a DIVERGENCES.md alone — unless the contract requires no "
+    "production change (e.g. rename already applied upstream, no behavioral "
+    "change required), in which case ship a one-line PLAN.md stating why "
+    "no edit is appropriate and produce no other artifact."
 )
 
 
