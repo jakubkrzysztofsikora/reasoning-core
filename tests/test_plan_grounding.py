@@ -120,15 +120,44 @@ def test_plan_md_itself_always_passes(monkeypatch, tmp_path):
     assert out2.action == "pass"
 
 
-def test_no_plan_md_falls_through(monkeypatch, tmp_path):
-    """No PLAN.md anywhere → pass with reason=no_plan_md (not a block)."""
+def test_no_plan_md_emits_audit_only(monkeypatch, tmp_path):
+    """B3 fix (sweep round-5): no PLAN.md → action=audit_only with
+    reason=no_plan_md and signal_source=plan_grounding. Aggregator can
+    detect silent evaporation; the edit is NOT blocked."""
     monkeypatch.setenv("RC_PLAN_GROUNDING", "2")
     monkeypatch.setenv("RC_RUN_DIR", str(tmp_path))
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
-    # No PLAN.md in tmp_path; gate must NOT block.
+    # No PLAN.md in tmp_path; gate must NOT block but MUST emit audit event.
     out = _dispatch.gate_plan_grounding(file_path="src/anything.py")
-    assert out.action == "pass"
+    assert out.action == "audit_only"
+    assert out.decision == "audit_only"
     assert out.reason == "no_plan_md"
+    assert out.signal_source == "plan_grounding"
+
+
+def test_suffix_match_requires_separator_anchor(monkeypatch, tmp_path):
+    """P1.1 fix (sweep round-5): edit `bar/myfoo.py` must NOT match plan
+    ref `foo.py` from a different directory. Without the separator anchor,
+    string suffix-match would silently allow cross-directory false positives,
+    weakening the gate signal in iter-3 measurement."""
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("- `src/foo.py` — 10 LOC\n")
+    monkeypatch.setenv("RC_PLAN_GROUNDING", "1")
+    monkeypatch.setenv("RC_RUN_DIR", str(tmp_path))
+
+    # Exact ref: in_plan
+    out_exact = _dispatch.gate_plan_grounding(file_path="src/foo.py")
+    assert out_exact.reason == "in_plan", "exact path match must pass"
+
+    # Suffix match WITH separator anchor: in_plan
+    out_anchor = _dispatch.gate_plan_grounding(file_path="/abs/repo/src/foo.py")
+    assert out_anchor.reason == "in_plan", "suffix with leading separator must pass"
+
+    # Pre-fix bug case: edit "bar/myfoo.py" must NOT match plan ref "foo.py".
+    out_false_pos = _dispatch.gate_plan_grounding(file_path="bar/myfoo.py")
+    assert out_false_pos.action == "stderr_only", \
+        f"cross-dir false positive — myfoo.py incorrectly matched foo.py: {out_false_pos}"
+    assert out_false_pos.reason == "plan_impl_drift"
 
 
 def test_empty_file_path_passes(monkeypatch, tmp_path):
@@ -139,11 +168,11 @@ def test_empty_file_path_passes(monkeypatch, tmp_path):
     assert out.action == "pass"
 
 
-def test_plan_unreadable_falls_through(monkeypatch, tmp_path):
-    """OSError on PLAN.md read → reason='plan_unreadable', no block.
-
-    Boundary: file exists but cannot be opened (permissions / symlink loop).
-    Gate must NOT crash and must NOT block — fall-open is the safe default."""
+def test_plan_unreadable_emits_audit_only(monkeypatch, tmp_path):
+    """B3 fix (sweep round-5): OSError on PLAN.md read → action=audit_only
+    with reason=plan_unreadable. Gate must NOT crash and must NOT block —
+    fall-open is the safe default. Audit event lets aggregator detect
+    that the gate ran but couldn't load the plan."""
     plan = tmp_path / "PLAN.md"
     plan.write_text(_PLAN_BODY)
     plan.chmod(0o000)  # render unreadable
@@ -151,9 +180,11 @@ def test_plan_unreadable_falls_through(monkeypatch, tmp_path):
         monkeypatch.setenv("RC_PLAN_GROUNDING", "2")
         monkeypatch.setenv("RC_RUN_DIR", str(tmp_path))
         out = _dispatch.gate_plan_grounding(file_path="src/anything.py")
-        assert out.action == "pass", \
+        assert out.action == "audit_only", \
             f"unreadable PLAN.md must not block; got {out.action}"
         assert out.reason == "plan_unreadable"
+        assert out.decision == "audit_only"
+        assert out.signal_source == "plan_grounding"
     finally:
         plan.chmod(0o644)  # restore for tmp cleanup
 

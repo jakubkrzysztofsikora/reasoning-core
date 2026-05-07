@@ -492,6 +492,19 @@ def main() -> None:
             extra=pg_outcome.audit_extra,
         )
         _exit(pg_outcome.code, pg_outcome.stderr)
+    elif pg_outcome.action == "audit_only":
+        # B3 (sweep round-5): gate was active but couldn't run (no PLAN.md
+        # or extractor unavailable). Emit audit event so aggregator can
+        # detect silent evaporation, then continue the gate chain.
+        _emit_audit(
+            tool_name=tool_name,
+            decision=pg_outcome.decision,
+            file_path=file_path,
+            started=started,
+            reason=pg_outcome.reason,
+            signal_source=pg_outcome.signal_source,
+            extra=pg_outcome.audit_extra,
+        )
 
     pairs = _extract_changes(tool_name, tool_input)
     if not pairs:

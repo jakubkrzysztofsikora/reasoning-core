@@ -21,6 +21,11 @@ Action vocabulary (string sentinels on `GateOutcome.action`):
                           `outcome.report` and continue gate chain
   - "stderr_only"     -> orchestrator should write `outcome.stderr` to
                           stderr (advisory) and continue chain
+  - "audit_only"      -> orchestrator emits audit event (decision/reason/
+                          signal_source from outcome) and continues chain
+                          without stderr or exit. Used for observability
+                          of "gate was active but precondition missing"
+                          (e.g. RC_PLAN_GROUNDING=1 with no PLAN.md).
   - "fall_through"    -> magic-comment self-introduced edge case;
                           orchestrator emits override_declined audit and
                           continues into the scoring path
@@ -224,7 +229,18 @@ def gate_plan_grounding(*, file_path: str) -> GateOutcome:
         return GateOutcome()
     plan_path = _resolve_plan_path()
     if plan_path is None:
-        return GateOutcome(reason="no_plan_md")
+        # B3 fix (sweep round-5): mode is active but PLAN.md is absent.
+        # Emit an audit event so the eval aggregator can distinguish
+        # "lever was active and ran cleanly" from "lever silently no-oped
+        # because the spawner forgot to write PLAN.md". Without this,
+        # missing-PLAN.md runs are indistinguishable from perfectly-grounded
+        # runs in audit data.
+        return GateOutcome(
+            action="audit_only",
+            decision="audit_only",
+            reason="no_plan_md",
+            signal_source="plan_grounding",
+        )
     # Lazy import: _dispatch.py does NOT inject src/hooks into sys.path
     # itself. Import inside the function body so callers that have already
     # set sys.path (pre_edit_guard.py:33-36) resolve correctly, while a
@@ -233,11 +249,23 @@ def gate_plan_grounding(*, file_path: str) -> GateOutcome:
         from _plan_paths import distinct_file_paths  # type: ignore
         plan_text = plan_path.read_text(encoding="utf-8", errors="replace")
         refs = distinct_file_paths(plan_text)
-    except (OSError, ImportError):
-        return GateOutcome(reason="plan_unreadable")
+    except (OSError, ImportError) as exc:
+        # Distinguish ImportError (load bug) from OSError (operator state)
+        # so the audit reason is diagnostic-grade.
+        reason = "plan_extractor_unavailable" if isinstance(exc, ImportError) else "plan_unreadable"
+        return GateOutcome(
+            action="audit_only",
+            decision="audit_only",
+            reason=reason,
+            signal_source="plan_grounding",
+        )
     norm = os.path.normpath(file_path)
+    # P1.1 fix (sweep round-5): suffix-match must require a path-separator
+    # anchor. Without it, plan ref `foo.py` would match edit `bar/myfoo.py`,
+    # producing a false `in_plan` allow that weakens the gate signal.
     for ref in refs:
-        if norm.endswith(os.path.normpath(ref)):
+        ref_norm = os.path.normpath(ref)
+        if norm == ref_norm or norm.endswith(os.sep + ref_norm):
             return GateOutcome(reason="in_plan")
     audit_extra: Dict[str, Any] = {
         "plan_path": str(plan_path),

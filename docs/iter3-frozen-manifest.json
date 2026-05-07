@@ -13,7 +13,7 @@
   },
   "setup_b": {
     "_envrc_path": "/Users/jakubsikora/eval-setups/B/.envrc",
-    "_envrc_sha256": "c5e0fceaa02873f77fe56a8aaa7c5f9e0d3001ae04831b9ec635962aa329e5ca",
+    "_envrc_sha256": "bfd58d31f150958fd7bbcb269681ed6554d311f73297c0325af7d0fff1381d53",
     "settings_local_json_path": "/Users/jakubsikora/eval-setups/B/settings.local.json",
     "settings_local_json_sha256": "bfbc985dd03fa7268a8f55f4c0a5c61a2be23867be8d47159f1a43d43c409086",
     "iter3_levers_enabled": ["RC_BEST_EFFORT_SPEC=1", "RC_PLAN_GROUNDING=1"]
@@ -21,7 +21,7 @@
   "reasoning_core_lever_code_shas": {
     "src/hooks/_plan_paths.py": "df1043b8b3b8bc0ead972684fd34c02f8148fa1c1ec98f3e5fa867ca7d144cb7",
     "src/hooks/session_start_best_effort.py": "812c72435b0b5b2263f09326105a8845600820f0abcc2da20ef69b18cbd12d5a",
-    "src/hooks/_dispatch.py": "fb88cd561dd326ccd64e3e6f15672d5e0860a96d712c824214ebd50bd3cd5f1f"
+    "src/hooks/_dispatch.py": "d03d5e321905ef3bcdfa7974a5f8da02d2842f50cb47c7d7b12de79216eb0b28"
   },
   "frozen_file_artifacts": {
     "purpose": "Newsletter v4 review: hashes alone don't help reviewers without filesystem access to /Users/jakubsikora/eval-setups/. Embed the actual file bytes in this repo so the symmetry guarantee is verifiable from a clone alone.",

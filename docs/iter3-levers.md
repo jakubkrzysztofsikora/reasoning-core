@@ -13,7 +13,11 @@ export RC_BEST_EFFORT_SPEC=1   # SessionStart overlay: "Never ship a DIVERGENCES
 export RC_PLAN_GROUNDING=1      # warn on edits drifting from PLAN.md (audit-only, not visible to agent)
 ```
 
-**2. Register the SessionStart hook in `.claude/settings.local.json`**:
+**2. Register both hooks in `.claude/settings.local.json`**:
+
+`RC_BEST_EFFORT_SPEC` needs `session_start_best_effort.py` on `SessionStart`. `RC_PLAN_GROUNDING` needs `pre_edit_guard.py` on `PreToolUse` for Edit/Write/MultiEdit.
+
+If your `.claude/settings.local.json` is empty (or doesn't exist), paste this complete file:
 
 ```json
 {
@@ -28,12 +32,28 @@ export RC_PLAN_GROUNDING=1      # warn on edits drifting from PLAN.md (audit-onl
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/path/to/reasoning-core}/src/hooks/pre_edit_guard.py",
+            "timeout": 15000
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-Replace `/path/to/reasoning-core` with your clone path, OR `export RC_REPO=...` in your `.envrc`. (Step 1's `RC_PLAN_GROUNDING` lever uses `pre_edit_guard.py` which is wired automatically; only `RC_BEST_EFFORT_SPEC` needs the SessionStart registration above.)
+If your `.claude/settings.local.json` already has `hooks.SessionStart` or `hooks.PreToolUse` arrays, **merge by appending** to the existing arrays — don't replace them, or you will lose your other hooks. Claude Code's `hooks.<event>` is a list of matcher-groups; each matcher-group has its own nested `hooks` array. Add a new matcher-group entry alongside whatever's already there.
+
+Replace `/path/to/reasoning-core` with your clone path, OR `export RC_REPO=...` in your `.envrc`.
+
+> If you set `RC_BEST_EFFORT_SPEC=1` or `RC_PLAN_GROUNDING=1` but skip this step, `direnv allow` will print a loud WARN at shell load — the self-check at the bottom of `reasoning-core/.envrc` greps your `.claude/settings.local.json` for the required hook commands and surfaces the gap before any Claude Code session starts.
 
 **3. Verify both levers fired**. Open a new Claude Code session, make one edit, then:
 

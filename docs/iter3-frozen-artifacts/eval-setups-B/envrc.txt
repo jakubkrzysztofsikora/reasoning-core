@@ -16,6 +16,19 @@ export EVAL_SETUP_ID="B"
 # in .envrc.local on other machines.
 export RC_REPO="${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}"
 
+# P1.2 preflight (sweep round-5): if RC_REPO doesn't resolve to a valid
+# reasoning-core checkout, hooks silently fail to launch and ALL levers
+# evaporate with no audit signal. WARN loudly at direnv load.
+if [[ ! -d "$RC_REPO/src/hooks" ]]; then
+  echo "[direnv] WARN: RC_REPO=$RC_REPO does not contain src/hooks/ — reasoning-core hooks will fail silently in this session"
+fi
+if [[ ! -f "$RC_REPO/src/hooks/session_start_best_effort.py" ]]; then
+  echo "[direnv] WARN: RC_REPO=$RC_REPO does not have session_start_best_effort.py — RC_BEST_EFFORT_SPEC lever will silently fail"
+fi
+if [[ ! -f "$RC_REPO/src/hooks/pre_edit_guard.py" ]]; then
+  echo "[direnv] WARN: RC_REPO=$RC_REPO does not have pre_edit_guard.py — RC_PLAN_GROUNDING lever will silently fail"
+fi
+
 # --- Sidecar tuning ---
 export S2_DEVICE="${S2_DEVICE:-cpu}"
 export S2_TIMEOUT=60
