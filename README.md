@@ -347,15 +347,22 @@ sidecar is up.
 
 #### Step 0. Preflight — confirm the venv has the deps
 
-The hooks import `tree_sitter`, `mamba_ssm`, and a few other non-stdlib packages that
-live in this repo's venv (steps §1–§3 above). Hooks invoked via system `python3` will
-ImportError on first fire and silently break every Claude session machine-wide. Confirm:
+The hooks import `tree_sitter`, `transformers` (HF Mamba port), `fastapi`, and a
+handful of other non-stdlib packages that live in this repo's `requirements.txt`.
+Hooks invoked via system `python3` will ImportError on first fire and silently break
+every Claude session machine-wide. Confirm:
 
 ```bash
 cd $RC_REPO
-test -x .venv/bin/python || python3 -m venv .venv && source .venv/bin/activate && pip install -e .
-.venv/bin/python -c "import tree_sitter, mamba_ssm; print('venv OK')"
+# Create venv + install runtime deps (this is the same install §1 ran for the
+# in-repo session — you only need to do it once, but verifying here costs nothing).
+test -x .venv/bin/python || python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt          # heavy deps live here, NOT in pyproject.toml
+.venv/bin/python -c "import tree_sitter, transformers, fastapi; print('venv OK')"
 ```
+
+If you previously did §1 (`pip install -r requirements.txt`), the venv is already
+ready — the verify line is enough.
 
 #### Step 1. Pin the clone path in your shell rc (`~/.zshrc` or `~/.bashrc`)
 
@@ -553,8 +560,9 @@ jq 'select(.signal_source=="best_effort_spec" and .decision=="injected") | .over
   - Sidecar dead + `S2_FAIL_CLOSED=1`: every Edit hard-blocks. Symptom:
     `[hybrid-reasoner] BLOCKED: sidecar unreachable`. Fix: `rc status`,
     restart the daemon (step 2).
-  - venv missing tree_sitter: every hook ImportErrors. Symptom: stderr noise from
-    every Edit. Fix: re-run step 0 preflight.
+  - venv missing tree_sitter / transformers: every hook ImportErrors. Symptom:
+    stderr noise from every Edit (`ModuleNotFoundError: No module named 'tree_sitter'`).
+    Fix: `cd $RC_REPO && .venv/bin/pip install -r requirements.txt`.
 
 ---
 
