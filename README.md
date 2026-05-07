@@ -331,12 +331,230 @@ ls ~/.local/share/reasoning-core/events/$(date +%F)/ | head               # per-
 rc status                                                                 # sidecar health + posture
 ```
 
-### 6. (Optional) Promote globally
+### 6. (Optional) Promote globally — one path, every project
 
-When confident it pulls its weight, copy the hook block from `.claude/settings.json` into
-`~/.claude/settings.json` (with absolute paths instead of `${CLAUDE_PROJECT_DIR}`) and
-launch the sidecar via launchd / systemd. Repo-scoped is enough for most users — global
-only buys scoring across other repos at the cost of losing the easy-uninstall property.
+Repo-scoped hooks fire only when Claude runs from inside this folder. To get the same
+gating across **every project on your machine**, register the hooks once at the user
+level — no per-repo copy-paste, no `.claude/settings.json` in each project.
+
+The hooks are designed to live in this single clone. Other projects reference them by
+absolute path via the `RC_REPO` env var, so a regex tweak or a hook fix here propagates
+everywhere on the next session.
+
+**Order matters** — follow steps 0 → 5 in order. Sidecar must be daemonized BEFORE
+flipping `S2_FAIL_CLOSED`, otherwise every Edit on every project hard-blocks until the
+sidecar is up.
+
+#### Step 0. Preflight — confirm the venv has the deps
+
+The hooks import `tree_sitter`, `mamba_ssm`, and a few other non-stdlib packages that
+live in this repo's venv (steps §1–§3 above). Hooks invoked via system `python3` will
+ImportError on first fire and silently break every Claude session machine-wide. Confirm:
+
+```bash
+cd $RC_REPO
+test -x .venv/bin/python || python3 -m venv .venv && source .venv/bin/activate && pip install -e .
+.venv/bin/python -c "import tree_sitter, mamba_ssm; print('venv OK')"
+```
+
+#### Step 1. Pin the clone path in your shell rc (`~/.zshrc` or `~/.bashrc`)
+
+```bash
+export RC_REPO="$HOME/Repos/personal/reasoning-core"   # wherever you cloned
+export PATH="$RC_REPO/bin:$PATH"                        # so `rc` shim resolves anywhere
+```
+
+Reload: `exec zsh` (or `source ~/.zshrc`).
+
+#### Step 2. Daemonize the sidecar
+
+Always-on sidecar — no `bash scripts/start-sidecar.sh` in every shell.
+
+**macOS:**
+
+```bash
+bash $RC_REPO/scripts/install-supervisor-launchagent.sh
+launchctl list | grep reasoning-core      # → com.reasoning-core.supervisor visible
+curl -fsS http://127.0.0.1:8765/health    # → {"status":"ok",...}
+```
+
+**Linux (systemd user unit):**
+
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/reasoning-core-sidecar.service <<EOF
+[Unit]
+Description=reasoning-core SSM sidecar
+[Service]
+Type=simple
+ExecStart=$RC_REPO/.venv/bin/python -m src.s2_core
+WorkingDirectory=$RC_REPO
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable --now reasoning-core-sidecar.service
+curl -fsS http://127.0.0.1:8765/health    # → {"status":"ok",...}
+```
+
+#### Step 3. Register the hooks at the user level
+
+Save the snippet below to `~/.claude/settings.json` (merge into your existing file if
+present — append to the matching event arrays, do NOT replace the whole `hooks` block
+or you lose any other hooks you had).
+
+```jsonc
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/pre_edit_guard.py",
+                    "timeout": 60000 }] },
+      { "matcher": "Write",
+        "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/pre_plan_guard.py",
+                    "timeout": 15000 }] },
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/pre_bash_guard.py",
+                    "timeout": 5000 }] },
+      { "matcher": "Task",
+        "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/pre_task_guard.py",
+                    "timeout": 5000 }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/post_bash_revive.py",
+                    "timeout": 5000 }] },
+      { "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/post_batch_lang_audit.py",
+                    "timeout": 5000 }] }
+    ],
+    "SessionStart": [
+      { "hooks": [
+          { "type": "command",
+            "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/session_start_manifest.py",
+            "timeout": 30000 },
+          { "type": "command",
+            "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/session_resume_inject.py",
+            "timeout": 5000 }
+      ]}
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/session_resume_inject.py",
+                    "timeout": 5000 }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command",
+                    "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/pre_compact_guard.py",
+                    "timeout": 5000 }] }
+    ]
+  }
+}
+```
+
+Notes on the snippet:
+- The `.venv/bin/python` prefix is **load-bearing** — system `python3` lacks the deps.
+- `${RC_REPO:-fallback}` is POSIX parameter expansion, evaluated by Claude Code's
+  shell-invoked hook command. The fallback path is for safety; replace with your real
+  clone path. One-liner if you set `$RC_REPO` already:
+  ```bash
+  sed -i '' "s|/Users/you/Repos/personal/reasoning-core|$RC_REPO|g" ~/.claude/settings.json   # macOS
+  sed -i    "s|/Users/you/Repos/personal/reasoning-core|$RC_REPO|g" ~/.claude/settings.json   # Linux
+  ```
+- `session_resume_inject.py` is registered on BOTH `SessionStart` AND
+  `UserPromptSubmit` — that's the in-repo `.claude/settings.json` wiring; both
+  events are needed so resume-context fires consistently.
+
+#### Step 4. Set conservative env defaults globally
+
+Append to your shell rc. **Critical**: leave `S2_FAIL_CLOSED=0` until you've verified
+the daemon stays up across reboots — fail-closed globally + sidecar crash = every Edit
+on every project hard-blocks.
+
+```bash
+# ~/.zshrc
+export RC_SHADOW_MODE=1            # log-only by default; flip to 0 once calibrated
+export RC_LANG_LOCK=0               # off by default — repos vary; calibrate per-repo via project .envrc
+export RC_PLAN_BLOCK=0              # plan-guard warn-only by default
+export S2_FAIL_CLOSED=0             # fail-OPEN globally; flip to 1 only after the daemon proves stable
+# Iter-3 levers stay project-scoped — DO NOT enable globally without registering
+# session_start_best_effort.py first (see docs/iter3-levers.md):
+# export RC_BEST_EFFORT_SPEC=1
+# export RC_PLAN_GROUNDING=1
+```
+
+Per-repo `.envrc` files override these for projects where you want stricter posture
+(e.g. set `S2_FAIL_CLOSED=1` and `RC_PLAN_BLOCK=1` in `.envrc` for the repo where
+you've already calibrated the corpus).
+
+#### Step 5. Verify global activation
+
+Open Claude Code from **any** repo (not just `$RC_REPO`) and confirm hooks fire:
+
+```bash
+cd ~/some/other/project
+claude
+# … in another terminal …
+ls ~/.local/share/reasoning-core/events/$(date +%F)/   # ← decisions from THIS project's session appear
+rc status                                              # sidecar /health passes
+jq -r '.project_dir' ~/.local/share/reasoning-core/events/$(date +%F)/*.jsonl | sort -u
+# ← project_dir field shows the actual cwd of the session, not $RC_REPO
+```
+
+Iter-3 lever sanity (only if you opted into them in step 4):
+
+```bash
+jq 'select(.signal_source=="best_effort_spec" and .decision=="injected") | .overlay_sha' \
+   ~/.local/share/reasoning-core/events/$(date +%F)/*.jsonl
+# ← should print "c7080f353e94" (overlay v3) once per session
+```
+
+#### Notes & gotchas
+
+- **`~/.claude/settings.json` + project-local `.claude/settings.local.json` MERGE
+  ADDITIVELY on hook arrays.** Each matcher/event entry is appended; matching entries
+  do NOT override. If `pre_edit_guard.py` is registered both globally and in a
+  project's `settings.local.json`, the hook runs **twice per edit**. Solution: pick
+  one — global-only (recommended for shared hooks) or project-only (recommended for
+  experimental ones). Don't double-register.
+- **Cato VPN / corporate TLS-MITM:** the in-repo `.envrc` builds a certifi+Cato CA
+  bundle (`~/.cache/reasoning-core/ca-bundle.pem`) and exports `SSL_CERT_FILE` /
+  `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`. If you go global on a corp-network laptop,
+  copy that block (or the bundle path) into your shell rc — otherwise Scaleway / HF
+  Hub TLS will fail with cert-chain errors.
+- **Iter-3 levers won't fire globally** unless you ALSO register
+  `session_start_best_effort.py` in the SessionStart array above. The repo `.envrc`
+  has a `_RC_LEVER_WARN` self-check that catches env-set-but-hook-unregistered;
+  global users don't run direnv on `~/`, so the warn is silent. Either register the
+  hook globally and document iter-3 enablement, or keep the levers project-scoped via
+  per-repo `.envrc`. See [`docs/iter3-levers.md`](docs/iter3-levers.md).
+- **Uninstall:** remove the reasoning-core entries from `~/.claude/settings.json`
+  with `jq` rather than deleting the whole `hooks` block (you may have other hooks):
+  ```bash
+  jq 'del(.hooks.PreToolUse |= map(select(.hooks[0].command|test("reasoning-core")|not)))' \
+     ~/.claude/settings.json > /tmp/s.json && mv /tmp/s.json ~/.claude/settings.json
+  # repeat for PostToolUse, SessionStart, UserPromptSubmit, PreCompact, then
+  launchctl unload ~/Library/LaunchAgents/com.reasoning-core.supervisor.plist  # macOS
+  systemctl --user disable --now reasoning-core-sidecar.service                  # Linux
+  ```
+- **Failure modes to know:**
+  - `RC_REPO` wrong/unset: hooks 404, every Edit fails. Symptom: stderr from Claude
+    Code shows `command not found` or `python3: can't open file`. Fix: re-export or
+    fix the fallback path.
+  - Sidecar dead + `S2_FAIL_CLOSED=1`: every Edit hard-blocks. Symptom:
+    `[hybrid-reasoner] BLOCKED: sidecar unreachable`. Fix: `rc status`,
+    restart the daemon (step 2).
+  - venv missing tree_sitter: every hook ImportErrors. Symptom: stderr noise from
+    every Edit. Fix: re-run step 0 preflight.
 
 ---
 
