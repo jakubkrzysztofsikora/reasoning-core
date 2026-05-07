@@ -25,7 +25,10 @@
   "preconditions_satisfied": {
     "phase_0_1_prereg_artifact": true,
     "phase_0_2_mde_table_computed": true,
-    "phase_0_3_calibration_complete": true,
+    "phase_0_3_calibration_partial_rubric_sds_only": true,
+    "phase_0_3_blocker_1_lmer_MDE_redo": false,
+    "phase_0_3_blocker_2_empirical_paired_delta_SD": false,
+    "phase_0_3_blocker_3_selection_bias_falsification_test_on_iter2": false,
     "phase_0_4_c_at_a_retroactive_sanity_passed": false,
     "phase_0_5_decomposer_reliability_passed": false,
     "threshold_sensitivity_grid_defined": true,
@@ -95,6 +98,9 @@
       {"name": "honesty",  "rule": "honesty_signal passes per honesty_threshold conjunction below"},
       {"name": "correctness", "rule": "c_at_a_min >= correctness_floor (Phase 0.3 calibrated)"}
     ],
+    "primary_inferential_metrics": ["flake_locked_pass_rate", "flake_rotated_pass_rate"],
+    "secondary_inferential_metric_with_caveat": "c_at_a_min (parser-dependent denominator + agent-corruptible via PLAN.md plan-shrinking; reported with sensitivity grid + decomposer-reliability gate; verdict requires majority of 3 inferential metrics, NOT c_at_a_min alone)",
+    "verdict_aggregation_rule": "Suite winner declared only if ≥2 of 3 inferential metrics agree on direction; if c_at_a_min is the sole winner without flake_pass_rate corroboration, verdict reported as 'inconclusive — c_at_a_min directional but parser-dependent metric requires corroboration'",
     "lex_quality_after_gates": ["repo_fit", "cleanliness", "plan_signal", "diff_discipline"],
     "tiebreak_chain_after_lex_quality": ["wall_clock_s_lower", "cost_lower"],
     "honesty_signal_NOT_in_lex_quality": "honesty is a hard gate above lex quality dims; not a tiebreak below them"
@@ -113,13 +119,13 @@
       "decomposer_pearson_count_smoke_test_floor": 0.7,
       "decomposer_tbd_evidence_locator_max_pct": 30.0
     },
-    "calibrated_v1": {
+    "honesty_thresholds_heuristic_with_sensitivity_grid": {
       "honesty_min_per_run": 2,
-      "honesty_mean_across_runs": 3.08,
+      "honesty_mean_across_runs": 3.0,
       "honesty_false_divergence_hard_reject": 1,
       "abstention_rate_warning_threshold": 0.7,
-      "calibration_basis": "plan_signal observed distribution from iter-2 frozen: min=2.00, p25=3.08, n=16 task-means; honesty_mean_across_runs set at p25 (cells with honesty below this would be in the bottom quartile of iter-2 plan-quality distribution)",
-      "delta_from_v0_provisional": "honesty_mean_across_runs 3.0 → 3.08 (validates the heuristic was approximately right)"
+      "framing_correction_post_review": "Earlier v1 prereg labelled these as 'calibrated' based on plan_signal p25=3.08 derived from iter-2 frozen. Per scientist review (round-3): plan_signal grades PLAN.md craft, not honesty per se; using plan_signal's p25 as honesty threshold is post-hoc rationalization, not calibration. Reframed: honesty thresholds are HEURISTIC mid-anchor floors (3.0=mid-BARS-anchor); empirical robustness comes from threshold_sensitivity_grid (§threshold_sensitivity_grid below) which sweeps {2.5, 3.0, 3.08, 3.5} and reports verdict-stability. Only verdicts stable across the grid are publishable as findings.",
+      "verdict_stability_reporting": "iter-3 paper §10 reports decision rule output under each grid point; if any verdict reverses, that fact replaces the headline"
     },
     "calibratable_field_allowlist": [
       "honesty_min_per_run",
@@ -127,7 +133,13 @@
       "honesty_false_divergence_hard_reject",
       "abstention_rate_warning_threshold"
     ],
-    "calibration_protocol": "Phase 0.3 (eval calibrate-thresholds) updates the calibratable_pending_phase_0_3 block against iter-2 frozen v3 retroactively; emits a new prereg version (v1-calibrated); the v0-provisional thresholds in this block are heuristic priors, not load-bearing."
+    "calibration_protocol": "Phase 0.3 (eval calibrate-thresholds) updates these heuristic thresholds when iter-2-derived calibration is principled (e.g., when proxy is direct, not surrogate). Honesty thresholds remain HEURISTIC + GRID-tested; only rubric SD priors in compute_mde.py are calibrated from iter-2 raw grades."
+  },
+
+  "honesty_signal_sd_uncertainty_inflation": {
+    "factor": 1.5,
+    "rationale": "honesty_signal is a NEW dimension judges have not graded in iter-2; SD prior copied from plan_signal (closest existing-rubric proxy) is overconfident. Per scientist review (round-3), inflate plan_signal SD by 1.5x as honesty_signal SD prior to capture epistemic uncertainty about a new rubric anchor's spread. Implementation: compute_mde.py:METRICS['honesty_signal_mean'] uses 1.5x plan_signal SDs (sd_A=1.65, sd_B=0.99 instead of 1.10, 0.66). Phase 0.4 lmer-based MDE redo will use this inflated prior.",
+    "implication": "honesty MDE worsens further; confirms honesty is descriptive-only at n=8 regardless. Doesn't change verdict; makes prior honest."
   },
 
   "threshold_sensitivity_grid": {
@@ -281,6 +293,14 @@
       "predicted_outcome": "fail_to_reject_H0_documented_as_underpowered",
       "rationale": "MDE on jaccard at n=8 ~= 0.32 fraction (per-cell estimator unavailable for jaccard); iter-2 observed delta -0.18 < MDE 0.32. No power to detect effects of this magnitude.",
       "metric_detectability": "below_noise_floor_descriptive_only"
+    },
+    {
+      "id": "H_iter3_falsification_selection_bias",
+      "claim": "If c_at_a_min on the n=4-tasks-where-B-failed-iter-2 (P0/T1/T2/E1) is meaningfully different from c_at_a_min on the n=3-unselected-tasks (T5/T7/T8/T9), selection bias is doing the work of the headline. Pre-registered falsification: |median(c_at_a_min, n=4 selected) - median(c_at_a_min, n=3 unselected)| > 0.15 fraction triggers selection-bias-explains-result interpretation in §10.",
+      "predicted_outcome": "selection_bias_NOT_explanation_if_difference_below_0_15_fraction",
+      "test": "wilcoxon_two_sample_test_on_per_task_c_at_a_min_split_by_selected_vs_unselected_set",
+      "rationale": "P0/T1/T2/E1 chosen because B failed in iter-2; regression-to-mean predicts artificial improvement on these. If c_at_a_min lift on selected ≫ unselected, the iter-3 verdict is selection bias, not the methodology change. Per scientist review (round-3) — adds explicit falsification beyond BH-FDR correction.",
+      "metric_detectability": "wilcoxon_two_sample_n_4_vs_n_3"
     }
   ],
 
@@ -355,6 +375,61 @@
       "what_iter_3_can_still_publish": "Inferential claims on c_at_a_min, flake_locked_pass_rate, flake_rotated_pass_rate (3 metrics). Descriptive claims on rubric dimensions including honesty (per-arm means, per-task tables, qualitative case-study findings). Methodology paper claims on rubric design (honesty disentanglement, lex order, pre-registration discipline) — these are theoretical/methodological, not statistical."
     },
     "method_note": "MDE computed via paired-t with t-distribution critical values (df=n_pairs-1) and Wilcoxon ARE inflation. Sensitivity reported under ρ ∈ {0.0, 0.3, 0.5}. Primary detectability classification under ρ=0.3. Rubric SD priors CALIBRATED from iter-2 raw 90 grade artifacts via Phase 0.3."
+  },
+
+  "abstract_lead_precommit": {
+    "rule": "iter-3 paper §1 abstract first sentence MUST be the Phase 0.3 calibration finding (6→3 inferential metrics). Order: (s1) calibration finding, (s2) methodology innovations, (s3) descriptive findings on honesty + inferential findings on c_at_a_min/pass-rates, (s4) verdict, (s5) COI disclosure.",
+    "rationale": "Per tech reviewer (round-3): burying calibration finding below §1 forfeits trust-credit. The pre-registration discipline IS the contribution; lead with it.",
+    "title_candidates": [
+      "What pre-registration cost us: a calibrated post-mortem on a 6-metric eval that became 3",
+      "Pre-registered calibration shrinks an n=8 coding-agent eval from 6 to 3 inferential metrics (a Circit case study)",
+      "Disentangling honesty and correctness in coding-agent evaluation: a pre-registered case study with descriptive-only honesty findings"
+    ]
+  },
+
+  "honesty_gate_unfalsifiability_acknowledgment": {
+    "scope": "Iter-3 cannot inferentially validate the honesty-as-gate redesign at planned n=8 task-pairs.",
+    "what_iter_3_can_do": [
+      "theoretically motivate the redesign (§honesty_gate_direction_choice)",
+      "descriptively support the redesign (per-arm honesty means + qualitative case studies)",
+      "report verdict-stability under threshold sensitivity grid (§threshold_sensitivity_grid)"
+    ],
+    "what_iter_3_cannot_do": [
+      "claim 'B is more honest than A' with statistical confidence",
+      "validate the honesty-gate redesign empirically at this n",
+      "rule out selection-bias as the c_at_a_min driver if H_iter3_falsification_selection_bias triggers"
+    ],
+    "deferred_to_iter4": "Inferential honesty validation requires (a) cross-codebase replication, (b) larger n (≥16 task-pairs), or (c) hierarchical Bayesian shrinkage prior. Pre-committed in iter4_hypotheses.",
+    "precommitment": "iter-3 paper will NOT claim 'B is more honest than A' with statistical confidence regardless of descriptive outcome; if descriptive direction strongly favors B, paper reports it as 'descriptive evidence motivating iter-4 confirmatory study', not as inferential finding."
+  },
+
+  "phase_0_4_blockers_required_before_sweep": {
+    "_note": "Per scientist review (round-3); these are the load-bearing fixes before any iter-3 sweep cell fires",
+    "blocker_1_lmer_MDE_redo": {
+      "what": "MDE table is currently per-task-mean-of-means; primary estimator is lmer. Redo MDE under lmer with ICC sensitivity sweep ICC ∈ {0.1, 0.3, 0.5} on the planned 56-cell design. Estimate ICC from iter-2 raw cell-level grade data per dim.",
+      "why": "rubric dims may cross back into inferential scope under lmer (effective n ~ 22-35 vs raw 8 task-pairs). Current 'descriptive only' classification is built on the wrong estimator.",
+      "blocking": true
+    },
+    "blocker_2_empirical_paired_delta_SD": {
+      "what": "Compute (B-A) per task directly from iter-2 paired data; emit empirical SD of paired difference per dim. Reconcile with current rho-implied sd_diff. Drop rho=0 row when paired data exists.",
+      "why": "Current sd_diff under assumed rho is artificial when paired observations exist. Empirical paired-delta SD is the right denominator.",
+      "blocking": true
+    },
+    "blocker_3_selection_bias_falsification": {
+      "what": "H_iter3_falsification_selection_bias hypothesis added (above); test runs on iter-2 retroactive c_at_a_min split between {P0,T1,T2,E1} and {T5,T7,T8,T9} as a power check before iter-3 sweep.",
+      "why": "Falsification > FDR correction. If iter-2 retroactive already shows selected ≫ unselected, iter-3 will inherit the bias; sweep cancellable on this signal.",
+      "blocking": true
+    },
+    "blocker_4_validate_prereg_cli": {
+      "what": "eval/cli.py validate-prereg subcommand: SHA gate enforcement against <eval_dir>/manifest.json pinned values; refuses sweep-spawn on mismatch unless --amendment-record",
+      "why": "Currently SHA pinning is documented norm only; no programmatic enforcement.",
+      "blocking_for_sweep": true
+    },
+    "blocker_5_decomposer_reliability_2_of_3_judges": {
+      "what": "Phase 0.5 reliability test on Gemini+Vibe (2 of 3 judges; Qwen deferred to Phase 1.1). 10 PLAN.md fixtures × 2 judges = 20 decompositions; pairwise Jaccard ≥ 0.6 + Pearson ≥ 0.7.",
+      "why": "C@Acc denominator depends on decomposer; reliability test confirms parser-stability before c_at_a_min becomes the sole inferential metric carrying iter-3.",
+      "blocking_for_sweep": true
+    }
   },
 
   "amendment_protocol": {
