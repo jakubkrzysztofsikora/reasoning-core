@@ -1,0 +1,109 @@
+# Iter-3 Levers
+
+> **Symmetry guarantee.** All three levers default OFF. Setup A receives **zero** changes from the reasoning-core side in iter-3 — its `.envrc` and `settings.local.json` are bit-identical to iter-2 v3. Setup B receives the levers only if the eval team enables them in their own `eval-setups/B/`. Reasoning-core ships levers; the eval team turns them on. This separation dissolves the iter-2 v1 "B hand-engineered for the eval" framing.
+
+Reasoning-core ships three default-off levers in iter-3. The eval team independently decides whether to enable them via their own `eval-setups/B/.envrc` and `settings.local.json`.
+
+Plan: [`thoughts/shared/plans/2026-05-07-iter3-decisive-win.md`](../thoughts/shared/plans/2026-05-07-iter3-decisive-win.md)
+Reviews: LLM-scientist + agentic-AI engineer + AI-newsletter tech reviewer (RC-only scope), all PROCEED with revisions; full Phase-1-5 validation pass folded in.
+
+## Lever spec
+
+| Env var | Default | Modes | Effect | Implementation |
+|---------|---------|-------|--------|----------------|
+| `RC_BEST_EFFORT_SPEC` | unset (off) | `1` = on; anything else = off | When on, `session_start_best_effort.py` emits a `hookSpecificOutput.additionalContext` JSON envelope at SessionStart with the iter-3 minimal overlay: *"Never ship a DIVERGENCES.md alone."* (Single-factor: license-removal sentence ONLY. Substitution-recipe variants are deferred to iter-4 under a separate env var so the two effects can be ablated cleanly.) | [`src/hooks/session_start_best_effort.py`](../src/hooks/session_start_best_effort.py) |
+| `RC_PLAN_GROUNDING` | unset (`0`) | `0` = off; `1` = warn (audit-only); `2` = hard block | At `pre_edit_guard` time, cross-references the edit's `file_path` against paths mentioned in the run's `PLAN.md`. Mode 1 emits stderr advisory + audit event tagged `signal_source=plan_grounding decision=warn`. Mode 2 records audit block + exit 2. Audit-visible signal is NOT shown to the agent — neutralizes the path-stuffing failure mode. | [`src/hooks/_dispatch.py:gate_plan_grounding`](../src/hooks/_dispatch.py) |
+| `RC_RUN_DIR` | unset | (path) | Optional override for PLAN.md resolution. Precedence: `RC_RUN_DIR` > `CLAUDE_PROJECT_DIR` > `cwd`. | [`src/hooks/_dispatch.py:_resolve_plan_path`](../src/hooks/_dispatch.py) |
+
+## Reproducibility
+
+To reproduce iter-3 Setup B exactly as evaluated, the eval team's `eval-setups/B/.envrc` should export:
+
+```bash
+# RC_BEST_EFFORT_SPEC=1   # ENABLE: SessionStart overlay nudges agent away from divergence-only bailout
+# RC_PLAN_GROUNDING=1     # ENABLE: warn-only plan-impl drift signal (audit-visible only)
+```
+
+Setup A keeps both unset (vanilla baseline).
+
+The reasoning-core git SHA at iter-3 freeze pins the lever code; eval team's frozen manifest pins which env vars were exported. Together these define the iter-3 measurement.
+
+## SessionStart hook registration
+
+Eval team registers the overlay hook in their own `settings.local.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/Users/jakubsikora/Repos/personal/reasoning-core}/src/hooks/session_start_best_effort.py",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+If `RC_BEST_EFFORT_SPEC` is unset, the hook exits 0 with no stdout — wiring is a no-op when the lever is off.
+
+## Iter-4 falsifying ablations
+
+Per the LLM-scientist + newsletter v3 reviews, single-factor variants the next iteration should run:
+
+1. **Overlay text minimal vs full substitution recipe.** Iter-3 ships only the license-removal sentence (*"Never ship a DIVERGENCES.md alone."*). Iter-4 must test a substitution-recipe variant under a separate env var (e.g. `RC_BEST_EFFORT_RECIPE=1`) appending *"…and emit a compilable stub against the closest available contract"* — running both lets us attribute any T1/P0/E1 correctness-gate movement to license-removal-alone vs the full recipe.
+2. **No-op placebo overlay** (`RC_BEST_EFFORT_SPEC=2` reserved). Inject a benign content-equivalent overlay (*"Follow the task contract."*) of identical length and SessionStart timing. Separates "any system-context injection" Hawthorne effect from "this specific instruction".
+3. **`RC_PLAN_GROUNDING` mode 1 vs mode 2 vs unset.** Three-way ablation tells whether the warn-only audit signal alone moves plan-impl jaccard, or whether agent-visible blocking is needed.
+4. **`RC_BEST_EFFORT_SPEC` on vs off, plan-grounding off in both.** Isolates the SessionStart overlay's contribution to T1/P0/E1 correctness-gate pass rates from plan-grounding's contribution to jaccard.
+5. **Corpus benchmark hardening.** Second blind annotator on the existing 25 edits + Cohen's κ; one held-out plan from outside the iter-2 sweep author labeled by the second annotator only; bootstrap (precision, recall) CIs reported alongside the point estimates.
+
+## Out-of-scope (NOT shipped in iter-3)
+
+Reasoning-core did not modify any of the following — these are owned by the eval team:
+
+- Eval prompts, rubric, judge models, honesty bonus design, α gate, T7 rotation, T9 reference-review embedding, cache cost reporting, grade-coverage gate
+- Docker provisioning for T1 / E1 cross-system tasks
+- `eval-setups/B/.envrc` or `settings.local.json` (eval team owns; the env-var values listed above are *recommendations*, not commits in this repo)
+- `~/.claude/projects/.../memory/*.md` (Claude Code user-memory layer)
+- Setup A — receives zero changes in iter-3 from the reasoning-core side
+
+## Standalone benchmark
+
+The corpus benchmark at [`tests/test_plan_grounding_corpus.py`](../tests/test_plan_grounding_corpus.py) runs the gate against five frozen iter-2 plans (`tests/fixtures/plans/{P0,T2,T5,T8,T9}/`) with hand-labeled `expected_in_plan` ground truth and asserts `precision ≥ 0.90`, `recall ≥ 0.80`.
+
+Current corpus performance (5 fixtures, 25 labeled edits): **precision=1.000, recall=0.800**. With n=25 the Wilson 95% CI on recall spans approximately [0.58, 0.92] — the 0.80 floor sits inside the CI, so one fixture relabel could flip pass↔fail. Treat this as a **CI regression canary for the path-extraction regex**, not a generalizable benchmark claim.
+
+**Closure-of-evaluator caveat (scientist + newsletter review)**: the same author wrote the regex (`src/hooks/_plan_paths.py`), the five fixture plans, the `expected_in_plan` ground-truth labels, and the precision/recall floors. To upgrade this from a regression canary to a publishable benchmark, iter-4 needs (a) a second annotator blind to the regex, (b) Cohen's κ on the labels, (c) at least one held-out plan from a different author/project, and (d) bootstrap CIs on (precision, recall).
+
+E1 was excluded from the fixture set: its 1.6 KB plan has too few path references for path-extraction stress; T7 was excluded because both arms ceiling-saturated in iter-2 (no signal). The five chosen fixtures span three distinct plan styles (smoke / spec-only / cross-workload refactor).
+
+**SHA pin for citations**: when citing the 1.000 / 0.800 numbers, pin `src/hooks/_plan_paths.py` to its SHA at iter-3 freeze (currently `df1043b8b3b8bc0ead972684fd34c02f8148fa1c1ec98f3e5fa867ca7d144cb7`). A regex tweak post-freeze will silently rebase the floor.
+
+## Confounds and known limits
+
+Documenting up-front so iter-4 measurement design accounts for them:
+
+- **`plan_refs_count` is not the coupling metric.** The audit-log field is plan length × regex coverage × the agent's path-citation verbosity, not plan-impl coupling. To attribute coupling, the eval-side aggregator must compute `(edits_in_plan / total_edits)` per run, not aggregate `plan_refs_count` directly.
+- **No iter-3 placebo.** Iter-3 ships the active overlay only. Iter-4 should add a `RC_BEST_EFFORT_SPEC=2` mode that injects a content-equivalent benign overlay ("Follow the task contract.") to separate "any SessionStart context injection" from "this specific instruction".
+- **`_plan_paths.distinct_file_paths` is shared by both `pre_plan_guard` and `gate_plan_grounding`.** A regex tweak intended to fix grounding recall will silently shift `pre_plan_guard`'s distinct-file count threshold. Iter-4 ablations must hold this constant or update both gates' thresholds together.
+
+## File map
+
+| File | Purpose |
+|------|---------|
+| `src/hooks/_plan_paths.py` | Single-source-of-truth path extractor (`distinct_file_paths`, `extract_files_with_loc`) |
+| `src/hooks/session_start_best_effort.py` | SessionStart-hook overlay (env-gated by `RC_BEST_EFFORT_SPEC`) |
+| `src/hooks/_dispatch.py` | New `gate_plan_grounding` + `_resolve_plan_path` |
+| `src/hooks/pre_edit_guard.py` | Hand-wires the gate before `_extract_changes` (line 444) |
+| `src/hooks/pre_plan_guard.py` | Refactored to consume `_plan_paths` (no behavior change) |
+| `tests/test_plan_paths.py` | Helper unit + parity tests |
+| `tests/test_session_start_best_effort.py` | JSON envelope shape + env-gating |
+| `tests/test_plan_grounding.py` | Gate decision matrix |
+| `tests/test_hook_block.py` | Three end-to-end integration cases |
+| `tests/test_plan_grounding_corpus.py` | Standalone precision/recall benchmark |
+| `tests/fixtures/plans/<task>/` | Five frozen iter-2 PLAN.md + edits.jsonl pairs |
