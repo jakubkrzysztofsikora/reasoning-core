@@ -30,6 +30,10 @@ if _HOOKS_DIR not in sys.path:
     sys.path.insert(0, _HOOKS_DIR)
 
 import audit_log  # type: ignore  # noqa: E402
+from _plan_paths import (  # type: ignore  # noqa: E402
+    distinct_file_paths as _distinct_file_paths,
+    extract_files_with_loc as _shared_extract_files_with_loc,
+)
 
 TOOL_NAME = "Plan"
 
@@ -83,16 +87,7 @@ def _read_payload() -> Optional[Dict[str, Any]]:
 # Heuristic helpers
 # ---------------------------------------------------------------------------
 
-# Match lines like "- src/foo.py — ~120 LOC" or "* `src/foo.py`: ~80 lines".
-_FILE_LINE_RE = re.compile(
-    r"""
-    [\-\*\+]\s*                          # bullet
-    `?(?P<path>[A-Za-z0-9_./\-]+\.[A-Za-z0-9]{1,8})`?
-    .*?                                  # any text in between
-    (?:~?\s*(?P<loc>\d{2,5})\s*(?:LOC|lines?|locs?))
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
+# File-line regex moved to _plan_paths._FILE_LINE_RE (iter-3 single source of truth).
 
 # Match section headers that introduce a file list, e.g. "### Files to create".
 _FILE_SECTION_RE = re.compile(
@@ -105,25 +100,18 @@ _PHASE_HEAD_RE = re.compile(r"^#{1,6}\s+(?:Phase|Step)\b", re.IGNORECASE | re.MU
 
 
 def _extract_files_with_loc(content: str) -> List[Tuple[str, int]]:
-    """Find file_path + estimated LOC pairs in the plan body."""
-    out: List[Tuple[str, int]] = []
-    for m in _FILE_LINE_RE.finditer(content):
-        try:
-            loc = int(m.group("loc"))
-        except (TypeError, ValueError):
-            continue
-        path = m.group("path") or ""
-        if path:
-            out.append((path, loc))
-    return out
+    """Find file_path + estimated LOC pairs in the plan body.
+
+    Iter-3 refactor: delegates to ``_plan_paths.extract_files_with_loc``
+    (single source of truth shared with the plan-grounding gate).
+    Behavior preserved byte-for-byte; tests live at ``test_plan_paths.py``.
+    """
+    return _shared_extract_files_with_loc(content)
 
 
 def _count_distinct_file_paths(content: str) -> int:
-    paths = {p for p, _ in _extract_files_with_loc(content)}
-    # Also consider bare paths in the plan body (no LOC annotation).
-    bare = re.findall(r"`([A-Za-z0-9_./\-]+\.[A-Za-z0-9]{1,8})`", content)
-    paths.update(bare)
-    return len(paths)
+    """Iter-3 refactor: delegates to ``_plan_paths.distinct_file_paths``."""
+    return len(_distinct_file_paths(content))
 
 
 def _is_test_file(path: str) -> bool:

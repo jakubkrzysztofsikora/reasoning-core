@@ -1,0 +1,334 @@
+{
+  "computed_at": "2026-05-07T08:30:00Z",
+  "computed_by_script": "thoughts/shared/research/scripts/compute_mde.py",
+  "method": "paired_t_with_t_distribution_critical_values_inflated_for_wilcoxon",
+  "alpha_two_sided": 0.05,
+  "beta": 0.2,
+  "rho_sensitivity_values": [
+    0.0,
+    0.3,
+    0.5
+  ],
+  "rho_primary_for_detectability_classification": 0.3,
+  "n_pairs_per_task_used": 8,
+  "n_pairs_per_cell_used": 28,
+  "n_cells_per_arm_total": 28,
+  "n_cells_total": 56,
+  "n_runs_by_task": {
+    "P0": 4,
+    "T1": 4,
+    "T2": 4,
+    "E1": 4,
+    "T5": 3,
+    "T7": 3,
+    "T8": 3,
+    "T9": 3
+  },
+  "metrics": [
+    {
+      "metric": "flake_locked_pass_rate",
+      "iter2_sd_A": 0.059,
+      "iter2_sd_B": 0.118,
+      "iter2_observed_delta": 0.0,
+      "test": "Wilcoxon",
+      "operationally_meaningful_threshold": 0.1,
+      "operationally_meaningful_threshold_source": "iter-1 paper \u00a76.4: 0.10 absolute pass-rate fraction = 1 of 10 tests flipping; corresponds to crossing locked threshold floor by 0.10",
+      "unit": "pass-rate fraction",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.1319,
+          "mde_per_task_n8": 0.1577,
+          "mde_per_cell_n28": 0.0744
+        },
+        "rho_0.3": {
+          "sd_diff": 0.115,
+          "mde_per_task_n8": 0.1375,
+          "mde_per_cell_n28": 0.0648
+        },
+        "rho_0.5": {
+          "sd_diff": 0.1022,
+          "mde_per_task_n8": 0.1222,
+          "mde_per_cell_n28": 0.0576
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": true,
+      "primary_estimator": "Wilcoxon paired sign-rank",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "flake_rotated_pass_rate",
+      "iter2_sd_A": 0.082,
+      "iter2_sd_B": 0.127,
+      "iter2_observed_delta": -0.033,
+      "test": "Wilcoxon",
+      "operationally_meaningful_threshold": 0.1,
+      "operationally_meaningful_threshold_source": "iter-1 paper \u00a76.4: same floor as locked",
+      "unit": "pass-rate fraction",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.1512,
+          "mde_per_task_n8": 0.1807,
+          "mde_per_cell_n28": 0.0852
+        },
+        "rho_0.3": {
+          "sd_diff": 0.1289,
+          "mde_per_task_n8": 0.1541,
+          "mde_per_cell_n28": 0.0726
+        },
+        "rho_0.5": {
+          "sd_diff": 0.1115,
+          "mde_per_task_n8": 0.1333,
+          "mde_per_cell_n28": 0.0629
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": true,
+      "primary_estimator": "Wilcoxon paired sign-rank",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "plan_impl_jaccard",
+      "iter2_sd_A": 0.099,
+      "iter2_sd_B": 0.296,
+      "iter2_observed_delta": -0.178,
+      "test": "Wilcoxon",
+      "operationally_meaningful_threshold": 0.2,
+      "operationally_meaningful_threshold_source": "iter-1 paper \u00a76.6: jaccard delta of 0.20 corresponds to 1 in 5 plan claims diverging at impl",
+      "unit": "jaccard \u2208 [0,1]",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.3121,
+          "mde_per_task_n8": 0.3732,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.3": {
+          "sd_diff": 0.2826,
+          "mde_per_task_n8": 0.3378,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.5": {
+          "sd_diff": 0.261,
+          "mde_per_task_n8": 0.312,
+          "mde_per_cell_n28": null
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "Wilcoxon paired sign-rank",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "wall_clock_s",
+      "iter2_sd_A": 150.0,
+      "iter2_sd_B": 235.0,
+      "iter2_observed_delta": 134.0,
+      "test": "Wilcoxon log",
+      "operationally_meaningful_threshold": 30.0,
+      "operationally_meaningful_threshold_source": "developer-flow threshold: 30s \u2248 5% of iter-2 A median run wall-clock (493s); below this is dev-experience-equivalent",
+      "unit": "seconds",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 278.792,
+          "mde_per_task_n8": 333.3227,
+          "mde_per_cell_n28": 157.1425
+        },
+        "rho_0.3": {
+          "sd_diff": 237.855,
+          "mde_per_task_n8": 284.3786,
+          "mde_per_cell_n28": 134.0682
+        },
+        "rho_0.5": {
+          "sd_diff": 206.0946,
+          "mde_per_task_n8": 246.406,
+          "mde_per_cell_n28": 116.1663
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "Wilcoxon paired sign-rank",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "impl_quality_mean",
+      "iter2_sd_A": 0.4,
+      "iter2_sd_B": 0.4,
+      "iter2_observed_delta": 0.066,
+      "test": "ordinal mixed-effects",
+      "operationally_meaningful_threshold": 1.0,
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing: 1.0 = one anchor level (1\u21923 or 3\u21925 jump)",
+      "unit": "anchor level (1/3/5)",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.5657,
+          "mde_per_task_n8": 0.6522,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.3": {
+          "sd_diff": 0.4733,
+          "mde_per_task_n8": 0.5457,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.5": {
+          "sd_diff": 0.4,
+          "mde_per_task_n8": 0.4612,
+          "mde_per_cell_n28": null
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": true,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "lmer mixed-effects",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "plan_quality_mean",
+      "iter2_sd_A": 0.4,
+      "iter2_sd_B": 0.4,
+      "iter2_observed_delta": 0.479,
+      "test": "ordinal mixed-effects",
+      "operationally_meaningful_threshold": 1.0,
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing",
+      "unit": "anchor level (1/3/5)",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.5657,
+          "mde_per_task_n8": 0.6522,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.3": {
+          "sd_diff": 0.4733,
+          "mde_per_task_n8": 0.5457,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.5": {
+          "sd_diff": 0.4,
+          "mde_per_task_n8": 0.4612,
+          "mde_per_cell_n28": null
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": true,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "lmer mixed-effects",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "honesty_signal_mean",
+      "iter2_sd_A": 0.4,
+      "iter2_sd_B": 0.4,
+      "iter2_observed_delta": null,
+      "test": "ordinal mixed-effects",
+      "operationally_meaningful_threshold": 1.0,
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing (new dim, prior matches existing rubric dims)",
+      "unit": "anchor level (1/3/5)",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.5657,
+          "mde_per_task_n8": 0.6522,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.3": {
+          "sd_diff": 0.4733,
+          "mde_per_task_n8": 0.5457,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.5": {
+          "sd_diff": 0.4,
+          "mde_per_task_n8": 0.4612,
+          "mde_per_cell_n28": null
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": true,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "lmer mixed-effects",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "c_at_a_min",
+      "iter2_sd_A": 0.1,
+      "iter2_sd_B": 0.15,
+      "iter2_observed_delta": null,
+      "test": "Wilcoxon",
+      "operationally_meaningful_threshold": 0.1,
+      "operationally_meaningful_threshold_source": "matches flake_pass_rate threshold: 0.10 fraction = crossing typical decision threshold",
+      "unit": "fraction \u2208 [0,1]",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.1803,
+          "mde_per_task_n8": 0.2155,
+          "mde_per_cell_n28": 0.1016
+        },
+        "rho_0.3": {
+          "sd_diff": 0.1533,
+          "mde_per_task_n8": 0.1833,
+          "mde_per_cell_n28": 0.0864
+        },
+        "rho_0.5": {
+          "sd_diff": 0.1323,
+          "mde_per_task_n8": 0.1582,
+          "mde_per_cell_n28": 0.0746
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": true,
+      "primary_estimator": "Wilcoxon paired sign-rank",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "total_dollars_mean",
+      "iter2_sd_A": 0.5,
+      "iter2_sd_B": 0.5,
+      "iter2_observed_delta": null,
+      "test": "Wilcoxon log",
+      "operationally_meaningful_threshold": 0.1,
+      "operationally_meaningful_threshold_source": "10% relative cost delta = ops-budget-meaningful threshold",
+      "unit": "USD per cell (relative log scale)",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 0.7071,
+          "mde_per_task_n8": 0.8454,
+          "mde_per_cell_n28": 0.3986
+        },
+        "rho_0.3": {
+          "sd_diff": 0.5916,
+          "mde_per_task_n8": 0.7073,
+          "mde_per_cell_n28": 0.3335
+        },
+        "rho_0.5": {
+          "sd_diff": 0.5,
+          "mde_per_task_n8": 0.5978,
+          "mde_per_cell_n28": 0.2818
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "Wilcoxon paired sign-rank",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    }
+  ],
+  "summary": {
+    "detectable_at_op_threshold_per_task_n8": [
+      "impl_quality_mean",
+      "plan_quality_mean",
+      "honesty_signal_mean"
+    ],
+    "detectable_at_op_threshold_per_cell_n28": [
+      "flake_locked_pass_rate",
+      "flake_rotated_pass_rate",
+      "c_at_a_min"
+    ],
+    "iter_3_can_make_inferential_claims_about": [
+      "impl_quality_mean",
+      "plan_quality_mean",
+      "honesty_signal_mean",
+      "flake_locked_pass_rate",
+      "flake_rotated_pass_rate",
+      "c_at_a_min"
+    ],
+    "iter_3_must_report_descriptively_not_inferentially": [
+      "plan_impl_jaccard",
+      "wall_clock_s",
+      "total_dollars_mean"
+    ]
+  },
+  "interpretation": "MDE classifies which metrics iter-3 can make INFERENTIAL claims about (effect size > MDE => non-zero effect detectable at alpha=0.05/beta=0.20). All other metrics must be reported DESCRIPTIVELY in iter-3 paper \u00a78.2: per-arm means + per-task tables, but NOT 'B is N% higher than A'-style inferential framing. Affirmative scope of iter-3 inferential claims = 'iter_3_can_make_inferential_claims_about' list."
+}
