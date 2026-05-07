@@ -37,27 +37,23 @@ import json
 import os
 import sys
 
-# Iter-3 single-factor: license-removal sentence ONLY. The previous draft
-# trailed "— always pair it with the closest compilable artifact the contract
-# permits", which prescribes the substitution recipe and would confound the
-# iter-4 ablation between license-removal-alone vs full-recipe variants. Per
-# scientist review v3, the recipe MUST live in a separate env-var (e.g.
-# RC_BEST_EFFORT_RECIPE=1) when iter-4 ships; this v3 string is the minimal arm.
-# Overlay v2 (sweep round-6 #3): no-op carve-out added.
-# Reviewer-flagged risk: on a "no production change needed" task (T8-style
-# cutover where the rename was already applied or no rename is required),
-# the v1 overlay "Never ship a DIVERGENCES.md alone" pressures the agent
-# to invent edits to satisfy the rule, harming impl_quality. The carve-out
-# preserves the license-removal intent while explicitly authorizing the
-# correct response when no edit is appropriate. Single-factor for iter-4
-# attribution: the no-op exception is the same construct (license shape),
-# not a substitution-recipe expansion (still deferred to iter-4 under
-# a separate env var).
+# Overlay v3 (round-7 hotfix): the v2 carve-out was gamed live in iter-3 —
+# B/P0 forfeited the smoke test in 53s by reading "missing fixtures + Docker
+# stack" as "contract requires no production change" and shipping a 1-line
+# PLAN.md only. v3 closes that escape hatch by enumerating the no-op
+# condition explicitly (work-already-done) and explicitly REJECTING
+# missing-infrastructure as a no-op trigger — for that case the original
+# rule applies (best-effort stub + DIVERGENCES.md naming the gap).
 _OVERLAY = (
-    "Never ship a DIVERGENCES.md alone — unless the contract requires no "
-    "production change (e.g. rename already applied upstream, no behavioral "
-    "change required), in which case ship a one-line PLAN.md stating why "
-    "no edit is appropriate and produce no other artifact."
+    "Never ship a DIVERGENCES.md alone. The only exception is when the "
+    "requested change has already been applied upstream (e.g. a rename "
+    "already done in a prior commit, or a no-op cutover where target state "
+    "already matches) — in that case ship a one-line PLAN.md stating which "
+    "prior commit applied the change and produce no other artifact. "
+    "Missing infrastructure (Docker, fixtures, DB, sandbox endpoints) is "
+    "NOT a no-op condition — for that, ship a best-effort compilable stub "
+    "against the closest available contract plus a DIVERGENCES.md naming "
+    "the missing infra and the substitution made."
 )
 
 

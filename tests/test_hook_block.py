@@ -118,8 +118,20 @@ def _run_hook(payload: Dict[str, Any], *, env: Optional[Dict[str, str]] = None,
     # S2_FAIL_CLOSED=1 / RC_ALLOW_GUARD_EDIT etc. at job level) doesn't
     # contaminate behavior under test. Tests opt-in to those vars
     # explicitly via the `env` arg.
+    #
+    # Also scrub RC_LANG_LOCK + RC_STATE_DIR + RC_TASK_SPEC so the operator's
+    # actual ~/.local/state/reasoning-core/sessions/ manifests cannot leak
+    # into subprocess hook runs (round-7 test-isolation fix). Tests that
+    # exercise lang-lock seed their own manifest under tmp_path and pass
+    # RC_LANG_LOCK=1 + RC_STATE_DIR explicitly.
     real_env = os.environ.copy()
-    for var in ("S2_FAIL_CLOSED", "RC_ALLOW_GUARD_EDIT", "S2_URL", "S2_TIMEOUT"):
+    for var in (
+        "S2_FAIL_CLOSED", "RC_ALLOW_GUARD_EDIT", "S2_URL", "S2_TIMEOUT",
+        "RC_LANG_LOCK", "RC_STATE_DIR", "RC_TASK_SPEC", "RC_LANG_OVERRIDE",
+        "RC_LANG_ALLOW", "RC_LANG_LOCK_PATH_EXEMPT",
+        # Iter-3 levers: tests that need them opt in via env arg.
+        "RC_BEST_EFFORT_SPEC", "RC_PLAN_GROUNDING", "RC_RUN_DIR",
+    ):
         real_env.pop(var, None)
     if env:
         real_env.update(env)

@@ -20,9 +20,11 @@
   },
   "reasoning_core_lever_code_shas": {
     "src/hooks/_plan_paths.py": "df1043b8b3b8bc0ead972684fd34c02f8148fa1c1ec98f3e5fa867ca7d144cb7",
-    "src/hooks/session_start_best_effort.py": "c688e200f85e3031f47c134028bbbe98e043e721b3d29dade031aeea89b6731b",
-    "_overlay_sha_v2_round6": "19d4a051324d",
-    "_overlay_text_v2_round6": "Never ship a DIVERGENCES.md alone — unless the contract requires no production change (e.g. rename already applied upstream, no behavioral change required), in which case ship a one-line PLAN.md stating why no edit is appropriate and produce no other artifact.",
+    "src/hooks/session_start_best_effort.py": "89dc99ff5e8bf78c27cd0908e8308f3a0ff0c7affe8786837eb2c38399a0faae",
+    "_overlay_sha_v3_round7": "c7080f353e94",
+    "_overlay_text_v3_round7": "Never ship a DIVERGENCES.md alone. The only exception is when the requested change has already been applied upstream (e.g. a rename already done in a prior commit, or a no-op cutover where target state already matches) — in that case ship a one-line PLAN.md stating which prior commit applied the change and produce no other artifact. Missing infrastructure (Docker, fixtures, DB, sandbox endpoints) is NOT a no-op condition — for that, ship a best-effort compilable stub against the closest available contract plus a DIVERGENCES.md naming the missing infra and the substitution made.",
+    "_overlay_v2_round6_superseded_reason": "v2 carve-out was gamed live in iter-3 first sweep — B/P0 forfeited Cypress smoke in 53s by reading 'missing Docker stack' as 'contract requires no production change'. Aborted sweep, applied v3 hotfix.",
+    "_overlay_sha_v2_round6_history": "19d4a051324d (deprecated)",
     "src/hooks/_dispatch.py": "d03d5e321905ef3bcdfa7974a5f8da02d2842f50cb47c7d7b12de79216eb0b28"
   },
   "frozen_file_artifacts": {
