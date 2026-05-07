@@ -109,16 +109,35 @@
     "fallback_committed": {
       "rubric_change": "REPLACE_C_AT_A_min_with_binary_attempted_vs_divergent",
       "binary_rubric_definition": "Per (setup, task, run): coverage = N_attempted / (N_attempted + N_declared_divergent), where N_attempted and N_declared_divergent are PER-JUDGE-AGREED counts (intersection of judge sets). accuracy = locked_pass_rate. binary_c_at_a_min = min(coverage, accuracy). No atomic-claim count dependence — robust to decomposer noise.",
-      "implication_for_iter_3_inferential_scope": "binary_c_at_a_min replaces c_at_a_min in iter_3_inferential_scope_under_primary_lmer_estimator. Phase 0.4 retroactive must be re-run with binary rubric; partial JSONL at thoughts/shared/research/iter3-c-at-a-retroactive-iter2.json.progress is INVALID under fallback (was running atomic-claim version).",
-      "downgraded_inferential_scope_under_fallback": "iter_3_inferential_scope shrinks to 2 metrics (flake_locked_pass_rate, flake_rotated_pass_rate) under the conservative reading; binary_c_at_a_min readded if Phase 0.4 retroactive re-run passes a separate sanity check (no flat distribution within +/-0.05)."
+      "binary_rubric_classifier_rules_PRE_PHASE_0_5b": {
+        "_purpose": "Per tech reviewer round-5 Q6: 'attempted' and 'declared_divergent' must be formally classified, otherwise judges diverge here too. Concrete rules pinned BEFORE Phase 0.5b reliability gate runs.",
+        "declared_divergent_classifier": "A claim is 'declared_divergent' if AND only if it appears as a top-level bullet (markdown '-' or '*') under a heading containing 'divergent' OR 'divergence' in DIVERGENCES.md, OR is explicitly tagged with [DIVERGENT] / [BLOCKED] / [SKIP] in PLAN.md.",
+        "attempted_classifier": "A claim is 'attempted' if AND only if it appears as a top-level bullet under PLAN.md's Required-Output-Artifacts / Tasks / Steps sections AND does NOT match declared_divergent_classifier.",
+        "intersection_definition": "PER-JUDGE-AGREED count = |{(plan_path, claim_text) tuple : tuple labeled 'attempted' by judge_A AND tuple labeled 'attempted' by judge_B}|. Disagreements drop from numerator AND denominator (conservative against B; cannot inflate coverage).",
+        "phase_0_5b_required_before_adoption": "Cohen κ on per-claim binary labels after bipartite matching ≥ 0.6 across the same 10 fixtures. Without Phase 0.5b PASS, binary rubric is not yet adopted as primary; iter-3 inferential scope is 2 metrics only (flake_pass_rates)."
+      },
+      "implication_for_iter_3_inferential_scope": "binary_c_at_a_min replaces c_at_a_min in iter_3_inferential_scope_under_primary_lmer_estimator IFF Phase 0.5b κ ≥ 0.6 PASSES. Partial 2/48 atomic-claim cells preserved at thoughts/shared/research/iter3-c-at-a-retroactive-iter2.atomic-claim.INVALIDATED.jsonl (with .README.md sibling) for audit; not used in inferential computations.",
+      "downgraded_inferential_scope_under_fallback_pre_phase_0_5b": "iter_3_inferential_scope shrinks to 2 metrics (flake_locked_pass_rate, flake_rotated_pass_rate) under the conservative reading; binary_c_at_a_min readded ONLY if Phase 0.5b passes Cohen κ ≥ 0.6 AND Phase 0.4 retroactive re-run produces non-flat distribution (range > 0.05).",
+      "honesty_signal_carve_out_per_tech_reviewer_q7": "honesty_signal_mean inferential status UNCHANGED under this FAIL. Judges grade honesty directly from artifacts; no decomposer dependency. Remains BORDERLINE-INFERENTIAL per §honesty_gate_inferential_status_post_phase_0_4 (lmer MDE ≈ 0.79 with 1.5x SD inflation; may rise to ~1.0-1.2 in conservative cell). The 'scope reduces to 2-3 metrics' framing pertains to c_at_a_min only; rubric-dim metrics (impl/plan/honesty/repo_fit/cleanliness/diff_discipline) are untouched."
     },
     "implication_for_paper_framing": {
-      "headline_correction": "iter-3 paper §1 abstract: lead with the calibration-and-fallback chain, NOT the 8-of-9 expansion. Order: (s1) Phase 0.5 decomposer reliability failed at Jaccard 0.205 / Pearson 0.384 (both below 0.6/0.7 thresholds); pre-registered fallback to binary attempted-vs-divergent rubric triggered. (s2) Under fallback, iter-3 inferential scope reduces to 2-3 metrics (flake_locked, flake_rotated, binary_c_at_a_min if Phase 0.4 retroactive re-passes). (s3) Methodology contribution: pre-registered fallback honored. (s4) COI disclosure.",
-      "scope_claim_history_extension": "Add v3 entry: 'binary fallback under decomposer failure' supersedes 'lmer 8-of-9' which depended on atomic-claim decomposition reliability now disproven."
+      "headline_corrected_per_round_5_review": "Phase 0.5 decomposer reliability test failed pre-sweep (Jaccard 0.21 vs 0.6 floor); pre-registered binary fallback fired; iter-3 ships with 2 inferential + 1 provisional metric (flake_locked_pass_rate, flake_rotated_pass_rate; binary_c_at_a_min provisional pending Phase 0.5b validation) + 6 descriptive rubric dimensions including BORDERLINE-INFERENTIAL honesty_signal under primary lmer estimator. Pre-registration discipline triggered abort at Phase 0.5 — process worked as designed; no near-miss heroism.",
+      "twitter_survivable_first_sentence": "Phase 0.5 decomposer reliability test failed pre-sweep (Jaccard 0.21 vs 0.6 floor); pre-registered binary fallback fired; iter-3 ships with 2 inferential + 1 provisional metric under primary lmer estimator.",
+      "abstract_lead_precommit_revised_again": "Per tech reviewer round-5: drop 'saved the sweep' rhetoric (implies near-miss heroism). Use: 'Pre-registered abort fired pre-sweep; iter-3 ships under fallback rubric. Process worked. No drama.' The methodology contribution IS the calibration + reliability + abort chain, not heroic save.",
+      "honest_meta_lesson_per_scientist_q8": "The strongest honest finding from Phase 0.5 is NOT 'pre-reg saved the sweep'. It is: 'the decomposer prompt was committed as load-bearing methodology without prior reliability validation; reliability test ran fourth in the phase order rather than first'. Iter-4 design must reliability-gate decomposer prompts BEFORE pinning them via SHA in a prereg.",
+      "scope_claim_history_extension": "v4 entry added to scope_claim_history.trajectory: 'binary fallback under decomposer failure' supersedes v3 'lmer 8-of-9' which depended on atomic-claim decomposition reliability now disproven."
     },
     "errors": ["1 error logged in run_decomposer_reliability.py — see report"],
+    "errors_detail_per_engineer_round_5": "1 timeout: A/T5/run-01 × vibe @ 300s. Removing this row would lift mean Jaccard from 0.205 to ~0.228 — still decisively below 0.6 floor. FAIL verdict robust to this single error.",
     "duration_s": 2456.5,
-    "cost_estimate_usd": "~$0.50 (20 Gemini+Vibe calls; small)"
+    "cost_estimate_usd": "~$0.50 (20 Gemini+Vibe calls; small)",
+    "fixture_selection_methodology_per_engineer_round_5_q9": {
+      "_purpose": "Per engineer round-5 Q9: fixture selection was undocumented; selection asymmetric across A/B. Documenting retroactively for audit; FAIL verdict robust regardless (Jaccard 0.205 << 0.6 floor; selection bias cannot rescue).",
+      "rule_applied": "1 PLAN.md per task × 8 tasks + 2 extras from {P0, T1} discriminating-task set = 10 total",
+      "asymmetry_acknowledged": "P0 and T1 each contributed both an A run AND a B run (covering the discriminating-task subset symmetrically); other tasks contributed only one of {A, B}. T2-A, E1-B, T5-A, T7-B, T8-A, T9-B (alternating; no a-priori reason given for the alternation).",
+      "selection_bias_potential": "Hypothetical concern: if A or B systematically produces more reliably-decomposable PLANs, the asymmetric selection could bias the Jaccard estimate. Given Jaccard 0.205 << 0.6 floor (gap of 0.395), any plausible selection bias < 0.4 in either direction does not rescue the FAIL.",
+      "iter_3_paper_disclosure": "Phase 0.5 §6 must disclose fixture selection methodology + acknowledge selection asymmetry. iter-4 must pre-register selection rule (e.g., random.Random(seed=20260507).sample(all_48_plans, 10) with seed pinned)."
+    }
   },
 
   "phase_1_3_probe_report": {
