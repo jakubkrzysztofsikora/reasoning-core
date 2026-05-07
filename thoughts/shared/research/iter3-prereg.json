@@ -24,9 +24,16 @@
       {
         "commit_sha": "3dd4e51",
         "scope_claim": "8 metrics inferentially scoped",
-        "basis": "Phase 0.4 lmer-MDE redo under empirical ICC; primary lmer estimator (declared as primary in v0 prereg estimators block)",
+        "basis": "Phase 0.4 lmer-MDE redo under empirical ICC; primary lmer estimator",
         "estimator": "lmer with task random effect (primary)",
-        "status": "right_SD_prior + right_estimator \u2014 pending round-4 stats fixes"
+        "status": "right_SD_prior + right_estimator + atomic-claim c_at_a_min \u2014 depends on Phase 0.5 decomposer reliability \u2014 SUPERSEDED by Phase 0.5 FAIL"
+      },
+      {
+        "commit_sha": "PENDING_THIS_COMMIT",
+        "scope_claim": "2 inferential metrics under Phase 0.5 fallback (flake_locked_pass_rate, flake_rotated_pass_rate); binary_c_at_a_min provisional pending Phase 0.4 retroactive re-run",
+        "basis": "Phase 0.5 decomposer reliability test FAILED (Jaccard 0.205 vs 0.6 floor; Pearson 0.384 vs 0.7 floor); pre-registered fallback to binary attempted-vs-divergent rubric triggered",
+        "estimator": "lmer with task random effect (primary) \u2014 unchanged",
+        "status": "Phase 0.5 fallback in effect; honors pre-registered abort condition"
       }
     ],
     "round_4_pending_fixes_to_3dd4e51": [
@@ -65,14 +72,55 @@
     "phase_0_3_blocker_1_lmer_MDE_redo": true,
     "phase_0_3_blocker_2_empirical_paired_delta_SD": true,
     "phase_0_3_blocker_3_selection_bias_falsification_test_on_iter2": true,
-    "phase_0_4_c_at_a_retroactive_sanity_passed": false,
-    "phase_0_5_decomposer_reliability_passed": false,
+    "phase_0_4_c_at_a_retroactive_sanity_passed": "FALLBACK_TRIGGERED_DECOMPOSER_FAILED_RELIABILITY",
+    "phase_0_5_decomposer_reliability_passed": "FAILED_PRE_REGISTERED_FALLBACK_TO_BINARY_RUBRIC_TRIGGERED",
     "threshold_sensitivity_grid_defined": true,
     "all_self_integrity_shas_pinned": true,
     "iter4_h_codebase_locked": true,
     "validate_prereg_cli_implemented": true,
     "phase_1_judge_set_validated": "PARTIAL_GEMINI_VIBE_ONLY_QWEN_DEFERRED"
   },
+  "phase_0_5_decomposer_reliability_FAILED": {
+    "_purpose": "Provenance + fallback trigger for the phase_0_5_decomposer_reliability_passed flag = 'FAILED_PRE_REGISTERED_FALLBACK_TO_BINARY_RUBRIC_TRIGGERED'.",
+    "completed_at": "2026-05-07T13:00:00Z",
+    "report_path": "thoughts/shared/research/iter3-decomposer-reliability-report.json",
+    "n_fixtures": 10,
+    "judges": ["gemini", "vibe"],
+    "qwen_coder_status": "DEFERRED_TO_PHASE_1_1",
+    "thresholds": {
+      "jaccard_floor": 0.6,
+      "pearson_count_smoke_floor": 0.7,
+      "tbd_max_pct": 30.0
+    },
+    "results": {
+      "mean_jaccard_gemini_vibe": 0.205,
+      "median_jaccard_gemini_vibe": 0.180,
+      "min_jaccard": 0.0,
+      "max_jaccard": 0.581,
+      "pearson_count_gemini_vibe": 0.384,
+      "n_tbd_breach_documents": 0
+    },
+    "verdict": {
+      "jaccard_pass": false,
+      "pearson_pass": false,
+      "overall_pass": false
+    },
+    "implication": "Per pre-registered abort condition in iter3-prereg-decomposer-prompt.md: 'if Pearson r on claim-count < 0.7 across the 10-doc fixture, the C@Acc denominator is too parser-noisy to use. Switch to a coarser binary rubric: spec-claim attempted vs declared divergent (one bit per claim, no count-of-claims dependence).' Both judges produced decompositions that disagreed on (type, evidence_locator) tuple sets and on claim count — the C@Acc denominator at this prompt + temperature is unreliable.",
+    "fallback_committed": {
+      "rubric_change": "REPLACE_C_AT_A_min_with_binary_attempted_vs_divergent",
+      "binary_rubric_definition": "Per (setup, task, run): coverage = N_attempted / (N_attempted + N_declared_divergent), where N_attempted and N_declared_divergent are PER-JUDGE-AGREED counts (intersection of judge sets). accuracy = locked_pass_rate. binary_c_at_a_min = min(coverage, accuracy). No atomic-claim count dependence — robust to decomposer noise.",
+      "implication_for_iter_3_inferential_scope": "binary_c_at_a_min replaces c_at_a_min in iter_3_inferential_scope_under_primary_lmer_estimator. Phase 0.4 retroactive must be re-run with binary rubric; partial JSONL at thoughts/shared/research/iter3-c-at-a-retroactive-iter2.json.progress is INVALID under fallback (was running atomic-claim version).",
+      "downgraded_inferential_scope_under_fallback": "iter_3_inferential_scope shrinks to 2 metrics (flake_locked_pass_rate, flake_rotated_pass_rate) under the conservative reading; binary_c_at_a_min readded if Phase 0.4 retroactive re-run passes a separate sanity check (no flat distribution within +/-0.05)."
+    },
+    "implication_for_paper_framing": {
+      "headline_correction": "iter-3 paper §1 abstract: lead with the calibration-and-fallback chain, NOT the 8-of-9 expansion. Order: (s1) Phase 0.5 decomposer reliability failed at Jaccard 0.205 / Pearson 0.384 (both below 0.6/0.7 thresholds); pre-registered fallback to binary attempted-vs-divergent rubric triggered. (s2) Under fallback, iter-3 inferential scope reduces to 2-3 metrics (flake_locked, flake_rotated, binary_c_at_a_min if Phase 0.4 retroactive re-passes). (s3) Methodology contribution: pre-registered fallback honored. (s4) COI disclosure.",
+      "scope_claim_history_extension": "Add v3 entry: 'binary fallback under decomposer failure' supersedes 'lmer 8-of-9' which depended on atomic-claim decomposition reliability now disproven."
+    },
+    "errors": ["1 error logged in run_decomposer_reliability.py — see report"],
+    "duration_s": 2456.5,
+    "cost_estimate_usd": "~$0.50 (20 Gemini+Vibe calls; small)"
+  },
+
   "phase_1_3_probe_report": {
     "_purpose": "Provenance for the phase_1_judge_set_validated flag.",
     "completed_at": "2026-05-07T00:00:00Z",

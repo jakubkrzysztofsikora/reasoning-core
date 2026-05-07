@@ -1,0 +1,149 @@
+{
+  "phase": "0.5_decomposer_reliability",
+  "judges": [
+    "gemini",
+    "vibe"
+  ],
+  "qwen_coder_status": "DEFERRED_TO_PHASE_1_1_per_blocker_5",
+  "n_fixtures": 10,
+  "fixture_plans": [
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/P0/run-01/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/P0/run-02/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T1/run-01/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/T1/run-01/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T2/run-02/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/E1/run-01/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T5/run-01/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/T7/run-02/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T8/run-01/plan.md",
+    "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/T9/run-03/plan.md"
+  ],
+  "thresholds": {
+    "jaccard_floor": 0.6,
+    "pearson_count_smoke_floor": 0.7,
+    "tbd_max_pct": 30.0
+  },
+  "results": {
+    "mean_jaccard_g_v": 0.20486320919570952,
+    "median_jaccard_g_v": 0.18032786885245902,
+    "min_jaccard_g_v": 0.0,
+    "max_jaccard_g_v": 0.5813953488372093,
+    "pearson_count_g_v": 0.3844407429317218,
+    "n_tbd_breach_documents": 0
+  },
+  "per_document": [
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/P0/run-01/plan.md",
+      "n_claims_gemini": 40,
+      "n_claims_vibe": 68,
+      "tbd_pct_gemini": 12.5,
+      "tbd_pct_vibe": 7.352941176470588,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.2647058823529412
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/P0/run-02/plan.md",
+      "n_claims_gemini": 39,
+      "n_claims_vibe": 93,
+      "tbd_pct_gemini": 12.820512820512821,
+      "tbd_pct_vibe": 4.301075268817204,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.175
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T1/run-01/plan.md",
+      "n_claims_gemini": 50,
+      "n_claims_vibe": 94,
+      "tbd_pct_gemini": 26.0,
+      "tbd_pct_vibe": 8.51063829787234,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.20967741935483872
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/T1/run-01/plan.md",
+      "n_claims_gemini": 33,
+      "n_claims_vibe": 88,
+      "tbd_pct_gemini": 6.0606060606060606,
+      "tbd_pct_vibe": 6.818181818181818,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.18032786885245902
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T2/run-02/plan.md",
+      "n_claims_gemini": 35,
+      "n_claims_vibe": 140,
+      "tbd_pct_gemini": 2.857142857142857,
+      "tbd_pct_vibe": 12.142857142857142,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.0975609756097561
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/E1/run-01/plan.md",
+      "n_claims_gemini": 23,
+      "n_claims_vibe": 27,
+      "tbd_pct_gemini": 4.3478260869565215,
+      "tbd_pct_vibe": 14.814814814814815,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.03125
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T5/run-01/plan.md",
+      "n_claims_gemini": 34,
+      "n_claims_vibe": 0,
+      "tbd_pct_gemini": 2.9411764705882355,
+      "tbd_pct_vibe": 0.0,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.0
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/T7/run-02/plan.md",
+      "n_claims_gemini": 34,
+      "n_claims_vibe": 95,
+      "tbd_pct_gemini": 8.823529411764707,
+      "tbd_pct_vibe": 0.0,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.35185185185185186
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T8/run-01/plan.md",
+      "n_claims_gemini": 22,
+      "n_claims_vibe": 61,
+      "tbd_pct_gemini": 9.090909090909092,
+      "tbd_pct_vibe": 0.0,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.1568627450980392
+    },
+    {
+      "plan_path": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/B/T9/run-03/plan.md",
+      "n_claims_gemini": 38,
+      "n_claims_vibe": 71,
+      "tbd_pct_gemini": 0.0,
+      "tbd_pct_vibe": 1.408450704225352,
+      "tbd_breach_gemini": false,
+      "tbd_breach_vibe": false,
+      "jaccard_g_v": 0.5813953488372093
+    }
+  ],
+  "errors": [
+    {
+      "plan": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T5/run-01/plan.md",
+      "judge": "vibe",
+      "error": "vibe timed out after 300s on /Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3/runs/A/T5/run-01/plan.md"
+    }
+  ],
+  "verdicts": {
+    "jaccard_pass": false,
+    "pearson_pass": false,
+    "overall_pass": false
+  },
+  "duration_s": 2456.5154659748077
+}
