@@ -407,3 +407,61 @@ def test_non_guard_path_passes_through(stub_sidecar, tmp_path):
     }
     result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
     assert result.returncode == 0, f"stderr={result.stderr!r}"
+
+
+# ---------------------------------------------------------------------------
+# Iter-3 plan-grounding gate (RC_PLAN_GROUNDING) — end-to-end
+# ---------------------------------------------------------------------------
+
+def test_plan_grounding_block_at_level_2(stub_sidecar, tmp_path):
+    """RC_PLAN_GROUNDING=2 + edit to file not in PLAN.md → exit 2."""
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("- `src/foo.py` — ~100 LOC\n")
+    target = tmp_path / "src" / "unrelated.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x = 1\n")
+    payload = _edit_payload(str(target), "x = 1\n", "x = 2\n")
+    result = _run_hook(payload, env={
+        "S2_URL": stub_sidecar.url(),
+        "RC_PLAN_GROUNDING": "2",
+        "RC_RUN_DIR": str(tmp_path),
+    })
+    assert result.returncode == 2, (
+        f"expected exit 2, got {result.returncode}; stderr={result.stderr!r}"
+    )
+    assert "plan_impl_drift" in result.stderr
+
+
+def test_plan_grounding_warn_at_level_1_does_not_block(stub_sidecar, tmp_path):
+    """RC_PLAN_GROUNDING=1 + drift → warn on stderr, exit 0 (no block)."""
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("- `src/foo.py` — ~100 LOC\n")
+    target = tmp_path / "src" / "unrelated.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x = 1\n")
+    payload = _edit_payload(str(target), "x = 1\n", "x = 2\n")
+    result = _run_hook(payload, env={
+        "S2_URL": stub_sidecar.url(),
+        "RC_PLAN_GROUNDING": "1",
+        "RC_RUN_DIR": str(tmp_path),
+    })
+    assert result.returncode == 0, (
+        f"warn must not block; got exit {result.returncode}; stderr={result.stderr!r}"
+    )
+    assert "drifts from plan" in result.stderr
+
+
+def test_plan_grounding_unset_is_no_op(stub_sidecar, tmp_path):
+    """RC_PLAN_GROUNDING unset → gate inert, behaves like base case."""
+    plan = tmp_path / "PLAN.md"
+    plan.write_text("- `src/foo.py` — ~100 LOC\n")
+    target = tmp_path / "src" / "unrelated.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x = 1\n")
+    payload = _edit_payload(str(target), "x = 1\n", "x = 2\n")
+    result = _run_hook(payload, env={
+        "S2_URL": stub_sidecar.url(),
+        "RC_RUN_DIR": str(tmp_path),
+    })
+    assert result.returncode == 0
+    assert "plan_impl_drift" not in result.stderr

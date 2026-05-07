@@ -37,6 +37,7 @@ if _HOOKS_DIR not in sys.path:
 
 import audit_log  # type: ignore  # noqa: E402
 import _guard_paths  # type: ignore  # noqa: E402
+import _dispatch  # type: ignore  # noqa: E402
 from _block_format import format_block as _format_block  # type: ignore  # noqa: E402
 
 # Centralized shadow-mode helper. Falls back to None on import error so the
@@ -217,6 +218,16 @@ def _exit(code: int, stderr_msg: str = "") -> None:
     sys.exit(code)
 
 
+_AUDIT_RESERVED_KEYS = frozenset({
+    "tool_name", "decision", "file_path", "language",
+    "ais", "coherence_delta", "regression_detected", "risk_vector",
+    "cumulative_drift", "latency_ms", "before_bytes", "after_bytes",
+    "retry_after_block", "reason", "signal_source",
+    # Set by audit_log.new_event itself:
+    "ts", "decision_id", "session_id", "project_dir",
+})
+
+
 def _emit_audit(
     *,
     tool_name: str,
@@ -229,8 +240,14 @@ def _emit_audit(
     reason: str = "",
     retry_after_block: bool = False,
     signal_source: str = "",
+    extra: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Best-effort audit emit. Never raises."""
+    """Best-effort audit emit. Never raises.
+
+    ``extra`` (iter-3): per-gate audit_extra dict. Keys are folded into the
+    event as siblings of the standard fields so downstream aggregators can
+    consume gate-specific signals (e.g. plan_grounding's plan_refs_count).
+    """
     try:
         latency_ms = int((time.time() - started) * 1000)
         ais = None
@@ -266,6 +283,11 @@ def _emit_audit(
             signal_source=signal_source or (
                 "mock_heuristic" if (isinstance(report, dict) and report.get("mock_detector_triggered")) else "ssm"
             ),
+            # Filter reserved keys so a future gate stuffing `reason`/`signal_source`
+            # into audit_extra doesn't crash the splat into TypeError (which would
+            # then be silently swallowed by the bare except below — losing the audit
+            # row entirely). Engineer-flagged in iter-3 phase-validation review.
+            **{k: v for k, v in (extra or {}).items() if k not in _AUDIT_RESERVED_KEYS},
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -441,6 +463,35 @@ def main() -> None:
                     )
         except Exception:  # noqa: BLE001
             pass
+
+    # Iter-3 lever — plan-impl coupling (RC_PLAN_GROUNDING).
+    # Default off. Mode 1 = warn (stderr advisory + audit), mode 2 = hard block.
+    # Audit-only path keeps the signal invisible to the agent (no path-stuffing
+    # incentive); see thoughts/shared/plans/2026-05-07-iter3-decisive-win.md §3.
+    pg_outcome = _dispatch.gate_plan_grounding(file_path=file_path)
+    if pg_outcome.action == "stderr_only":
+        sys.stderr.write(pg_outcome.stderr)
+        _emit_audit(
+            tool_name=tool_name,
+            decision=pg_outcome.decision,
+            file_path=file_path,
+            started=started,
+            reason=pg_outcome.reason,
+            signal_source=pg_outcome.signal_source,
+            extra=pg_outcome.audit_extra,
+        )
+    elif pg_outcome.action == "exit_block":
+        audit_log.record_block(file_path)
+        _emit_audit(
+            tool_name=tool_name,
+            decision=pg_outcome.decision,
+            file_path=file_path,
+            started=started,
+            reason=pg_outcome.reason,
+            signal_source=pg_outcome.signal_source,
+            extra=pg_outcome.audit_extra,
+        )
+        _exit(pg_outcome.code, pg_outcome.stderr)
 
     pairs = _extract_changes(tool_name, tool_input)
     if not pairs:
