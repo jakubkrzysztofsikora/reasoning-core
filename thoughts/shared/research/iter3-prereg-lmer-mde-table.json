@@ -1,0 +1,464 @@
+{
+  "computed_at": "2026-05-07T13:00:00Z",
+  "computed_by_script": "thoughts/shared/research/scripts/compute_mde_lmer.py",
+  "iter2_eval_dir": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3",
+  "n_grades_loaded": 90,
+  "design": {
+    "n_cells_per_arm_total": 28,
+    "n_tasks": 8,
+    "m_avg_cells_per_task": 3.5
+  },
+  "icc_per_dim_per_setup": {
+    "A": {
+      "repo_fit": {
+        "icc": 0.3089,
+        "sigma2_between": 0.9127,
+        "sigma2_within": 2.0417,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "cleanliness": {
+        "icc": 0.2341,
+        "sigma2_between": 0.3948,
+        "sigma2_within": 1.2917,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "correctness_determinism": {
+        "icc": 0.6656,
+        "sigma2_between": 2.4048,
+        "sigma2_within": 1.2083,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "plan_signal": {
+        "icc": 0.6437,
+        "sigma2_between": 1.2044,
+        "sigma2_within": 0.6667,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "diff_discipline": {
+        "icc": 0.4584,
+        "sigma2_between": 0.7758,
+        "sigma2_within": 0.9167,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      }
+    },
+    "B": {
+      "repo_fit": {
+        "icc": 0.2592,
+        "sigma2_between": 0.627,
+        "sigma2_within": 1.7917,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "cleanliness": {
+        "icc": 0.4646,
+        "sigma2_between": 0.7773,
+        "sigma2_within": 0.8958,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "correctness_determinism": {
+        "icc": 0.6924,
+        "sigma2_between": 2.1567,
+        "sigma2_within": 0.9583,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "plan_signal": {
+        "icc": 0.29,
+        "sigma2_between": 0.4425,
+        "sigma2_within": 1.0833,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      },
+      "diff_discipline": {
+        "icc": 0.3432,
+        "sigma2_between": 0.8492,
+        "sigma2_within": 1.625,
+        "n_tasks": 8,
+        "n_cells_estimated": 23
+      }
+    }
+  },
+  "icc_pooled_per_dim": {
+    "repo_fit": 0.2841,
+    "cleanliness": 0.3493,
+    "correctness_determinism": 0.679,
+    "plan_signal": 0.4668,
+    "diff_discipline": 0.4008
+  },
+  "lmer_based_mde_per_dim": {
+    "repo_fit": {
+      "sd_within_pooled": 1.3844,
+      "icc_observed_average": 0.2841,
+      "mde_at_observed_icc": {
+        "icc": 0.28405,
+        "deff": 1.71,
+        "n_eff_per_arm": 16.37,
+        "df_eff_used": 15,
+        "sd_diff_under_icc": 1.6567,
+        "mde": 1.1668
+      },
+      "mde_at_icc_0_1": {
+        "icc": 0.1,
+        "deff": 1.25,
+        "n_eff_per_arm": 22.4,
+        "df_eff_used": 21,
+        "sd_diff_under_icc": 1.8574,
+        "mde": 1.1185
+      },
+      "mde_at_icc_0_3": {
+        "icc": 0.3,
+        "deff": 1.75,
+        "n_eff_per_arm": 16.0,
+        "df_eff_used": 15,
+        "sd_diff_under_icc": 1.6381,
+        "mde": 1.1671
+      },
+      "mde_at_icc_0_5": {
+        "icc": 0.5,
+        "deff": 2.25,
+        "n_eff_per_arm": 12.44,
+        "df_eff_used": 11,
+        "sd_diff_under_icc": 1.3844,
+        "mde": 1.1185
+      }
+    },
+    "cleanliness": {
+      "sd_within_pooled": 1.0458,
+      "icc_observed_average": 0.3493,
+      "mde_at_observed_icc": {
+        "icc": 0.34935,
+        "deff": 1.873,
+        "n_eff_per_arm": 14.95,
+        "df_eff_used": 13,
+        "sd_diff_under_icc": 1.193,
+        "mde": 0.935
+      },
+      "mde_at_icc_0_1": {
+        "icc": 0.1,
+        "deff": 1.25,
+        "n_eff_per_arm": 22.4,
+        "df_eff_used": 21,
+        "sd_diff_under_icc": 1.4031,
+        "mde": 0.8449
+      },
+      "mde_at_icc_0_3": {
+        "icc": 0.3,
+        "deff": 1.75,
+        "n_eff_per_arm": 16.0,
+        "df_eff_used": 15,
+        "sd_diff_under_icc": 1.2374,
+        "mde": 0.8817
+      },
+      "mde_at_icc_0_5": {
+        "icc": 0.5,
+        "deff": 2.25,
+        "n_eff_per_arm": 12.44,
+        "df_eff_used": 11,
+        "sd_diff_under_icc": 1.0458,
+        "mde": 0.8449
+      }
+    },
+    "correctness_determinism": {
+      "sd_within_pooled": 1.0408,
+      "icc_observed_average": 0.679,
+      "mde_at_observed_icc": {
+        "icc": 0.679,
+        "deff": 2.698,
+        "n_eff_per_arm": 10.38,
+        "df_eff_used": 9,
+        "sd_diff_under_icc": 0.834,
+        "mde": 0.7377
+      },
+      "mde_at_icc_0_1": {
+        "icc": 0.1,
+        "deff": 1.25,
+        "n_eff_per_arm": 22.4,
+        "df_eff_used": 21,
+        "sd_diff_under_icc": 1.3964,
+        "mde": 0.8409
+      },
+      "mde_at_icc_0_3": {
+        "icc": 0.3,
+        "deff": 1.75,
+        "n_eff_per_arm": 16.0,
+        "df_eff_used": 15,
+        "sd_diff_under_icc": 1.2315,
+        "mde": 0.8775
+      },
+      "mde_at_icc_0_5": {
+        "icc": 0.5,
+        "deff": 2.25,
+        "n_eff_per_arm": 12.44,
+        "df_eff_used": 11,
+        "sd_diff_under_icc": 1.0408,
+        "mde": 0.8409
+      }
+    },
+    "plan_signal": {
+      "sd_within_pooled": 0.9354,
+      "icc_observed_average": 0.4668,
+      "mde_at_observed_icc": {
+        "icc": 0.46685,
+        "deff": 2.167,
+        "n_eff_per_arm": 12.92,
+        "df_eff_used": 11,
+        "sd_diff_under_icc": 0.9659,
+        "mde": 0.7659
+      },
+      "mde_at_icc_0_1": {
+        "icc": 0.1,
+        "deff": 1.25,
+        "n_eff_per_arm": 22.4,
+        "df_eff_used": 21,
+        "sd_diff_under_icc": 1.255,
+        "mde": 0.7557
+      },
+      "mde_at_icc_0_3": {
+        "icc": 0.3,
+        "deff": 1.75,
+        "n_eff_per_arm": 16.0,
+        "df_eff_used": 15,
+        "sd_diff_under_icc": 1.1068,
+        "mde": 0.7886
+      },
+      "mde_at_icc_0_5": {
+        "icc": 0.5,
+        "deff": 2.25,
+        "n_eff_per_arm": 12.44,
+        "df_eff_used": 11,
+        "sd_diff_under_icc": 0.9354,
+        "mde": 0.7557
+      }
+    },
+    "diff_discipline": {
+      "sd_within_pooled": 1.1273,
+      "icc_observed_average": 0.4008,
+      "mde_at_observed_icc": {
+        "icc": 0.4008,
+        "deff": 2.002,
+        "n_eff_per_arm": 13.99,
+        "df_eff_used": 12,
+        "sd_diff_under_icc": 1.2341,
+        "mde": 0.9405
+      },
+      "mde_at_icc_0_1": {
+        "icc": 0.1,
+        "deff": 1.25,
+        "n_eff_per_arm": 22.4,
+        "df_eff_used": 21,
+        "sd_diff_under_icc": 1.5125,
+        "mde": 0.9108
+      },
+      "mde_at_icc_0_3": {
+        "icc": 0.3,
+        "deff": 1.75,
+        "n_eff_per_arm": 16.0,
+        "df_eff_used": 15,
+        "sd_diff_under_icc": 1.3339,
+        "mde": 0.9504
+      },
+      "mde_at_icc_0_5": {
+        "icc": 0.5,
+        "deff": 2.25,
+        "n_eff_per_arm": 12.44,
+        "df_eff_used": 11,
+        "sd_diff_under_icc": 1.1273,
+        "mde": 0.9108
+      }
+    }
+  },
+  "empirical_paired_delta_sd_per_dim": {
+    "repo_fit": {
+      "n_paired_tasks": 8,
+      "deltas_per_task": [
+        0.6667,
+        0.4,
+        2.3333,
+        0,
+        0,
+        0.6667,
+        -0.3333,
+        0.3333
+      ],
+      "median_delta": 0.3667,
+      "mean_delta": 0.5083,
+      "sd_diff_empirical": 0.8149,
+      "sd_A_within_arm": 0.9637,
+      "sd_B_within_arm": 0.7902,
+      "rho_implied_at_match": 0.5725,
+      "sd_diff_under_rho_0": 1.2463,
+      "sd_diff_under_rho_0_3": 1.047,
+      "sd_diff_under_rho_0_5": 0.8898
+    },
+    "cleanliness": {
+      "n_paired_tasks": 8,
+      "deltas_per_task": [
+        0.3333,
+        0.0,
+        0.6667,
+        -0.5,
+        0,
+        0.3333,
+        0.0,
+        -0.6667
+      ],
+      "median_delta": 0.0,
+      "mean_delta": 0.0208,
+      "sd_diff_empirical": 0.4404,
+      "sd_A_within_arm": 0.6213,
+      "sd_B_within_arm": 0.877,
+      "rho_implied_at_match": 0.8321,
+      "sd_diff_under_rho_0": 1.0748,
+      "sd_diff_under_rho_0_3": 0.9101,
+      "sd_diff_under_rho_0_5": 0.7812
+    },
+    "correctness_determinism": {
+      "n_paired_tasks": 8,
+      "deltas_per_task": [
+        -1.3333,
+        0,
+        1.3333,
+        -1,
+        0,
+        0,
+        -0.3333,
+        -0.3333
+      ],
+      "median_delta": -0.1667,
+      "mean_delta": -0.2083,
+      "sd_diff_empirical": 0.7956,
+      "sd_A_within_arm": 1.5507,
+      "sd_B_within_arm": 1.4686,
+      "rho_implied_at_match": 0.8612,
+      "sd_diff_under_rho_0": 2.1358,
+      "sd_diff_under_rho_0_3": 1.7875,
+      "sd_diff_under_rho_0_5": 1.5113
+    },
+    "plan_signal": {
+      "n_paired_tasks": 8,
+      "deltas_per_task": [
+        -0.6667,
+        0.0,
+        1.3333,
+        -1,
+        0,
+        1.0,
+        1.3333,
+        1.3333
+      ],
+      "median_delta": 0.5,
+      "mean_delta": 0.4167,
+      "sd_diff_empirical": 0.9554,
+      "sd_A_within_arm": 1.0966,
+      "sd_B_within_arm": 0.6578,
+      "rho_implied_at_match": 0.4419,
+      "sd_diff_under_rho_0": 1.2788,
+      "sd_diff_under_rho_0_3": 1.0966,
+      "sd_diff_under_rho_0_5": 0.956
+    },
+    "diff_discipline": {
+      "n_paired_tasks": 8,
+      "deltas_per_task": [
+        -0.3333,
+        0,
+        1.3333,
+        0,
+        0,
+        -0.6667,
+        -1.3333,
+        0
+      ],
+      "median_delta": 0.0,
+      "mean_delta": -0.125,
+      "sd_diff_empirical": 0.7546,
+      "sd_A_within_arm": 0.8808,
+      "sd_B_within_arm": 0.9215,
+      "rho_implied_at_match": 0.6496,
+      "sd_diff_under_rho_0": 1.2748,
+      "sd_diff_under_rho_0_3": 1.0668,
+      "sd_diff_under_rho_0_5": 0.9018
+    }
+  },
+  "selection_bias_falsification_test": {
+    "selected_tasks": [
+      "E1",
+      "P0",
+      "T1",
+      "T2"
+    ],
+    "unselected_tasks": [
+      "T5",
+      "T7",
+      "T8",
+      "T9"
+    ],
+    "deltas_selected_BminusA": [
+      -0.3333,
+      -0.3333,
+      -0.3333,
+      0.0
+    ],
+    "deltas_unselected_BminusA": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "median_selected": -0.3333,
+    "median_unselected": 0.0,
+    "median_diff_selected_minus_unselected": -0.3333,
+    "falsification_threshold": 0.15,
+    "falsification_triggered": true,
+    "interpretation": "Selection bias DOES drive c_at_a_min lift",
+    "caveat": "Proxy: locked_pass_rate (iter-2 has no c_at_a_min). Phase 0.4 should rerun with c_at_a_min once decomposer outputs available.",
+    "per_task": {
+      "E1": {
+        "a": 1.0,
+        "b": 0.6667,
+        "delta_BminusA": -0.3333
+      },
+      "P0": {
+        "a": 1.0,
+        "b": 0.6667,
+        "delta_BminusA": -0.3333
+      },
+      "T1": {
+        "a": 0.3333,
+        "b": 0.0,
+        "delta_BminusA": -0.3333
+      },
+      "T2": {
+        "a": 1.0,
+        "b": 1.0,
+        "delta_BminusA": 0.0
+      },
+      "T5": {
+        "a": 1.0,
+        "b": 1.0,
+        "delta_BminusA": 0.0
+      },
+      "T7": {
+        "a": 1.0,
+        "b": 1.0,
+        "delta_BminusA": 0.0
+      },
+      "T8": {
+        "a": 1.0,
+        "b": 1.0,
+        "delta_BminusA": 0.0
+      },
+      "T9": {
+        "a": 1.0,
+        "b": 1.0,
+        "delta_BminusA": 0.0
+      }
+    }
+  },
+  "interpretation": "lmer-based MDE drops below per-task-mean MDE for moderate ICC (0.3-0.5), reflecting design-effect benefit of within-task pooling. Some rubric dims may cross back into inferential scope under lmer depending on observed ICC. Empirical paired-delta SD reconciles the artificial rho assumption used in compute_mde.py \u2014 compare rho_implied_at_match against {0, 0.3, 0.5} to see which assumed rho was closest. Selection-bias falsification on locked_pass_rate reports whether the 4-task set chosen for iter-3 n=4 had systematically larger paired delta in iter-2 (regression-to-mean bait) \u2014 falsification triggered if |median_sel - median_uns| > 0.15."
+}

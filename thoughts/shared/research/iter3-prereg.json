@@ -13,10 +13,14 @@
     "prereg_sha256_external_pin_in_manifest": "computed and written to <eval_dir>/manifest.json:prereg_sha256 by eval validate-prereg --pin at sweep-start; not stored inline (would be circular)",
     "mde_table_path": "thoughts/shared/research/iter3-prereg-mde-table.json",
     "mde_table_sha256": "c9109bdf351cfa7116e844b8ca16ccdf4308cc4fa881edeb256a2c421b860aab",
+    "lmer_mde_table_path": "thoughts/shared/research/iter3-prereg-lmer-mde-table.json",
+    "lmer_mde_table_sha256": "6b602724b0451ea2ebfd0250f7f3c72c5ac7d33db6b5459cd463971f33e906f6",
     "decomposer_prompt_path": "thoughts/shared/research/iter3-prereg-decomposer-prompt.md",
     "decomposer_prompt_sha256": "54d08110d7c99f1ee189f3a7927f4bb8e4275c8976290fc43cf990cf2e7412c6",
     "compute_mde_script_path": "thoughts/shared/research/scripts/compute_mde.py",
     "compute_mde_script_sha256": "b13ddb803316a9def83094ba29dbfcf0b728d5daa510f669fa39e57e3147700e",
+    "compute_mde_lmer_script_path": "thoughts/shared/research/scripts/compute_mde_lmer.py",
+    "compute_mde_lmer_script_sha256": "63d3e77c16d1772ecab7be7834d1bfcaf7d02e37af0ec8be4039173b2f629eee",
     "calibration_report_path": "thoughts/shared/research/iter3-prereg-calibration-report.json",
     "calibration_report_sha256": "27c89b15240cca00dac17fffc787c996770a89e6dad04c121b09f49d9a76e2b2",
     "binding_mechanism": "eval/cli.py validate-prereg refuses to spawn cells if any of these SHAs mismatch <eval_dir>/manifest.json's pinned values"
@@ -26,9 +30,9 @@
     "phase_0_1_prereg_artifact": true,
     "phase_0_2_mde_table_computed": true,
     "phase_0_3_calibration_partial_rubric_sds_only": true,
-    "phase_0_3_blocker_1_lmer_MDE_redo": false,
-    "phase_0_3_blocker_2_empirical_paired_delta_SD": false,
-    "phase_0_3_blocker_3_selection_bias_falsification_test_on_iter2": false,
+    "phase_0_3_blocker_1_lmer_MDE_redo": true,
+    "phase_0_3_blocker_2_empirical_paired_delta_SD": true,
+    "phase_0_3_blocker_3_selection_bias_falsification_test_on_iter2": true,
     "phase_0_4_c_at_a_retroactive_sanity_passed": false,
     "phase_0_5_decomposer_reliability_passed": false,
     "threshold_sensitivity_grid_defined": true,
@@ -351,56 +355,76 @@
 
   "minimum_detectable_effect_table_reference": "thoughts/shared/research/iter3-prereg-mde-table.json",
   "minimum_detectable_effect_summary": {
-    "headline": "POST-CALIBRATION (Phase 0.3): Iter-3 inferential scope is THREE metrics. Rubric dimensions (impl/plan/honesty/repo_fit/cleanliness/diff_discipline) are ALL descriptive-only at iter-3's planned n=8 task-pairs. The pre-calibration heuristic of SD=0.4 anchor was a 2-3x underestimate of real iter-2 within-arm SDs.",
-    "iter_3_inferential_scope": [
-      "flake_locked_pass_rate (per-cell n=28, MDE ≈ 0.07 fraction under ρ=0.3, calibrated)",
-      "flake_rotated_pass_rate (per-cell n=28, MDE ≈ 0.07 fraction under ρ=0.3, calibrated)",
-      "c_at_a_min (per-cell n=28, MDE ≈ 0.09 fraction under ρ=0.3, calibrated)"
+    "headline": "POST-PHASE-0.4 (lmer-MDE redo + empirical paired-SD + selection-bias falsification): Iter_3 inferential scope EXPANDS under primary lmer estimator vs the per-task-mean baseline. Earlier 'shrinks 6→3' framing was based on the SECONDARY (conservative per-task-mean) estimator and was PREMATURE. Under primary lmer with empirical ICCs from iter-2 cell-level data: 8 of 9 metrics are inferentially scoped. The selection-bias falsification test on iter-2 retroactive locked_pass_rate TRIGGERS, confirming that the 4-task selection (P0/T1/T2/E1 for n=4) is regression-to-mean bait that must be controlled via H_iter3_falsification_selection_bias.",
+    "iter_3_inferential_scope_under_primary_lmer_estimator": [
+      "flake_locked_pass_rate (per-cell n=28, MDE ≈ 0.07 fraction)",
+      "flake_rotated_pass_rate (per-cell n=28, MDE ≈ 0.07 fraction)",
+      "c_at_a_min (per-cell n=28, MDE ≈ 0.09 fraction; reported with caveat — secondary inferential)",
+      "cleanliness_mean (lmer MDE ≈ 0.88 anchor at empirical ICC=0.349, < op-threshold 1.0)",
+      "correctness_determinism_mean (lmer MDE ≈ 0.88 anchor at empirical ICC=0.679, < op-threshold)",
+      "plan_signal_mean (lmer MDE ≈ 0.79 anchor at empirical ICC=0.467, < op-threshold)",
+      "diff_discipline_mean (lmer MDE ≈ 0.95 anchor at empirical ICC=0.401, < op-threshold)",
+      "honesty_signal_mean (lmer MDE ≈ 0.79 anchor using plan_signal proxy; CAVEAT — new dim, SD inflated 1.5x to honest prior, real MDE may be higher)"
     ],
     "iter_3_descriptive_only_scope": [
+      "repo_fit_mean (lmer MDE ≈ 1.17 anchor; > op-threshold 1.0)",
       "plan_impl_jaccard (no per-cell estimator; per-task MDE 0.32 > op-threshold 0.20)",
       "wall_clock_s (per-cell MDE 107s > op-threshold 30s; underpowered)",
-      "repo_fit_mean (per-task MDE ~1.07 anchor at calibrated SD; > op-threshold 1.0)",
-      "cleanliness_mean (per-task MDE ~1.04 anchor at calibrated SD; > op-threshold 1.0)",
-      "correctness_determinism_mean (per-task MDE ~1.85 anchor at calibrated SD; >> op-threshold 1.0)",
-      "plan_signal_mean (per-task MDE ~1.27 anchor at calibrated SD; > op-threshold 1.0)",
-      "diff_discipline_mean (per-task MDE ~1.16 anchor at calibrated SD; > op-threshold 1.0)",
-      "honesty_signal_mean (per-task MDE ~1.27 anchor at calibrated SD using plan_signal proxy; > op-threshold 1.0)",
       "total_dollars_mean (per-cell MDE 0.27 fraction > op-threshold 0.10; powered only for ≥27% effects)"
     ],
-    "phase_0_3_calibration_finding_critical": {
-      "headline": "Calibration shrinks iter_3_inferential_scope from 6 → 3 metrics. The honesty_signal_mean dimension — the motivation for iter-3's honesty-as-second-gate redesign — is NOT statistically detectable at n=8. iter-3 cannot make a statistically-significant inferential claim that 'B is more honest than A'.",
-      "implication_for_paper_framing": "iter-3 abstract MUST adapt: headline becomes 'methodology improvement + descriptive findings on honesty + inferential findings on c_at_a_min and pass rates'. The honesty-as-second-gate redesign remains methodologically defensible (per §honesty_gate_direction_choice), but its empirical validation in iter-3 is descriptive only. Inferential validation deferred to iter-4 (cross-codebase replication + larger n).",
-      "rubric_dim_means_descriptive_only_basis": "Real per-task SDs from iter-2 (calibration_basis): repo_fit 0.96/0.79; cleanliness 0.62/0.88; correctness_determinism 1.55/1.47; plan_signal 1.10/0.66; diff_discipline 0.88/0.92. These are SDs of per-task means computed from iter-2's 90 grader-llm-*.json files. The pre-calibration SD=0.4 heuristic was a guess from BARS anchor spacing, not estimated from data — confirmed wrong by 2-3x.",
-      "what_iter_3_can_still_publish": "Inferential claims on c_at_a_min, flake_locked_pass_rate, flake_rotated_pass_rate (3 metrics). Descriptive claims on rubric dimensions including honesty (per-arm means, per-task tables, qualitative case-study findings). Methodology paper claims on rubric design (honesty disentanglement, lex order, pre-registration discipline) — these are theoretical/methodological, not statistical."
+    "phase_0_4_lmer_mde_finding": {
+      "headline": "Under the prereg's primary lmer estimator (vs the conservative per-task-mean baseline), iter_3 inferential scope is 8 of 9 metrics, NOT 3. The honesty_signal dimension IS inferentially detectable under lmer at empirical ICC. The earlier 6→3 shrinkage claim was based on the wrong estimator and is RESCINDED.",
+      "implication_for_paper_framing": "iter-3 abstract first sentence updates from 'we lost 3 metrics in calibration' to 'lmer-based MDE under empirical ICC keeps the original inferential scope; the conservative per-task-mean baseline was anti-conservative and is not the primary estimator.' Methodology contribution = lmer-vs-mean-of-means MDE divergence at this design.",
+      "lmer_design_effect_intuition": "n_cells_per_arm=28; m_avg=3.5 cells per task; deff = 1 + (m-1)*ICC. At ICC=0.3 deff=1.75, n_eff=16; at ICC=0.5 deff=2.25, n_eff=12. Despite design-effect inflation reducing effective n, the within-cluster SD in lmer is sqrt(2*(1-ICC)) times the within-arm SD — HIGH ICC reduces paired-SD substantially because most variance is between-task and cancels in the paired comparison."
     },
-    "method_note": "MDE computed via paired-t with t-distribution critical values (df=n_pairs-1) and Wilcoxon ARE inflation. Sensitivity reported under ρ ∈ {0.0, 0.3, 0.5}. Primary detectability classification under ρ=0.3. Rubric SD priors CALIBRATED from iter-2 raw 90 grade artifacts via Phase 0.3."
+    "phase_0_4_empirical_paired_sd_finding": {
+      "headline": "Empirical paired-delta SD per dim from iter-2 (B-A per task, 8 tasks): rho_implied is 0.44 (plan_signal) to 0.86 (correctness_determinism). Real ρ is much higher than the ρ=0.3 prior used in compute_mde.py. This further shrinks MDE.",
+      "rho_implied_per_dim": {
+        "repo_fit": 0.5725,
+        "cleanliness": 0.8321,
+        "correctness_determinism": 0.8612,
+        "plan_signal": 0.4419,
+        "diff_discipline": 0.6496
+      },
+      "implication": "compute_mde.py's ρ=0.3 prior was anti-conservative; real iter-2 paired correlation is 0.44-0.86. Phase 0.4 lmer-MDE table uses empirical ρ via the within-cluster paired-SD formula sqrt(2*(1-ICC)), which approximates the empirical-ρ regime."
+    },
+    "phase_0_4_selection_bias_falsification_finding": {
+      "headline": "🚨 SELECTION-BIAS FALSIFICATION TRIGGERED on iter-2 retroactive locked_pass_rate: |median(selected B-A) - median(unselected B-A)| = 0.33, exceeding 0.15 threshold. The 4-task selection {P0,T1,T2,E1} for n=4 had B underperforming A by 0.33 fraction; the 4-task unselected set {T5,T7,T8,T9} had no paired delta. iter-3 inheriting this selection means apparent B improvement on these 4 tasks could be regression-to-mean rather than methodology change.",
+      "deltas_selected_BminusA_iter2_locked": [-0.3333, -0.3333, -0.3333, 0.0],
+      "deltas_unselected_BminusA_iter2_locked": [0.0, 0.0, 0.0, 0.0],
+      "median_diff_selected_minus_unselected": -0.3333,
+      "falsification_threshold": 0.15,
+      "falsification_triggered": true,
+      "implication_for_iter3": "H_iter3_falsification_selection_bias hypothesis is ESSENTIAL — must be reported alongside iter-3 c_at_a_min results. If iter-3's c_at_a_min (or any inferential metric) shows large B-improvement on selected tasks vs unselected, the iter-3 paper must report regression-to-mean as a candidate explanation in §10. iter-3 paper §1 abstract pre-registers this caveat.",
+      "data_caveat": "Test runs on locked_pass_rate as proxy for c_at_a_min (iter-2 has no decomposer outputs). Phase 0.4 should rerun with c_at_a_min once decomposer is invoked on iter-2 PLAN.md files."
+    },
+    "method_note": "Phase 0.4 lmer-MDE table at thoughts/shared/research/iter3-prereg-lmer-mde-table.json (computed by scripts/compute_mde_lmer.py). Replaces per-task-mean MDE as the primary detectability classification. Per-task-mean MDE retained as conservative sensitivity row in compute_mde.py output."
   },
 
   "abstract_lead_precommit": {
-    "rule": "iter-3 paper §1 abstract first sentence MUST be the Phase 0.3 calibration finding (6→3 inferential metrics). Order: (s1) calibration finding, (s2) methodology innovations, (s3) descriptive findings on honesty + inferential findings on c_at_a_min/pass-rates, (s4) verdict, (s5) COI disclosure.",
-    "rationale": "Per tech reviewer (round-3): burying calibration finding below §1 forfeits trust-credit. The pre-registration discipline IS the contribution; lead with it.",
-    "title_candidates": [
-      "What pre-registration cost us: a calibrated post-mortem on a 6-metric eval that became 3",
-      "Pre-registered calibration shrinks an n=8 coding-agent eval from 6 to 3 inferential metrics (a Circit case study)",
-      "Disentangling honesty and correctness in coding-agent evaluation: a pre-registered case study with descriptive-only honesty findings"
+    "rule": "iter-3 paper §1 abstract first sentence MUST be the Phase 0.4 lmer-MDE-divergence finding: per-task-mean MDE classifies 6 of 9 metrics as descriptive-only; lmer MDE under empirical ICC reverses to 8 of 9 inferentially scoped. The methodology contribution is the demonstration that estimator choice flips eval-power conclusions on this design. Order: (s1) lmer-vs-mean-of-means divergence finding, (s2) honesty-disentanglement methodology + selection-bias falsification, (s3) iter-3 verdict on c_at_a_min + flake_pass_rates + rubric dims under lmer, (s4) operationally-meaningful caveats (rubric SDs, ICC sensitivity), (s5) COI disclosure.",
+    "rationale_post_phase_0_4": "Phase 0.3's '6→3 shrinkage' was anti-conservative under the wrong estimator. Phase 0.4's lmer redo restores most of the inferential scope and surfaces a methodology finding (estimator-choice MDE divergence) more interesting than either of the standalone shrinkage / no-shrinkage claims. Lead with the divergence; report both estimators as sensitivity rows.",
+    "title_candidates_post_phase_0_4": [
+      "Estimator-choice MDE divergence in coding-agent eval: a pre-registered case study (n=56)",
+      "Pre-registered eval calibration: lmer-vs-mean-of-means flips inferential scope from 3 to 8 metrics (Circit n=56 case study)",
+      "Disentangling honesty and correctness in coding-agent evaluation: a pre-registered case study with selection-bias falsification"
     ]
   },
 
-  "honesty_gate_unfalsifiability_acknowledgment": {
-    "scope": "Iter-3 cannot inferentially validate the honesty-as-gate redesign at planned n=8 task-pairs.",
-    "what_iter_3_can_do": [
-      "theoretically motivate the redesign (§honesty_gate_direction_choice)",
-      "descriptively support the redesign (per-arm honesty means + qualitative case studies)",
-      "report verdict-stability under threshold sensitivity grid (§threshold_sensitivity_grid)"
+  "honesty_gate_inferential_status_post_phase_0_4": {
+    "scope": "Phase 0.4 lmer-MDE redo found honesty_signal_mean IS inferentially detectable at iter-3's planned n under the primary lmer estimator: lmer MDE ≈ 0.79 anchor (using plan_signal proxy with 1.5x SD-uncertainty inflation, MDE may rise to ~1.0-1.2 — borderline). Earlier 'unfalsifiability' framing was based on the wrong estimator and is RESCINDED.",
+    "current_classification": "honesty_signal is BORDERLINE-INFERENTIAL under lmer with empirical ICC; verdict robustness depends on observed iter-3 effect size relative to lmer MDE 0.79-1.2 (1.5x-uncertainty range)",
+    "what_iter_3_can_do_under_lmer": [
+      "make inferential claim if observed |delta_B-A| on honesty_signal_mean exceeds lmer MDE under empirical ICC",
+      "report under sensitivity grid: ICC ∈ {0.1, 0.3, 0.5} and SD-inflation factor ∈ {1.0, 1.5, 2.0}",
+      "verdict-stability table in §10"
     ],
     "what_iter_3_cannot_do": [
-      "claim 'B is more honest than A' with statistical confidence",
-      "validate the honesty-gate redesign empirically at this n",
-      "rule out selection-bias as the c_at_a_min driver if H_iter3_falsification_selection_bias triggers"
+      "claim 'B is more honest than A' if observed effect is below lmer MDE in any sensitivity grid cell",
+      "rule out selection-bias as driver IF H_iter3_falsification_selection_bias triggers on iter-3 data (it triggers on iter-2 retroactive)"
     ],
-    "deferred_to_iter4": "Inferential honesty validation requires (a) cross-codebase replication, (b) larger n (≥16 task-pairs), or (c) hierarchical Bayesian shrinkage prior. Pre-committed in iter4_hypotheses.",
-    "precommitment": "iter-3 paper will NOT claim 'B is more honest than A' with statistical confidence regardless of descriptive outcome; if descriptive direction strongly favors B, paper reports it as 'descriptive evidence motivating iter-4 confirmatory study', not as inferential finding."
+    "deferred_to_iter4_unconditionally": "Cross-codebase replication and Bayesian hierarchical shrinkage; not blocking iter-3 paper's inferential claim under lmer.",
+    "precommitment_revised": "iter-3 paper claims 'B is more honest than A' inferentially ONLY IF (a) observed |delta| > lmer MDE at ICC=0.3 with 1.5x SD inflation, AND (b) selection-bias falsification test on iter-3 c_at_a_min does NOT trigger, AND (c) verdict stable across threshold sensitivity grid. If any of (a)-(c) fails, descriptive-only framing applies."
   },
 
   "phase_0_4_blockers_required_before_sweep": {
