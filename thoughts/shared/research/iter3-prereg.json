@@ -143,9 +143,10 @@
       },
       {
         "path": "eval/spawner.py",
-        "sha256": "b34630360d3fd5b3c065e67b1fd3c415973b61df43c02879f38bd2b8045f9fd6",
+        "sha256": "ab165d636f8a84ffafe73a461eabfca045c58168def87ba0886916fe3e2b8246",
         "round_introduced": 9,
-        "purpose": "(round-9 iter4_infra_carry_forward I1+I3) added --sequential-ab flag + preflight_claude_session() + --preflight-claude pre-flight smoke test"
+        "purpose": "(round-9 I1+I3+I2) --sequential-ab + preflight_claude_session + --retry-on-rate-limit (spawn_one_with_retry: 30s/60s/120s/240s/480s exp backoff with \u00b125%% jitter; total budget 30min; rate-limit + transient claude-exit-1 PEM signature detector)",
+        "round_last_modified": 9
       },
       {
         "path": "eval/binary_rubric.py",
@@ -182,6 +183,12 @@
         "sha256": "8b4b5396ca239cbdb4692252293071afd4fa1c4d2b37fd6c79a893d980d976e4",
         "round_introduced": 9,
         "purpose": "(round-9 iter4_infra_carry_forward I5) added JUDGE_HTTP_CONFIGS + _resolve_scaleway_api_key + _run_http_judge for Scaleway-Qwen3-Coder; STRICT mode no silent fallback; closes inter-rater alpha=0.29 gap"
+      },
+      {
+        "path": "README.md",
+        "sha256": "563170347a27c672e271e0e0c55d4a874724c007d0c5b992a718ca73ddf0b68f",
+        "round_introduced": 9,
+        "purpose": "(round-9 iter4_infra_carry_forward I4) Cato VPN SSL cert documentation; iter-2 mis-diagnosis prevention; SSL_CERT_FILE bundle recipe"
       }
     ],
     "test_count_pinned_at_this_commit": "18 of 18 tests pass (test_calibrate + test_prereg_validation; round-6 + round-7 verified)",
@@ -201,7 +208,7 @@
         "id": "I2_retry_on_429_exponential_backoff",
         "iter2_failure": "Claude rate-limit during parallel execution; spawner.py exits with rc=1 + 'PEM routines' stderr noise; no retry logic",
         "iter4_remediation": "Wrap claude headless invocation in retry-with-backoff loop (jitter, max 5 retries, 5min total budget). ~50 LOC in spawner.py spawn_one()",
-        "status": "PENDING"
+        "status": "LANDED_ROUND_9 \u2014 eval/spawner.py:spawn_one_with_retry() + --retry-on-rate-limit + --max-retries CLI flags. Detector: _is_rate_limited_or_transient() with 10 rate-limit signatures (rate limit / 429 / overloaded / too many requests / timed out / service unavailable / anthropic_overloaded etc.) + 4 transient claude-cli-exit-1 signatures (claude exited 1 / PEM routines / SSL routines / OPENSSL_internal). Backoff: 30s/60s/120s/240s/480s with \u00b125%% jitter; max 5 retries; total budget 30min. Verified with 7 unit-test cases (all pass). spawn_parallel takes new retry_on_rate_limit + max_retries kwargs."
       },
       {
         "id": "I3_out_of_credits_preflight_check",
@@ -213,7 +220,7 @@
         "id": "I4_cato_vpn_ssl_cert_documented",
         "iter2_failure": "Cato VPN injects extra root certs from CatoRootCA.pem; openssl warnings during direnv exec; cosmetic but noisy",
         "iter4_remediation": "Document in eval-scripts setup runbook (README): 'If running on Circit-issued laptop, expect Cato cert warnings \u2014 they do NOT indicate failure; ignore.' Or set SSL_CERT_FILE explicitly to bundle Cato cert.",
-        "status": "PENDING"
+        "status": "LANDED_ROUND_9 \u2014 README.md (Circit eval-scripts repo) gains \"Environment notes (round-9 I4)\" section: documents Cato VPN SSL cert warning is COSMETIC (iter-2 mis-diagnosed it as failure cause; actual cause was ~/.claude/settings.json \"model\": \"mistral\" leftover); provides SSL_CERT_FILE bundle recipe; references the round-9 _is_rate_limited_or_transient detector which treats PEM routines as retry-friendly transient signature. Pre-flight (--preflight-claude) catches actual auth/model issues distinct from cosmetic SSL warnings."
       },
       {
         "id": "I5_qwen_coder_scaleway_transport",
@@ -1045,5 +1052,15 @@
       "choice": "rails",
       "prior_prereg_sha256": "9af9c2a3085ee39a6c6482a1edf54a6547995f5ca786f03a7af7031f5f5a7441"
     }
-  ]
+  ],
+  "iter4_sweep_readiness_scorecard_round_9_final": {
+    "I1_sequential_ab_per_cell": "LANDED",
+    "I2_retry_on_429_exponential_backoff": "LANDED",
+    "I3_out_of_credits_preflight_check": "LANDED",
+    "I4_cato_vpn_ssl_cert_documented": "LANDED",
+    "I5_qwen_coder_scaleway_transport": "LANDED",
+    "I6_validate_prereg_check_audit_trail_cli": "LANDED",
+    "I7_binary_classifier_validation_before_repinning": "PENDING_iter4_design_rule",
+    "_summary": "6 of 7 iter-4 sweep BLOCKING gaps closed in round-9. I7 is iter-4 design rule (validate classifier against actual prompt-suite outputs before SHA-pinning); not blocking for iter-3 case-study paper which ships under kill_switch branch A."
+  }
 }
