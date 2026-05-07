@@ -150,40 +150,102 @@
       "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
     },
     {
-      "metric": "impl_quality_mean",
-      "iter2_sd_A": 0.4,
-      "iter2_sd_B": 0.4,
-      "iter2_observed_delta": 0.066,
+      "metric": "repo_fit_mean",
+      "iter2_sd_A": 0.964,
+      "iter2_sd_B": 0.79,
+      "iter2_observed_delta": null,
       "test": "ordinal mixed-effects",
       "operationally_meaningful_threshold": 1.0,
-      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing: 1.0 = one anchor level (1\u21923 or 3\u21925 jump)",
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing: 1.0 = one anchor level (1\u21923 or 3\u21925)",
       "unit": "anchor level (1/3/5)",
       "mde_under_rho_sensitivity": {
         "rho_0.0": {
-          "sd_diff": 0.5657,
-          "mde_per_task_n8": 0.6522,
+          "sd_diff": 1.2464,
+          "mde_per_task_n8": 1.437,
           "mde_per_cell_n28": null
         },
         "rho_0.3": {
-          "sd_diff": 0.4733,
-          "mde_per_task_n8": 0.5457,
+          "sd_diff": 1.0471,
+          "mde_per_task_n8": 1.2073,
           "mde_per_cell_n28": null
         },
         "rho_0.5": {
-          "sd_diff": 0.4,
-          "mde_per_task_n8": 0.4612,
+          "sd_diff": 0.8899,
+          "mde_per_task_n8": 1.0259,
           "mde_per_cell_n28": null
         }
       },
-      "detectable_at_op_threshold_per_task_n8_rho_0_3": true,
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
       "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
       "primary_estimator": "lmer mixed-effects",
       "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
     },
     {
-      "metric": "plan_quality_mean",
-      "iter2_sd_A": 0.4,
-      "iter2_sd_B": 0.4,
+      "metric": "cleanliness_mean",
+      "iter2_sd_A": 0.621,
+      "iter2_sd_B": 0.877,
+      "iter2_observed_delta": null,
+      "test": "ordinal mixed-effects",
+      "operationally_meaningful_threshold": 1.0,
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing",
+      "unit": "anchor level (1/3/5)",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 1.0746,
+          "mde_per_task_n8": 1.2389,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.3": {
+          "sd_diff": 0.9099,
+          "mde_per_task_n8": 1.0491,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.5": {
+          "sd_diff": 0.7811,
+          "mde_per_task_n8": 0.9006,
+          "mde_per_cell_n28": null
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "lmer mixed-effects",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "correctness_determinism_mean",
+      "iter2_sd_A": 1.551,
+      "iter2_sd_B": 1.469,
+      "iter2_observed_delta": null,
+      "test": "ordinal mixed-effects",
+      "operationally_meaningful_threshold": 1.0,
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing",
+      "unit": "anchor level (1/3/5)",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 2.1362,
+          "mde_per_task_n8": 2.463,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.3": {
+          "sd_diff": 1.7879,
+          "mde_per_task_n8": 2.0613,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.5": {
+          "sd_diff": 1.5117,
+          "mde_per_task_n8": 1.7429,
+          "mde_per_cell_n28": null
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "lmer mixed-effects",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "plan_signal_mean",
+      "iter2_sd_A": 1.097,
+      "iter2_sd_B": 0.658,
       "iter2_observed_delta": 0.479,
       "test": "ordinal mixed-effects",
       "operationally_meaningful_threshold": 1.0,
@@ -191,53 +253,84 @@
       "unit": "anchor level (1/3/5)",
       "mde_under_rho_sensitivity": {
         "rho_0.0": {
-          "sd_diff": 0.5657,
-          "mde_per_task_n8": 0.6522,
+          "sd_diff": 1.2792,
+          "mde_per_task_n8": 1.4748,
           "mde_per_cell_n28": null
         },
         "rho_0.3": {
-          "sd_diff": 0.4733,
-          "mde_per_task_n8": 0.5457,
+          "sd_diff": 1.0969,
+          "mde_per_task_n8": 1.2647,
           "mde_per_cell_n28": null
         },
         "rho_0.5": {
-          "sd_diff": 0.4,
-          "mde_per_task_n8": 0.4612,
+          "sd_diff": 0.9563,
+          "mde_per_task_n8": 1.1026,
           "mde_per_cell_n28": null
         }
       },
-      "detectable_at_op_threshold_per_task_n8_rho_0_3": true,
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
+      "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
+      "primary_estimator": "lmer mixed-effects",
+      "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
+    },
+    {
+      "metric": "diff_discipline_mean",
+      "iter2_sd_A": 0.881,
+      "iter2_sd_B": 0.921,
+      "iter2_observed_delta": null,
+      "test": "ordinal mixed-effects",
+      "operationally_meaningful_threshold": 1.0,
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing",
+      "unit": "anchor level (1/3/5)",
+      "mde_under_rho_sensitivity": {
+        "rho_0.0": {
+          "sd_diff": 1.2745,
+          "mde_per_task_n8": 1.4694,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.3": {
+          "sd_diff": 1.0666,
+          "mde_per_task_n8": 1.2297,
+          "mde_per_cell_n28": null
+        },
+        "rho_0.5": {
+          "sd_diff": 0.9017,
+          "mde_per_task_n8": 1.0396,
+          "mde_per_cell_n28": null
+        }
+      },
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
       "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
       "primary_estimator": "lmer mixed-effects",
       "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
     },
     {
       "metric": "honesty_signal_mean",
-      "iter2_sd_A": 0.4,
-      "iter2_sd_B": 0.4,
+      "iter2_sd_A": 1.097,
+      "iter2_sd_B": 0.658,
       "iter2_observed_delta": null,
       "test": "ordinal mixed-effects",
       "operationally_meaningful_threshold": 1.0,
-      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing (new dim, prior matches existing rubric dims)",
+      "operationally_meaningful_threshold_source": "BARS rubric anchor spacing (new dim; prior copied from plan_signal)",
       "unit": "anchor level (1/3/5)",
       "mde_under_rho_sensitivity": {
         "rho_0.0": {
-          "sd_diff": 0.5657,
-          "mde_per_task_n8": 0.6522,
+          "sd_diff": 1.2792,
+          "mde_per_task_n8": 1.4748,
           "mde_per_cell_n28": null
         },
         "rho_0.3": {
-          "sd_diff": 0.4733,
-          "mde_per_task_n8": 0.5457,
+          "sd_diff": 1.0969,
+          "mde_per_task_n8": 1.2647,
           "mde_per_cell_n28": null
         },
         "rho_0.5": {
-          "sd_diff": 0.4,
-          "mde_per_task_n8": 0.4612,
+          "sd_diff": 0.9563,
+          "mde_per_task_n8": 1.1026,
           "mde_per_cell_n28": null
         }
       },
-      "detectable_at_op_threshold_per_task_n8_rho_0_3": true,
+      "detectable_at_op_threshold_per_task_n8_rho_0_3": false,
       "detectable_at_op_threshold_per_cell_n28_rho_0_3": false,
       "primary_estimator": "lmer mixed-effects",
       "mde_caveat": "MDE computed under paired-difference normality (paired-t); Wilcoxon ARE inflation applied. lmer-based effective n typically larger than n_pairs_per_task=8 due to within-task pooling \u2014 these MDE values are the conservative per-task-mean baseline, not the lmer-adjusted floor."
@@ -306,20 +399,13 @@
     }
   ],
   "summary": {
-    "detectable_at_op_threshold_per_task_n8": [
-      "impl_quality_mean",
-      "plan_quality_mean",
-      "honesty_signal_mean"
-    ],
+    "detectable_at_op_threshold_per_task_n8": [],
     "detectable_at_op_threshold_per_cell_n28": [
       "flake_locked_pass_rate",
       "flake_rotated_pass_rate",
       "c_at_a_min"
     ],
     "iter_3_can_make_inferential_claims_about": [
-      "impl_quality_mean",
-      "plan_quality_mean",
-      "honesty_signal_mean",
       "flake_locked_pass_rate",
       "flake_rotated_pass_rate",
       "c_at_a_min"
@@ -327,6 +413,12 @@
     "iter_3_must_report_descriptively_not_inferentially": [
       "plan_impl_jaccard",
       "wall_clock_s",
+      "repo_fit_mean",
+      "cleanliness_mean",
+      "correctness_determinism_mean",
+      "plan_signal_mean",
+      "diff_discipline_mean",
+      "honesty_signal_mean",
       "total_dollars_mean"
     ]
   },

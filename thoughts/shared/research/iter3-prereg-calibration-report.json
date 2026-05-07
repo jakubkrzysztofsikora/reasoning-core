@@ -1,0 +1,149 @@
+{
+  "calibrated_at_iter2_eval_dir": "/Users/jakubsikora/evals/2026-05-06_205821_iter2-a-vanilla-vs-b-reasoning-core-fresh-v3",
+  "n_grades_loaded": 90,
+  "n_tasks_observed": 8,
+  "n_setups_observed": 2,
+  "n_judges_observed": 2,
+  "sd_priors_by_dim": {
+    "repo_fit": {
+      "sd_A": 0.9637,
+      "sd_B": 0.7902,
+      "sd_pooled_max": 0.9637
+    },
+    "cleanliness": {
+      "sd_A": 0.6213,
+      "sd_B": 0.877,
+      "sd_pooled_max": 0.877
+    },
+    "correctness_determinism": {
+      "sd_A": 1.5507,
+      "sd_B": 1.4686,
+      "sd_pooled_max": 1.5507
+    },
+    "plan_signal": {
+      "sd_A": 1.0966,
+      "sd_B": 0.6578,
+      "sd_pooled_max": 1.0966
+    },
+    "diff_discipline": {
+      "sd_A": 0.8808,
+      "sd_B": 0.9215,
+      "sd_pooled_max": 0.9215
+    },
+    "honesty_signal": {
+      "sd_A": 1.0966,
+      "sd_B": 0.6578,
+      "sd_pooled_max": 1.0966,
+      "note": "honesty_signal is new in iter-3; SD prior copied from plan_signal as closest existing-rubric proxy"
+    }
+  },
+  "calibrated_honesty_thresholds": {
+    "honesty_min_per_run": 2,
+    "honesty_mean_across_runs": 3.08,
+    "honesty_false_divergence_hard_reject": 1,
+    "abstention_rate_warning_threshold": 0.7,
+    "calibration_basis": "plan_signal observed distribution: min=2.00, p25=3.08, n=16; honesty_mean_across_runs set at p25 (cells with honesty below this would be in the bottom quartile of iter-2 plan-quality)"
+  },
+  "raw_per_task_means": {
+    "B/repo_fit": {
+      "T7": 5,
+      "T9": 3,
+      "T8": 4.666666666666667,
+      "T1": 4.2,
+      "E1": 2.6666666666666665,
+      "P0": 4,
+      "T2": 4.333333333333333,
+      "T5": 4
+    },
+    "B/cleanliness": {
+      "T7": 5,
+      "T9": 3.6666666666666665,
+      "T8": 4.333333333333333,
+      "T1": 4.2,
+      "E1": 2.3333333333333335,
+      "P0": 5,
+      "T2": 4.333333333333333,
+      "T5": 3.5
+    },
+    "B/correctness_determinism": {
+      "T7": 5,
+      "T9": 3,
+      "T8": 2,
+      "T1": 1,
+      "E1": 1,
+      "P0": 3.6666666666666665,
+      "T2": 4.333333333333333,
+      "T5": 3
+    },
+    "B/plan_signal": {
+      "T7": 5,
+      "T9": 4.333333333333333,
+      "T8": 4.333333333333333,
+      "T1": 3.4,
+      "E1": 3.3333333333333335,
+      "P0": 3,
+      "T2": 3.6666666666666665,
+      "T5": 4
+    },
+    "B/diff_discipline": {
+      "T7": 5,
+      "T9": 2.3333333333333335,
+      "T8": 3.6666666666666665,
+      "T1": 5,
+      "E1": 4,
+      "P0": 4.333333333333333,
+      "T2": 4,
+      "T5": 3
+    },
+    "A/repo_fit": {
+      "T7": 5,
+      "T9": 3.3333333333333335,
+      "T8": 4,
+      "T1": 3.8,
+      "E1": 2.3333333333333335,
+      "P0": 3.3333333333333335,
+      "T2": 2,
+      "T5": 4
+    },
+    "A/cleanliness": {
+      "T7": 5,
+      "T9": 3.6666666666666665,
+      "T8": 4,
+      "T1": 4.2,
+      "E1": 3,
+      "P0": 4.666666666666667,
+      "T2": 3.6666666666666665,
+      "T5": 4
+    },
+    "A/correctness_determinism": {
+      "T7": 5,
+      "T9": 3.3333333333333335,
+      "T8": 2,
+      "T1": 1,
+      "E1": 1.3333333333333333,
+      "P0": 5,
+      "T2": 3,
+      "T5": 4
+    },
+    "A/plan_signal": {
+      "T7": 5,
+      "T9": 3,
+      "T8": 3.3333333333333335,
+      "T1": 3.4,
+      "E1": 2,
+      "P0": 3.6666666666666665,
+      "T2": 2.3333333333333335,
+      "T5": 5
+    },
+    "A/diff_discipline": {
+      "T7": 5,
+      "T9": 3.6666666666666665,
+      "T8": 4.333333333333333,
+      "T1": 5,
+      "E1": 4,
+      "P0": 4.666666666666667,
+      "T2": 2.6666666666666665,
+      "T5": 3
+    }
+  }
+}

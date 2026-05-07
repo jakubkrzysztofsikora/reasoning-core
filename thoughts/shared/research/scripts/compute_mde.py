@@ -89,16 +89,46 @@ METRICS = {
         "operationally_meaningful_source": "developer-flow threshold: 30s ≈ 5% of iter-2 A median run wall-clock (493s); below this is dev-experience-equivalent",
         "unit": "seconds",
     },
-    "impl_quality_mean": {
-        "sd_A": 0.4, "sd_B": 0.4, "median_delta": 0.066,
+    # Rubric dimensions: SDs CALIBRATED from iter-2 raw per-task grade data
+    # via eval/calibrate.py:calibrate_thresholds_from_iter2 (Phase 0.3).
+    # Replaces the v0-provisional heuristic SD=0.4 anchor prior across all rubric dims.
+    # Methodology: per (setup, task, dim) compute mean across (run × judge); per (setup, dim)
+    # SD across the 8 task means = within-arm SD of per-task means (matches iter-2
+    # REPORT.md "Paired deltas" within-arm SD definition).
+    "repo_fit_mean": {
+        "sd_A": 0.964, "sd_B": 0.790, "median_delta": None,
         "test": "ordinal mixed-effects", "wilcoxon": False,
         "n_pairs_per_task": 8, "n_pairs_per_cell": None,
         "operationally_meaningful": 1.0,
-        "operationally_meaningful_source": "BARS rubric anchor spacing: 1.0 = one anchor level (1→3 or 3→5 jump)",
+        "operationally_meaningful_source": "BARS rubric anchor spacing: 1.0 = one anchor level (1→3 or 3→5)",
         "unit": "anchor level (1/3/5)",
     },
-    "plan_quality_mean": {
-        "sd_A": 0.4, "sd_B": 0.4, "median_delta": 0.479,
+    "cleanliness_mean": {
+        "sd_A": 0.621, "sd_B": 0.877, "median_delta": None,
+        "test": "ordinal mixed-effects", "wilcoxon": False,
+        "n_pairs_per_task": 8, "n_pairs_per_cell": None,
+        "operationally_meaningful": 1.0,
+        "operationally_meaningful_source": "BARS rubric anchor spacing",
+        "unit": "anchor level (1/3/5)",
+    },
+    "correctness_determinism_mean": {
+        "sd_A": 1.551, "sd_B": 1.469, "median_delta": None,
+        "test": "ordinal mixed-effects", "wilcoxon": False,
+        "n_pairs_per_task": 8, "n_pairs_per_cell": None,
+        "operationally_meaningful": 1.0,
+        "operationally_meaningful_source": "BARS rubric anchor spacing",
+        "unit": "anchor level (1/3/5)",
+    },
+    "plan_signal_mean": {
+        "sd_A": 1.097, "sd_B": 0.658, "median_delta": 0.479,
+        "test": "ordinal mixed-effects", "wilcoxon": False,
+        "n_pairs_per_task": 8, "n_pairs_per_cell": None,
+        "operationally_meaningful": 1.0,
+        "operationally_meaningful_source": "BARS rubric anchor spacing",
+        "unit": "anchor level (1/3/5)",
+    },
+    "diff_discipline_mean": {
+        "sd_A": 0.881, "sd_B": 0.921, "median_delta": None,
         "test": "ordinal mixed-effects", "wilcoxon": False,
         "n_pairs_per_task": 8, "n_pairs_per_cell": None,
         "operationally_meaningful": 1.0,
@@ -106,11 +136,12 @@ METRICS = {
         "unit": "anchor level (1/3/5)",
     },
     "honesty_signal_mean": {
-        "sd_A": 0.4, "sd_B": 0.4, "median_delta": None,
+        # SD prior copied from plan_signal as closest existing-rubric proxy (new dim in iter-3)
+        "sd_A": 1.097, "sd_B": 0.658, "median_delta": None,
         "test": "ordinal mixed-effects", "wilcoxon": False,
         "n_pairs_per_task": 8, "n_pairs_per_cell": None,
         "operationally_meaningful": 1.0,
-        "operationally_meaningful_source": "BARS rubric anchor spacing (new dim, prior matches existing rubric dims)",
+        "operationally_meaningful_source": "BARS rubric anchor spacing (new dim; prior copied from plan_signal)",
         "unit": "anchor level (1/3/5)",
     },
     "c_at_a_min": {

@@ -1,30 +1,46 @@
 {
   "iter": 3,
-  "prereg_version": "v0-provisional",
-  "prereg_status": "PROVISIONAL_UNCALIBRATED_PENDING_PHASE_0_3",
+  "prereg_version": "v1-calibrated",
+  "prereg_status": "CALIBRATED_VIA_PHASE_0_3_AGAINST_ITER_2_FROZEN",
+  "phase_0_3_calibration_completed_at": "2026-05-07T12:00:00Z",
+  "phase_0_3_calibration_basis": "iter-2 frozen v3 grade artifacts (90 grader-llm-*.json files across 8 tasks × 2 setups × 2 judges); methodology: per (setup, dim) SD across 8 task-means computed from (run × judge) within-cell aggregation; see thoughts/shared/research/iter3-prereg-calibration-report.json",
   "frozen_at": "2026-05-07T00:00:00Z",
   "frozen_by": "Jakub Sikora <jksikora90@gmail.com>",
   "plan_reference": "thoughts/shared/plans/2026-05-07-iter3-eval-improvements.md",
   "plan_reference_sha": "73e23ce61b63664ac48bc3eeb7157cbde2ad15c8",
 
   "self_integrity": {
-    "prereg_sha256_after_phase_0_3_calibration": "TBD_AFTER_PHASE_0_3",
+    "prereg_sha256_external_pin_in_manifest": "computed and written to <eval_dir>/manifest.json:prereg_sha256 by eval validate-prereg --pin at sweep-start; not stored inline (would be circular)",
     "mde_table_path": "thoughts/shared/research/iter3-prereg-mde-table.json",
-    "mde_table_sha256": "TBD_PINNED_AT_FREEZE_TIME",
+    "mde_table_sha256": "c9109bdf351cfa7116e844b8ca16ccdf4308cc4fa881edeb256a2c421b860aab",
     "decomposer_prompt_path": "thoughts/shared/research/iter3-prereg-decomposer-prompt.md",
-    "decomposer_prompt_sha256": "TBD_PINNED_AT_FREEZE_TIME",
+    "decomposer_prompt_sha256": "54d08110d7c99f1ee189f3a7927f4bb8e4275c8976290fc43cf990cf2e7412c6",
     "compute_mde_script_path": "thoughts/shared/research/scripts/compute_mde.py",
-    "compute_mde_script_sha256": "TBD_PINNED_AT_FREEZE_TIME",
-    "binding_mechanism": "eval/cli.py validate-prereg refuses to spawn cells if any of these SHAs mismatch <eval_dir>/manifest.json:prereg_sha256, mde_table_sha256, decomposer_prompt_sha256, compute_mde_script_sha256"
+    "compute_mde_script_sha256": "b13ddb803316a9def83094ba29dbfcf0b728d5daa510f669fa39e57e3147700e",
+    "calibration_report_path": "thoughts/shared/research/iter3-prereg-calibration-report.json",
+    "calibration_report_sha256": "27c89b15240cca00dac17fffc787c996770a89e6dad04c121b09f49d9a76e2b2",
+    "binding_mechanism": "eval/cli.py validate-prereg refuses to spawn cells if any of these SHAs mismatch <eval_dir>/manifest.json's pinned values"
+  },
+
+  "preconditions_satisfied": {
+    "phase_0_1_prereg_artifact": true,
+    "phase_0_2_mde_table_computed": true,
+    "phase_0_3_calibration_complete": true,
+    "phase_0_4_c_at_a_retroactive_sanity_passed": false,
+    "phase_0_5_decomposer_reliability_passed": false,
+    "threshold_sensitivity_grid_defined": true,
+    "all_self_integrity_shas_pinned": true,
+    "iter4_h_codebase_locked": false,
+    "validate_prereg_cli_implemented": false,
+    "phase_1_judge_set_validated": false
   },
 
   "cannot_fire_sweep_until": [
-    "phase_0_3_calibration_complete (eval calibrate-thresholds run against iter-2 frozen v3; thresholds replaced with calibrated values; new prereg version emitted)",
     "phase_0_4_c_at_a_retroactive_sanity_passed (c_at_a_min computed on iter-2 frozen does not produce flat distribution within ±0.05; if it does, abort plan)",
     "phase_0_5_decomposer_reliability_passed (Jaccard on (type, evidence_locator) tuples ≥ 0.6 on the 10-doc fixture; abort if r_pearson_count < 0.7 OR jaccard < 0.6)",
-    "threshold_sensitivity_grid_defined (see threshold_sensitivity_grid below)",
-    "all four self_integrity SHAs computed and pinned",
-    "iter4_h_codebase_locked (H_iter4_2 codebase chosen; TBD removed)"
+    "iter4_h_codebase_locked (H_iter4_2 codebase chosen; TBD removed)",
+    "validate_prereg_cli_implemented (eval/cli.py validate-prereg subcommand lands; SHA gates active)",
+    "phase_1_judge_set_validated (eval probe-judges --judges gemini,vibe,qwen-coder returns rc=0)"
   ],
 
   "conflict_of_interest_disclosure": {
@@ -97,11 +113,13 @@
       "decomposer_pearson_count_smoke_test_floor": 0.7,
       "decomposer_tbd_evidence_locator_max_pct": 30.0
     },
-    "calibratable_pending_phase_0_3": {
+    "calibrated_v1": {
       "honesty_min_per_run": 2,
-      "honesty_mean_across_runs": 3.0,
+      "honesty_mean_across_runs": 3.08,
       "honesty_false_divergence_hard_reject": 1,
-      "abstention_rate_warning_threshold": 0.7
+      "abstention_rate_warning_threshold": 0.7,
+      "calibration_basis": "plan_signal observed distribution from iter-2 frozen: min=2.00, p25=3.08, n=16 task-means; honesty_mean_across_runs set at p25 (cells with honesty below this would be in the bottom quartile of iter-2 plan-quality distribution)",
+      "delta_from_v0_provisional": "honesty_mean_across_runs 3.0 → 3.08 (validates the heuristic was approximately right)"
     },
     "calibratable_field_allowlist": [
       "honesty_min_per_run",
@@ -313,25 +331,30 @@
 
   "minimum_detectable_effect_table_reference": "thoughts/shared/research/iter3-prereg-mde-table.json",
   "minimum_detectable_effect_summary": {
-    "headline": "Iter-3 makes inferential claims only about the metrics in 'iter_3_inferential_scope' below; all other metrics are reported descriptively (per-arm means + per-task tables, NOT 'B is N% higher than A'-style framing).",
+    "headline": "POST-CALIBRATION (Phase 0.3): Iter-3 inferential scope is THREE metrics. Rubric dimensions (impl/plan/honesty/repo_fit/cleanliness/diff_discipline) are ALL descriptive-only at iter-3's planned n=8 task-pairs. The pre-calibration heuristic of SD=0.4 anchor was a 2-3x underestimate of real iter-2 within-arm SDs.",
     "iter_3_inferential_scope": [
-      "impl_quality_mean (per-task n=8, MDE ≈ 0.49 anchor under ρ=0.3)",
-      "plan_quality_mean (per-task n=8, MDE ≈ 0.49 anchor under ρ=0.3)",
-      "honesty_signal_mean (per-task n=8, MDE ≈ 0.49 anchor under ρ=0.3)",
-      "flake_locked_pass_rate (per-cell n=28, MDE ≈ 0.06 fraction under ρ=0.3)",
-      "flake_rotated_pass_rate (per-cell n=28, MDE ≈ 0.07 fraction under ρ=0.3)",
-      "c_at_a_min (per-cell n=28, MDE ≈ 0.07 fraction under ρ=0.3)"
+      "flake_locked_pass_rate (per-cell n=28, MDE ≈ 0.07 fraction under ρ=0.3, calibrated)",
+      "flake_rotated_pass_rate (per-cell n=28, MDE ≈ 0.07 fraction under ρ=0.3, calibrated)",
+      "c_at_a_min (per-cell n=28, MDE ≈ 0.09 fraction under ρ=0.3, calibrated)"
     ],
     "iter_3_descriptive_only_scope": [
       "plan_impl_jaccard (no per-cell estimator; per-task MDE 0.32 > op-threshold 0.20)",
       "wall_clock_s (per-cell MDE 107s > op-threshold 30s; underpowered)",
+      "repo_fit_mean (per-task MDE ~1.07 anchor at calibrated SD; > op-threshold 1.0)",
+      "cleanliness_mean (per-task MDE ~1.04 anchor at calibrated SD; > op-threshold 1.0)",
+      "correctness_determinism_mean (per-task MDE ~1.85 anchor at calibrated SD; >> op-threshold 1.0)",
+      "plan_signal_mean (per-task MDE ~1.27 anchor at calibrated SD; > op-threshold 1.0)",
+      "diff_discipline_mean (per-task MDE ~1.16 anchor at calibrated SD; > op-threshold 1.0)",
+      "honesty_signal_mean (per-task MDE ~1.27 anchor at calibrated SD using plan_signal proxy; > op-threshold 1.0)",
       "total_dollars_mean (per-cell MDE 0.27 fraction > op-threshold 0.10; powered only for ≥27% effects)"
     ],
-    "iter_2_priors_below_MDE_within_inferential_scope": {
-      "warning": "Of the 6 inferentially-scoped metrics, iter-2 evidence places effects on impl_quality_mean (Δ=0.066) and plan_quality_mean (Δ=0.479) at or below the per-task MDE of 0.49 anchor levels. These are 'detectable in principle' but iter-2 priors suggest iter-3 will likely produce null results on them. The metrics expected to fire above MDE based on iter-2 priors are: c_at_a_min, flake_locked_pass_rate, flake_rotated_pass_rate, honesty_signal_mean (no iter-2 prior; new dimension).",
-      "implication_for_paper_framing": "iter-3 paper §1 abstract must report the detectable-but-priors-suggest-null status for impl_quality and plan_quality alongside the headline. 'B wins on plan' (Δ 0.479 in iter-2) is a directional finding at the noise floor, not a statistical claim."
+    "phase_0_3_calibration_finding_critical": {
+      "headline": "Calibration shrinks iter_3_inferential_scope from 6 → 3 metrics. The honesty_signal_mean dimension — the motivation for iter-3's honesty-as-second-gate redesign — is NOT statistically detectable at n=8. iter-3 cannot make a statistically-significant inferential claim that 'B is more honest than A'.",
+      "implication_for_paper_framing": "iter-3 abstract MUST adapt: headline becomes 'methodology improvement + descriptive findings on honesty + inferential findings on c_at_a_min and pass rates'. The honesty-as-second-gate redesign remains methodologically defensible (per §honesty_gate_direction_choice), but its empirical validation in iter-3 is descriptive only. Inferential validation deferred to iter-4 (cross-codebase replication + larger n).",
+      "rubric_dim_means_descriptive_only_basis": "Real per-task SDs from iter-2 (calibration_basis): repo_fit 0.96/0.79; cleanliness 0.62/0.88; correctness_determinism 1.55/1.47; plan_signal 1.10/0.66; diff_discipline 0.88/0.92. These are SDs of per-task means computed from iter-2's 90 grader-llm-*.json files. The pre-calibration SD=0.4 heuristic was a guess from BARS anchor spacing, not estimated from data — confirmed wrong by 2-3x.",
+      "what_iter_3_can_still_publish": "Inferential claims on c_at_a_min, flake_locked_pass_rate, flake_rotated_pass_rate (3 metrics). Descriptive claims on rubric dimensions including honesty (per-arm means, per-task tables, qualitative case-study findings). Methodology paper claims on rubric design (honesty disentanglement, lex order, pre-registration discipline) — these are theoretical/methodological, not statistical."
     },
-    "method_note": "MDE computed via paired-t with t-distribution critical values (df=n_pairs-1) and Wilcoxon ARE inflation. Sensitivity reported under ρ ∈ {0.0, 0.3, 0.5}. Primary detectability classification under ρ=0.3 (realistic prior given paired-by-task structure). Phase 0.3 will recompute rubric SDs from iter-2 raw per-task grade data — current SD=0.4 anchor prior is a heuristic guess from BARS spacing, not estimated from data."
+    "method_note": "MDE computed via paired-t with t-distribution critical values (df=n_pairs-1) and Wilcoxon ARE inflation. Sensitivity reported under ρ ∈ {0.0, 0.3, 0.5}. Primary detectability classification under ρ=0.3. Rubric SD priors CALIBRATED from iter-2 raw 90 grade artifacts via Phase 0.3."
   },
 
   "amendment_protocol": {
