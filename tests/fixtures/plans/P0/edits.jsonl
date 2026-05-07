@@ -1,0 +1,5 @@
+{"file_path": "Circit.Frontend/cypress/e2e/smoke-tests/basic/login_dashboard_happy_path.cy.ts", "expected_in_plan": true}
+{"file_path": "Circit.Frontend/cypress.config.ts", "expected_in_plan": true}
+{"file_path": "Circit.Frontend/cypress/support/commands.ts", "expected_in_plan": true}
+{"file_path": "src/random/unrelated.py", "expected_in_plan": false}
+{"file_path": "tools/scratch.sh", "expected_in_plan": false}

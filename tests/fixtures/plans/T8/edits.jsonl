@@ -1,0 +1,5 @@
+{"file_path": "Circit.Common/Dtos/AuthorisationResponseDto.cs", "expected_in_plan": true}
+{"file_path": "Circit.Common/Dtos/AuditItemDto.cs", "expected_in_plan": true}
+{"file_path": "Circit.Common/Dtos/ProviderCompanyDto.cs", "expected_in_plan": true}
+{"file_path": "Circit.Random/UnrelatedFile.cs", "expected_in_plan": false}
+{"file_path": "frontend/src/random.ts", "expected_in_plan": false}

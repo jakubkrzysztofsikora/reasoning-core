@@ -1,0 +1,5 @@
+{"file_path": "Circit.Services/Services/AuditorServices/ActivityService.cs", "expected_in_plan": true}
+{"file_path": "Circit.Frontend/src/auditor/store/activity.store.ts", "expected_in_plan": true}
+{"file_path": "Circit.Website/Areas/Auditor/Controllers/ActivityController.cs", "expected_in_plan": true}
+{"file_path": "Circit.Random/Unrelated.cs", "expected_in_plan": false}
+{"file_path": "scripts/random.sh", "expected_in_plan": false}

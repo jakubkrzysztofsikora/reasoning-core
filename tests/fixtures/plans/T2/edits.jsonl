@@ -1,0 +1,5 @@
+{"file_path": "Circit.Data/Model/Authorisation.cs", "expected_in_plan": true}
+{"file_path": "Tests/Circit.Services.Tests/Services/ClientServices/BankingAuthAbandonmentDetectionTests.cs", "expected_in_plan": true}
+{"file_path": "Circit.Common/Enums/AuthorisationStatus.cs", "expected_in_plan": true}
+{"file_path": "Circit.Random/Unrelated.cs", "expected_in_plan": false}
+{"file_path": "frontend/src/foo.ts", "expected_in_plan": false}

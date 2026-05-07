@@ -1,0 +1,5 @@
+{"file_path": "Circit.Website/Infrastructure/Filters/InternalApiExceptionAttribute.cs", "expected_in_plan": true}
+{"file_path": "Circit.Common/Constants/CircitUserClaimValues.cs", "expected_in_plan": true}
+{"file_path": "Circit.Website/Infrastructure/Middleware/SentryMiddleware.cs", "expected_in_plan": true}
+{"file_path": "Circit.Random/SomethingElse.cs", "expected_in_plan": false}
+{"file_path": "scripts/throwaway.sh", "expected_in_plan": false}
