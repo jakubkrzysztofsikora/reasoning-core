@@ -2,6 +2,63 @@
 
 > **Symmetry guarantee.** All three levers default OFF in `reasoning-core/.envrc`. Setup A's exported environment is bit-identical to iter-2 v3 — the iter-3 lever vars resolve to `0` (no overlay, no gate). Only Setup B opts in by exporting `=1` in its own `eval-setups/B/.envrc`. Reasoning-core ships levers; the eval team turns them on.
 
+## Quick Start (adopter — 5 min)
+
+You want the iter-3 levers active in your own Claude Code project (not the iter-3 eval). Three steps:
+
+**1. Enable the levers in your project's `.envrc`** (or shell rc):
+
+```bash
+export RC_BEST_EFFORT_SPEC=1   # SessionStart overlay: "Never ship a DIVERGENCES.md alone."
+export RC_PLAN_GROUNDING=1      # warn on edits drifting from PLAN.md (audit-only, not visible to agent)
+```
+
+**2. Register the SessionStart hook in `.claude/settings.local.json`**:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${RC_REPO:-/path/to/reasoning-core}/src/hooks/session_start_best_effort.py",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Replace `/path/to/reasoning-core` with your clone path, OR `export RC_REPO=...` in your `.envrc`. (Step 1's `RC_PLAN_GROUNDING` lever uses `pre_edit_guard.py` which is wired automatically; only `RC_BEST_EFFORT_SPEC` needs the SessionStart registration above.)
+
+**3. Verify both levers fired**. Open a new Claude Code session, make one edit, then:
+
+```bash
+# Confirm RC_BEST_EFFORT_SPEC fired (look for an "injected" receipt):
+jq 'select(.signal_source=="best_effort_spec" and .decision=="injected")' \
+   ~/.local/share/reasoning-core/events/$(date +%Y-%m-%d)/*.jsonl | head
+
+# Confirm RC_PLAN_GROUNDING fired on a drift edit (only if you edited a file
+# NOT named in your project's PLAN.md):
+jq 'select(.signal_source=="plan_grounding" and .decision=="warn")' \
+   ~/.local/share/reasoning-core/events/$(date +%Y-%m-%d)/*.jsonl | head
+```
+
+Expected `RC_PLAN_GROUNDING` advisory on stderr when edits drift from plan:
+```
+[reasoning-core] WARN: edit drifts from plan — src/foo.py not in PLAN.md (12 files in plan)
+```
+
+If you set `RC_BEST_EFFORT_SPEC=1` but the SessionStart hook isn't registered, `direnv allow` will print a loud WARN at shell load — catches the most common wiring mistake before any session starts.
+
+**Defaults are safe.** All levers are unset/`=0` out of the box. Setting them to `=1` adds advisory signals; only `RC_PLAN_GROUNDING=2` (block tier) can refuse an edit, and that mode is off by default.
+
+---
+
 **Reviewer SHA-pin verification.** `/Users/jakubsikora/eval-setups/` is not a git repository, so SHA pinning by git revision is not available. Iter-3 freeze captures expected SHAs in [`docs/iter3-frozen-manifest.json`](iter3-frozen-manifest.json) (this repo). Reviewer reproduces via:
 
 ```bash
