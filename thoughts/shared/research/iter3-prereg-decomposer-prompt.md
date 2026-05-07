@@ -16,9 +16,13 @@ Implementation (`eval/aggregate.py:load_decomposer_prompt`):
 import re
 
 def load_decomposer_prompt(md_path: Path) -> str:
-    text = md_path.read_text()
-    # Anchor on actual markdown heading (preceded by blank line)
-    m = re.search(r"\n\n## Prompt text \(verbatim, frozen\)\n\n```\n", text)
+    # Normalize line endings (CRLF -> LF) defensively against editor reformat
+    text = md_path.read_text().replace("\r\n", "\n").replace("\r", "\n")
+    # Anchor on actual markdown heading; tolerate trailing whitespace
+    m = re.search(
+        r"\n[ \t]*\n## Prompt text \(verbatim, frozen\)[ \t]*\n[ \t]*\n```\n",
+        text,
+    )
     if not m:
         raise ValueError("decomposer prompt heading not found")
     fence_open = m.end()
@@ -35,7 +39,16 @@ The extracted prompt body contains the sentinel `<<<DOCUMENT_TEXT>>>` exactly on
 
 ```python
 def render_decomposer_prompt(prompt: str, document_text: str) -> str:
-    assert prompt.count("<<<DOCUMENT_TEXT>>>") == 1, "decomposer prompt must contain exactly one substitution sentinel"
+    if prompt.count("<<<DOCUMENT_TEXT>>>") != 1:
+        raise ValueError("decomposer prompt must contain exactly one substitution sentinel")
+    if "<<<DOCUMENT_TEXT>>>" in document_text:
+        # Reviewer-flagged collision: a document literally containing the sentinel
+        # would shadow the substitution boundary (str.replace is not greedy here,
+        # but downstream audit / re-extraction would mis-identify the body/doc split).
+        raise ValueError(
+            "document body contains the substitution sentinel literal; "
+            "either escape it in the document or change the sentinel for this run"
+        )
     return prompt.replace("<<<DOCUMENT_TEXT>>>", document_text)
 ```
 

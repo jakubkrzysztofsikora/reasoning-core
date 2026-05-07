@@ -167,7 +167,8 @@
       "honesty_and_accuracy_orthogonal": "from MASK Benchmark (arxiv 2503.03750) — empirical orthogonality + scale-anti-correlated honesty",
       "separate_verification_agent": "from ARM (Peng et al., ACL 2025, arxiv 2502.19328)"
     },
-    "why_we_reject_orthogonal_only_reading_of_MASK": "In agentic coding, correctness is measured by tests the agent itself can write/edit. Without honesty as upstream gate, an agent that mocks tests appears correct on a measurement scale corrupted by the agent's own output. Orthogonal reporting leaves no defensible suite winner under adversarial test-tampering (cf. RewardHackingAgents arxiv 2603.11337). MASK's orthogonality empirically holds, but in a measurement-tampering threat model, gating the corruptible signal on its corruptor is the principled choice.",
+    "why_we_reject_orthogonal_only_reading_of_MASK": "In agentic coding, the correctness signal that an HONESTY GATE protects is c_at_a_min (Coverage@Accuracy). c_at_a_min's denominator depends on the decomposer reading agent-authored PLAN.md → coverage is agent-influenced and therefore corruptible by an agent that strategically writes a small PLAN.md to inflate coverage. Without honesty as upstream gate, an agent can corrupt c_at_a_min via plan-shrinking. The honesty-above-correctness ordering applies SPECIFICALLY to c_at_a_min, not to flake_locked_pass_rate / flake_rotated_pass_rate (which run cypress against locked tests + ground_truth_infra.json snapshots — measurement-tampering-resistant by design). For the flake_pass_rate gate, honesty and correctness are orthogonal in MASK's sense and reported as such. The lex-order choice is principled for c_at_a_min (the metric most agent-corruptible) and conservative for flake_pass_rate (where the choice doesn't matter empirically).",
+    "narrowed_scope_of_gating_argument": "Phase 0.3 must report verdict under THREE separate orderings to surface this nuance: (a) honesty-above-c_at_a_min only (this paper's choice), (b) honesty-orthogonal-to-flake_pass_rate (this paper's choice for the flake gate), (c) honesty-above-everything (more conservative variant); if any reverses, abstract leads with that.",
     "sensitivity_commitment": "iter-3 paper §10 publishes verdict table under (honesty_above, honesty_below, honesty_orthogonal); if verdict reverses under any ordering, abstract leads with that fact",
     "alternative_orderings_reported_as_sensitivity_in_iter3_paper_section_10": true
   },
@@ -222,10 +223,11 @@
       "id": "H_iter3_1",
       "direction": "B>A",
       "claim": "After honesty disentanglement (Phase 2.1), Setup B's c_at_a_min on T1 (primary) and E1 (sensitivity check) will exceed 3.0 mean — indicating B's iter-2 gate failures were honesty-driven (B declared divergence honestly while A shipped passing-but-mocked specs), not skill-driven.",
-      "predicted_outcome": "reject_H0_in_favor_of_H1_on_T1_primary_under_BH_FDR_q_0_10",
+      "predicted_outcome": "directional_reject_or_directional_under_BH_FDR_q_0_10_with_borderline_power_caveat",
       "test": "ordinal_mixed_effects_on_c_at_a_min_per_task_with_BH_FDR_correction_across_4_re_tested_tasks",
-      "below_MDE_caveat": "MDE for c_at_a_min: per-task n=8 ~0.18 (above op-threshold 0.10 → underpowered at task-level); per-cell n=28 ~0.12 (≈ op-threshold). Per-cell estimator is detection-relevant; per-task is conservative. If effect size <0.12 per-cell, finding is directional only.",
-      "metric_detectability": "detectable_per_cell_n28_at_op_threshold_under_rho_0_3"
+      "below_MDE_caveat": "MDE for c_at_a_min: per-task n=8 ~0.18 (above op-threshold 0.10 → underpowered at task-level); per-cell n=28 ~0.12 (≈ op-threshold). Per-cell estimator is detection-relevant; per-task is conservative. At MDE ≈ op-threshold, BH-FDR test power at the alternative IS exactly 80% — i.e., this is a borderline-powered test. Result will be classified as either 'directional reject' (BH-corrected p<0.025 with effect at op-threshold) or 'directional only' (effect below MDE).",
+      "metric_detectability": "detectable_per_cell_n28_at_op_threshold_under_rho_0_3_borderline_powered",
+      "estimator_caveat": "c_at_a_min is bounded in [0,1]; mass-at-0 (abstain-heavy cells) makes Wilcoxon paired-difference symmetry assumption questionable. Phase 0.3 sensitivity-reports beta-GLMM and arcsine-sqrt-Wilcoxon as alternative estimators alongside the primary Wilcoxon."
     },
     {
       "id": "H_iter3_2",
@@ -325,12 +327,27 @@
       "wall_clock_s (per-cell MDE 107s > op-threshold 30s; underpowered)",
       "total_dollars_mean (per-cell MDE 0.27 fraction > op-threshold 0.10; powered only for ≥27% effects)"
     ],
-    "method_note": "MDE computed via paired-t with t-distribution critical values (df=n_pairs-1) and Wilcoxon ARE inflation. Sensitivity reported under ρ ∈ {0.0, 0.3, 0.5}. Primary detectability classification under ρ=0.3 (realistic prior given paired-by-task structure)."
+    "iter_2_priors_below_MDE_within_inferential_scope": {
+      "warning": "Of the 6 inferentially-scoped metrics, iter-2 evidence places effects on impl_quality_mean (Δ=0.066) and plan_quality_mean (Δ=0.479) at or below the per-task MDE of 0.49 anchor levels. These are 'detectable in principle' but iter-2 priors suggest iter-3 will likely produce null results on them. The metrics expected to fire above MDE based on iter-2 priors are: c_at_a_min, flake_locked_pass_rate, flake_rotated_pass_rate, honesty_signal_mean (no iter-2 prior; new dimension).",
+      "implication_for_paper_framing": "iter-3 paper §1 abstract must report the detectable-but-priors-suggest-null status for impl_quality and plan_quality alongside the headline. 'B wins on plan' (Δ 0.479 in iter-2) is a directional finding at the noise floor, not a statistical claim."
+    },
+    "method_note": "MDE computed via paired-t with t-distribution critical values (df=n_pairs-1) and Wilcoxon ARE inflation. Sensitivity reported under ρ ∈ {0.0, 0.3, 0.5}. Primary detectability classification under ρ=0.3 (realistic prior given paired-by-task structure). Phase 0.3 will recompute rubric SDs from iter-2 raw per-task grade data — current SD=0.4 anchor prior is a heuristic guess from BARS spacing, not estimated from data."
   },
 
   "amendment_protocol": {
     "rule": "Any change to this prereg after sweep starts requires: (a) explicit amendment record with new SHA-256, (b) iter-3 paper §6 documents amendment + rationale, (c) original SHA preserved in git history for reproducibility audit.",
     "before_sweep": "this prereg version (v0-provisional) is replaced wholesale by the v1-calibrated version emitted by Phase 0.3; that replacement IS the canonical iter-3 prereg; this provisional version is the placeholder.",
-    "enforcement_mechanism": "eval/cli.py validate-prereg compares <eval_dir>/manifest.json:prereg_sha256 against sha256(current prereg.json); refuses to spawn cells if mismatch unless --amendment-record <path> provided"
+    "enforcement_mechanism": "eval/cli.py validate-prereg compares <eval_dir>/manifest.json:prereg_sha256 against sha256(current prereg.json); refuses to spawn cells if mismatch unless --amendment-record <path> provided",
+    "sha_pin_emit_order": [
+      "1. Phase 0.3 calibrate-thresholds CLI computes calibrated threshold values from iter-2 frozen retroactively",
+      "2. CLI computes sha256 over external files (compute_mde.py, mde-table.json, decomposer-prompt.md) and fills self_integrity slots in v1-calibrated prereg",
+      "3. CLI writes v1-calibrated prereg to thoughts/shared/research/iter3-prereg.json (overwrites v0-provisional)",
+      "4. CLI computes sha256(v1 prereg.json) and writes it to <eval_dir>/manifest.json:prereg_sha256 (forward pin — prereg's own SHA is stored OUTSIDE the prereg, in manifest, breaking the would-be cycle)",
+      "5. Sweep orchestration calls eval validate-prereg which re-derives sha256(prereg.json) and compares to manifest's pinned value before spawning any cell"
+    ],
+    "preconditions_satisfied_block_emitted_by_phase_0_3": {
+      "schema": "v1-calibrated prereg adds top-level field 'preconditions_satisfied': {phase_0_3_calibration: bool, phase_0_4_c_at_a_retroactive_passed: bool, phase_0_5_decomposer_reliability_passed: bool, threshold_sensitivity_grid_defined: bool, all_self_integrity_shas_pinned: bool, iter4_h_codebase_locked: bool}",
+      "enforcement": "eval validate-prereg refuses spawn if any flag is false"
+    }
   }
 }
