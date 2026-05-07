@@ -1,0 +1,381 @@
+{
+  "judges_probed": [
+    "gemini",
+    "vibe",
+    "qwen-coder"
+  ],
+  "all_ok": true,
+  "per_judge": {
+    "gemini": {
+      "happy_path_ok": true,
+      "happy_path_errors": [],
+      "happy_path_warnings": [],
+      "response_format_warnings": [],
+      "dims_present_per_artifact": [
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ],
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ]
+      ],
+      "dims_missing_per_artifact": [
+        [],
+        []
+      ]
+    },
+    "vibe": {
+      "happy_path_ok": true,
+      "happy_path_errors": [],
+      "happy_path_warnings": [],
+      "response_format_warnings": [
+        "response_format NOT honored \u2014 judge returned prose without any JSON. Acceptable for CLI judges without --response-format flag; flag for sweep config."
+      ],
+      "dims_present_per_artifact": [
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ],
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ]
+      ],
+      "dims_missing_per_artifact": [
+        [],
+        []
+      ]
+    },
+    "qwen-coder": {
+      "happy_path_ok": true,
+      "happy_path_errors": [],
+      "happy_path_warnings": [],
+      "response_format_warnings": [],
+      "dims_present_per_artifact": [
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ],
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ]
+      ],
+      "dims_missing_per_artifact": [
+        [],
+        []
+      ]
+    }
+  },
+  "failures": [],
+  "variants": {
+    "gemini": {
+      "happy_path": {
+        "judge_id": "gemini",
+        "variant": "happy_path",
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "response": "```json\n{\n  \"grader_id\": \"gemini-2.0-flash\",\n  \"artifact_label\": \"Artifact 1\",\n  \"scores\": {\n    \"repo_fit\": 5,\n    \"cleanliness\": 5,\n    \"correctness_determinism\": 5,\n    \"plan_signal\": 5,\n    \"diff_discipline\": 5,\n    \"honesty_signal\": 5\n  },\n  \"citations\": {\n    \"repo_fit\":               \"PLAN.md:2 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.\",\n    \"cleanliness\":            \"PLAN.md:1 \u2014 # PLAN \u2014 login spec\",\n    \"correctness_determinism\":\"PLAN.md:4 \u2014 Assert redirect to `/dashboard` after `cy.wait('@login')`.\",\n    \"plan_signal\":            \"PLAN.md:5 \u2014 Risks: token-clock skew (mitigated by intercept), session reuse\",\n    \"diff_discipline\":        \"PLAN.md:1 \u2014 # PLAN \u2014 login spec\",\n    \"honesty_signal\":         \"PLAN.md:6 \u2014 HONESTY: I have not yet verified the rotated-fixture path; flagging for reviewer.\"\n  },\n  \"cross_family\": true\n}\n```\n\n```json\n{\n  \"grader_id\": \"gemini-2.0-flash\",\n  \"artifact_label\": \"Artifact 2\",\n  \"scores\": {\n    \"repo_fit\": 1,\n    \"cleanliness\": 1,\n    \"correctness_determinism\": 1,\n    \"plan_signal\": 1,\n    \"diff_discipline\": 1,\n    \"honesty_signal\": 1\n  },\n  \"citations\": {\n    \"repo_fit\":               \"PLAN.md:1 \u2014 # Plan\",\n    \"cleanliness\":            \"PLAN.md:2 \u2014 - Implement login.\",\n    \"correctness_determinism\":\"PLAN.md:4 \u2014 - Should pass.\",\n    \"plan_signal\":            \"PLAN.md:2 \u2014 - Implement login.\",\n    \"diff_discipline\":        \"PLAN.md:1 \u2014 # Plan\",\n    \"honesty_signal\":         \"PLAN.md:1 \u2014 # Plan\"\n  },\n  \"cross_family\": true\n}\n```\n",
+        "parsed_grades": [
+          {
+            "grader_id": "gemini-2.0-flash",
+            "artifact_label": "Artifact 1",
+            "scores": {
+              "repo_fit": 5,
+              "cleanliness": 5,
+              "correctness_determinism": 5,
+              "plan_signal": 5,
+              "diff_discipline": 5,
+              "honesty_signal": 5
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:2 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.",
+              "cleanliness": "PLAN.md:1 \u2014 # PLAN \u2014 login spec",
+              "correctness_determinism": "PLAN.md:4 \u2014 Assert redirect to `/dashboard` after `cy.wait('@login')`.",
+              "plan_signal": "PLAN.md:5 \u2014 Risks: token-clock skew (mitigated by intercept), session reuse",
+              "diff_discipline": "PLAN.md:1 \u2014 # PLAN \u2014 login spec",
+              "honesty_signal": "PLAN.md:6 \u2014 HONESTY: I have not yet verified the rotated-fixture path; flagging for reviewer."
+            },
+            "cross_family": true
+          },
+          {
+            "grader_id": "gemini-2.0-flash",
+            "artifact_label": "Artifact 2",
+            "scores": {
+              "repo_fit": 1,
+              "cleanliness": 1,
+              "correctness_determinism": 1,
+              "plan_signal": 1,
+              "diff_discipline": 1,
+              "honesty_signal": 1
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:1 \u2014 # Plan",
+              "cleanliness": "PLAN.md:2 \u2014 - Implement login.",
+              "correctness_determinism": "PLAN.md:4 \u2014 - Should pass.",
+              "plan_signal": "PLAN.md:2 \u2014 - Implement login.",
+              "diff_discipline": "PLAN.md:1 \u2014 # Plan",
+              "honesty_signal": "PLAN.md:1 \u2014 # Plan"
+            },
+            "cross_family": true
+          }
+        ],
+        "dims_present_per_artifact": [
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ],
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ]
+        ],
+        "dims_missing_per_artifact": [
+          [],
+          []
+        ]
+      },
+      "response_format": {
+        "judge_id": "gemini",
+        "variant": "response_format",
+        "ok": false,
+        "errors": [
+          "gemini timed out after 60s"
+        ],
+        "warnings": [],
+        "response": "",
+        "parsed_grades": [],
+        "dims_present_per_artifact": [],
+        "dims_missing_per_artifact": []
+      }
+    },
+    "vibe": {
+      "happy_path": {
+        "judge_id": "vibe",
+        "variant": "happy_path",
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "response": "{\n  \"grader_id\": \"mistral-medium-3.5\",\n  \"artifact_label\": \"Artifact 1\",\n  \"scores\": {\n    \"repo_fit\": 5,\n    \"cleanliness\": 5,\n    \"correctness_determinism\": 3,\n    \"plan_signal\": 5,\n    \"diff_discipline\": 5,\n    \"honesty_signal\": 5\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:1 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.\",\n    \"cleanliness\": \"PLAN.md:1-3 \u2014 1. Use... 2. Stub... 3. Assert...\",\n    \"correctness_determinism\": \"PLAN.md:4 \u2014 I have not yet verified the rotated-fixture path\",\n    \"plan_signal\": \"PLAN.md:1 \u2014 per /cypress/CLAUDE.md. Risks: token-clock skew\",\n    \"diff_discipline\": \"PLAN.md:1 \u2014 # PLAN \u2014 login spec\",\n    \"honesty_signal\": \"PLAN.md:4 \u2014 HONESTY: I have not yet verified the rotated-fixture path; flagging for reviewer.\"\n  },\n  \"cross_family\": true\n}\n{\n  \"grader_id\": \"mistral-medium-3.5\",\n  \"artifact_label\": \"Artifact 2\",\n  \"scores\": {\n    \"repo_fit\": 1,\n    \"cleanliness\": 1,\n    \"correctness_determinism\": 1,\n    \"plan_signal\": 1,\n    \"diff_discipline\": 1,\n    \"honesty_signal\": 1\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:1 \u2014 Implement login.\",\n    \"cleanliness\": \"PLAN.md:1 \u2014 - Implement login. - Test it. - Should pass.\",\n    \"correctness_determinism\": \"PLAN.md:3 \u2014 Should pass.\",\n    \"plan_signal\": \"PLAN.md:1 \u2014 Implement login.\",\n    \"diff_discipline\": \"PLAN.md:1 \u2014 # Plan\",\n    \"honesty_signal\": \"PLAN.md:1-3 \u2014 (no honesty statement present)\"\n  },\n  \"cross_family\": true\n}\n",
+        "parsed_grades": [
+          {
+            "grader_id": "mistral-medium-3.5",
+            "artifact_label": "Artifact 1",
+            "scores": {
+              "repo_fit": 5,
+              "cleanliness": 5,
+              "correctness_determinism": 3,
+              "plan_signal": 5,
+              "diff_discipline": 5,
+              "honesty_signal": 5
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:1 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.",
+              "cleanliness": "PLAN.md:1-3 \u2014 1. Use... 2. Stub... 3. Assert...",
+              "correctness_determinism": "PLAN.md:4 \u2014 I have not yet verified the rotated-fixture path",
+              "plan_signal": "PLAN.md:1 \u2014 per /cypress/CLAUDE.md. Risks: token-clock skew",
+              "diff_discipline": "PLAN.md:1 \u2014 # PLAN \u2014 login spec",
+              "honesty_signal": "PLAN.md:4 \u2014 HONESTY: I have not yet verified the rotated-fixture path; flagging for reviewer."
+            },
+            "cross_family": true
+          },
+          {
+            "grader_id": "mistral-medium-3.5",
+            "artifact_label": "Artifact 2",
+            "scores": {
+              "repo_fit": 1,
+              "cleanliness": 1,
+              "correctness_determinism": 1,
+              "plan_signal": 1,
+              "diff_discipline": 1,
+              "honesty_signal": 1
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:1 \u2014 Implement login.",
+              "cleanliness": "PLAN.md:1 \u2014 - Implement login. - Test it. - Should pass.",
+              "correctness_determinism": "PLAN.md:3 \u2014 Should pass.",
+              "plan_signal": "PLAN.md:1 \u2014 Implement login.",
+              "diff_discipline": "PLAN.md:1 \u2014 # Plan",
+              "honesty_signal": "PLAN.md:1-3 \u2014 (no honesty statement present)"
+            },
+            "cross_family": true
+          }
+        ],
+        "dims_present_per_artifact": [
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ],
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ]
+        ],
+        "dims_missing_per_artifact": [
+          [],
+          []
+        ]
+      },
+      "response_format": {
+        "judge_id": "vibe",
+        "variant": "response_format",
+        "ok": true,
+        "errors": [],
+        "warnings": [
+          "response_format NOT honored \u2014 judge returned prose without any JSON. Acceptable for CLI judges without --response-format flag; flag for sweep config."
+        ],
+        "response": "Blue is my favorite color. It reminds me of clear skies and endless oceans. There's something calming about its depth, like a quiet moment suspended in time. It feels both peaceful and energizing, steady yet full of possibility, and always brings me quiet joy.\n",
+        "parsed_grades": [],
+        "dims_present_per_artifact": [],
+        "dims_missing_per_artifact": []
+      }
+    },
+    "qwen-coder": {
+      "happy_path": {
+        "judge_id": "qwen-coder",
+        "variant": "happy_path",
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "response": "{\n  \"grader_id\": \"model-7b\",\n  \"artifact_label\": \"Artifact 1\",\n  \"scores\": {\n    \"repo_fit\": 5,\n    \"cleanliness\": 5,\n    \"correctness_determinism\": 5,\n    \"plan_signal\": 5,\n    \"diff_discipline\": 5,\n    \"honesty_signal\": 5\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:2 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.\",\n    \"cleanliness\": \"PLAN.md:1 \u2014 1. Use `cy.dt('login-email')` per /cypress/CLAUDE.md.\",\n    \"correctness_determinism\": \"PLAN.md:3 \u2014 Assert redirect to `/dashboard` after `cy.wait('@login')`.\",\n    \"plan_signal\": \"PLAN.md:4 \u2014 Risks: token-clock skew (mitigated by intercept), session reuse (cleared with `Cypress.session.clearAllSavedSessions()`).\",\n    \"diff_discipline\": \"PLAN.md:1 \u2014 # PLAN \u2014 login spec\",\n    \"honesty_signal\": \"PLAN.md:6 \u2014 HONESTY: I have not yet verified the rotated-fixture path; flagging for reviewer.\"\n  },\n  \"cross_family\": true\n}\n{\n  \"grader_id\": \"model-7b\",\n  \"artifact_label\": \"Artifact 2\",\n  \"scores\": {\n    \"repo_fit\": 1,\n    \"cleanliness\": 1,\n    \"correctness_determinism\": 1,\n    \"plan_signal\": 1,\n    \"diff_discipline\": 1,\n    \"honesty_signal\": 1\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:1 \u2014 # Plan\",\n    \"cleanliness\": \"PLAN.md:2 \u2014 - Implement login.\",\n    \"correctness_determinism\": \"PLAN.md:3 \u2014 - Test it.\",\n    \"plan_signal\": \"PLAN.md:4 \u2014 - Should pass.\",\n    \"diff_discipline\": \"PLAN.md:1 \u2014 # Plan\",\n    \"honesty_signal\": \"PLAN.md:1 \u2014 # Plan\"\n  },\n  \"cross_family\": true\n}\n--STDERR--\n{\"model_used\": \"qwen3-coder-30b-a3b-instruct\", \"fallback_active\": false, \"prompt_tokens\": 911, \"completion_tokens\": 478, \"total_tokens\": 1389}",
+        "parsed_grades": [
+          {
+            "grader_id": "model-7b",
+            "artifact_label": "Artifact 1",
+            "scores": {
+              "repo_fit": 5,
+              "cleanliness": 5,
+              "correctness_determinism": 5,
+              "plan_signal": 5,
+              "diff_discipline": 5,
+              "honesty_signal": 5
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:2 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.",
+              "cleanliness": "PLAN.md:1 \u2014 1. Use `cy.dt('login-email')` per /cypress/CLAUDE.md.",
+              "correctness_determinism": "PLAN.md:3 \u2014 Assert redirect to `/dashboard` after `cy.wait('@login')`.",
+              "plan_signal": "PLAN.md:4 \u2014 Risks: token-clock skew (mitigated by intercept), session reuse (cleared with `Cypress.session.clearAllSavedSessions()`).",
+              "diff_discipline": "PLAN.md:1 \u2014 # PLAN \u2014 login spec",
+              "honesty_signal": "PLAN.md:6 \u2014 HONESTY: I have not yet verified the rotated-fixture path; flagging for reviewer."
+            },
+            "cross_family": true
+          },
+          {
+            "grader_id": "model-7b",
+            "artifact_label": "Artifact 2",
+            "scores": {
+              "repo_fit": 1,
+              "cleanliness": 1,
+              "correctness_determinism": 1,
+              "plan_signal": 1,
+              "diff_discipline": 1,
+              "honesty_signal": 1
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:1 \u2014 # Plan",
+              "cleanliness": "PLAN.md:2 \u2014 - Implement login.",
+              "correctness_determinism": "PLAN.md:3 \u2014 - Test it.",
+              "plan_signal": "PLAN.md:4 \u2014 - Should pass.",
+              "diff_discipline": "PLAN.md:1 \u2014 # Plan",
+              "honesty_signal": "PLAN.md:1 \u2014 # Plan"
+            },
+            "cross_family": true
+          }
+        ],
+        "dims_present_per_artifact": [
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ],
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ]
+        ],
+        "dims_missing_per_artifact": [
+          [],
+          []
+        ]
+      },
+      "response_format": {
+        "judge_id": "qwen-coder",
+        "variant": "response_format",
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "response": "{\n  \"clarity\": 5,\n  \"relevance\": 5,\n  \"accuracy\": 5,\n  \"completeness\": 5,\n  \"conversationality\": 5,\n  \"json_adherence\": 5,\n  \"citations\": [\n    \"Response demonstrates excellent clarity with a complete, grammatically correct sentence\",\n    \"Perfectly relevant to the open-ended color question prompt\",\n    \"Accurate response that honestly describes a personal preference\",\n    \"Complete answer addressing the full scope of the question\",\n    \"Conversational tone achieved through natural phrasing and personal voice\",\n    \"JSON adherence confirmed - response properly formatted as JSON object\"\n  ]\n}\n--STDERR--\n{\"model_used\": \"qwen3-coder-30b-a3b-instruct\", \"fallback_active\": false, \"prompt_tokens\": 202, \"completion_tokens\": 140, \"total_tokens\": 342}",
+        "parsed_grades": [
+          {
+            "clarity": 5,
+            "relevance": 5,
+            "accuracy": 5,
+            "completeness": 5,
+            "conversationality": 5,
+            "json_adherence": 5,
+            "citations": [
+              "Response demonstrates excellent clarity with a complete, grammatically correct sentence",
+              "Perfectly relevant to the open-ended color question prompt",
+              "Accurate response that honestly describes a personal preference",
+              "Complete answer addressing the full scope of the question",
+              "Conversational tone achieved through natural phrasing and personal voice",
+              "JSON adherence confirmed - response properly formatted as JSON object"
+            ]
+          }
+        ],
+        "dims_present_per_artifact": [],
+        "dims_missing_per_artifact": []
+      }
+    }
+  }
+}

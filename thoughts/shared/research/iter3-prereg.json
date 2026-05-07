@@ -123,9 +123,10 @@
       },
       {
         "path": "eval/judge_probe.py",
-        "sha256": "3d6327937a1e025c52e2c8442e033caee4a21c1586ce2e8d881490e5b7ba19a3",
+        "sha256": "9d289b1ae88d61a6eaf11d4714bf0c794ed20129b054ace6c8a7f6e5fdfc80b8",
         "round_introduced": 5,
-        "purpose": "Phase 1.3 probe-judges (Gemini+Vibe pass; Qwen deferred)"
+        "purpose": "Phase 1.3 probe-judges + (round-9 I5) HTTP transport dispatch for Scaleway-Qwen",
+        "round_last_modified": 9
       },
       {
         "path": "eval/decomposer.py",
@@ -175,6 +176,12 @@
         "sha256": "6fc76eb9bfccde083d8906b869b3d18e6578b41b5fc6f802d91537e7390953b7",
         "round_introduced": 5,
         "purpose": "Phase 0.5 decomposer test suite"
+      },
+      {
+        "path": "eval/judge_runner.py",
+        "sha256": "8b4b5396ca239cbdb4692252293071afd4fa1c4d2b37fd6c79a893d980d976e4",
+        "round_introduced": 9,
+        "purpose": "(round-9 iter4_infra_carry_forward I5) added JUDGE_HTTP_CONFIGS + _resolve_scaleway_api_key + _run_http_judge for Scaleway-Qwen3-Coder; STRICT mode no silent fallback; closes inter-rater alpha=0.29 gap"
       }
     ],
     "test_count_pinned_at_this_commit": "18 of 18 tests pass (test_calibrate + test_prereg_validation; round-6 + round-7 verified)",
@@ -212,7 +219,7 @@
         "id": "I5_qwen_coder_scaleway_transport",
         "iter2_failure": "Inter-rater \u03b1 0.29 with 2 judges (Gemini+Vibe); below 0.67 floor",
         "iter4_remediation": "Phase 1.1 Scaleway HTTP transport for Qwen3-Coder-30B; eval probe-judges --judges gemini,vibe,qwen-coder PASS for 3-judge \u03b1 gate. ~200 LOC.",
-        "status": "tracked_in_cannot_fire_sweep_until"
+        "status": "LANDED_ROUND_9 \u2014 eval/judge_runner.py:JUDGE_HTTP_CONFIGS[\"qwen-coder\"] + _run_http_judge() + system message addressing qwen3-coder laziness (model otherwise stops after Artifact 1 ~254 tokens). All 3 judges PASS happy_path probe with 6/6 dimensions per artifact: gemini, vibe, qwen-coder. Probe artifact at thoughts/shared/research/iter3-probe-3judges-round-9-LANDED.json"
       },
       {
         "id": "I6_validate_prereg_check_audit_trail_cli",
@@ -334,7 +341,9 @@
     "compute_mde_lmer_script_sha256": "63d3e77c16d1772ecab7be7834d1bfcaf7d02e37af0ec8be4039173b2f629eee",
     "calibration_report_path": "thoughts/shared/research/iter3-prereg-calibration-report.json",
     "calibration_report_sha256": "27c89b15240cca00dac17fffc787c996770a89e6dad04c121b09f49d9a76e2b2",
-    "binding_mechanism": "eval/cli.py validate-prereg refuses to spawn cells if any of these SHAs mismatch <eval_dir>/manifest.json's pinned values"
+    "binding_mechanism": "eval/cli.py validate-prereg refuses to spawn cells if any of these SHAs mismatch <eval_dir>/manifest.json's pinned values",
+    "probe_3judges_landed_path": "thoughts/shared/research/iter3-probe-3judges-round-9-LANDED.json",
+    "probe_3judges_landed_sha256": "cd88a97085a28c3f6bc16c568f32288f283f4ea16d1a2437fa1f6c70bacb40a0"
   },
   "preconditions_satisfied": {
     "phase_0_1_prereg_artifact": true,
@@ -349,7 +358,7 @@
     "all_self_integrity_shas_pinned": true,
     "iter4_h_codebase_locked": true,
     "validate_prereg_cli_implemented": true,
-    "phase_1_judge_set_validated": "PARTIAL_GEMINI_VIBE_ONLY_QWEN_DEFERRED"
+    "phase_1_judge_set_validated": "FULL_3_JUDGE_GEMINI_VIBE_QWEN_CODER_LANDED_ROUND_9"
   },
   "phase_0_5_decomposer_reliability_FAILED": {
     "_purpose": "Provenance + fallback trigger for the phase_0_5_decomposer_reliability_passed flag = 'FAILED_PRE_REGISTERED_FALLBACK_TO_BINARY_RUBRIC_TRIGGERED'.",
@@ -478,12 +487,11 @@
     "report_path": "thoughts/shared/research/iter3-probe-judges-report.json",
     "judges_probed": [
       "gemini",
-      "vibe"
-    ],
-    "judges_deferred": [
+      "vibe",
       "qwen-coder"
     ],
-    "judges_deferred_reason": "Qwen3-Coder Scaleway HTTP transport pending Phase 1.1 implementation; CLI subprocess form not yet defined.",
+    "judges_deferred": [],
+    "judges_deferred_reason": "none \u2014 all 3 judges landed round-9",
     "happy_path_results": {
       "gemini": {
         "ok": true,
@@ -492,6 +500,13 @@
       "vibe": {
         "ok": true,
         "all_6_dims_present_both_artifacts": true
+      },
+      "qwen-coder": {
+        "ok": true,
+        "all_6_dims_present_both_artifacts": true,
+        "transport": "http_openai_compat (Scaleway)",
+        "model": "qwen3-coder-30b-a3b-instruct",
+        "system_message_addresses_qwen_laziness": true
       }
     },
     "response_format_results": {
@@ -502,10 +517,15 @@
       "vibe": {
         "ok": true,
         "warnings": []
+      },
+      "qwen-coder": {
+        "ok": true,
+        "warnings": []
       }
     },
     "honesty_signal_dimension_status": "Judges produced honesty_signal scores against the ad-hoc probe fixture without prior schema training. Real-sweep behaviour against Setup A/B artifacts may differ; iter-3 paper \u00a76 should report the per-dim \u03b1 including honesty.",
-    "promotion_to_true_blocked_by": "Qwen-Coder probe (Phase 1.1)"
+    "promotion_to_true_blocked_by": null,
+    "probe_artifact_round_9": "thoughts/shared/research/iter3-probe-3judges-round-9-LANDED.json"
   },
   "cannot_fire_sweep_until_categorized_per_tech_reviewer_round_8_q3": {
     "_purpose": "Reframe 11-entry list as 2 categories so '4 gating + 7 polish' lands differently than '11 blockers'.",
