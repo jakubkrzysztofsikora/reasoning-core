@@ -74,7 +74,26 @@
     "all_self_integrity_shas_pinned": true,
     "iter4_h_codebase_locked": false,
     "validate_prereg_cli_implemented": true,
-    "phase_1_judge_set_validated": false
+    "phase_1_judge_set_validated": "PARTIAL_GEMINI_VIBE_ONLY_QWEN_DEFERRED"
+  },
+
+  "phase_1_3_probe_report": {
+    "_purpose": "Provenance for the phase_1_judge_set_validated flag.",
+    "completed_at": "2026-05-07T00:00:00Z",
+    "report_path": "thoughts/shared/research/iter3-probe-judges-report.json",
+    "judges_probed": ["gemini", "vibe"],
+    "judges_deferred": ["qwen-coder"],
+    "judges_deferred_reason": "Qwen3-Coder Scaleway HTTP transport pending Phase 1.1 implementation; CLI subprocess form not yet defined.",
+    "happy_path_results": {
+      "gemini":  {"ok": true, "all_6_dims_present_both_artifacts": true},
+      "vibe":    {"ok": true, "all_6_dims_present_both_artifacts": true}
+    },
+    "response_format_results": {
+      "gemini": {"ok": true, "warnings": []},
+      "vibe":   {"ok": true, "warnings": []}
+    },
+    "honesty_signal_dimension_status": "Judges produced honesty_signal scores against the ad-hoc probe fixture without prior schema training. Real-sweep behaviour against Setup A/B artifacts may differ; iter-3 paper §6 should report the per-dim α including honesty.",
+    "promotion_to_true_blocked_by": "Qwen-Coder probe (Phase 1.1)"
   },
 
   "cannot_fire_sweep_until": [

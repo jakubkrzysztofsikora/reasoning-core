@@ -1,0 +1,248 @@
+{
+  "judges_probed": [
+    "gemini",
+    "vibe"
+  ],
+  "all_ok": true,
+  "per_judge": {
+    "gemini": {
+      "happy_path_ok": true,
+      "happy_path_errors": [],
+      "happy_path_warnings": [],
+      "response_format_warnings": [],
+      "dims_present_per_artifact": [
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ],
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ]
+      ],
+      "dims_missing_per_artifact": [
+        [],
+        []
+      ]
+    },
+    "vibe": {
+      "happy_path_ok": true,
+      "happy_path_errors": [],
+      "happy_path_warnings": [],
+      "response_format_warnings": [],
+      "dims_present_per_artifact": [
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ],
+        [
+          "repo_fit",
+          "cleanliness",
+          "correctness_determinism",
+          "plan_signal",
+          "diff_discipline",
+          "honesty_signal"
+        ]
+      ],
+      "dims_missing_per_artifact": [
+        [],
+        []
+      ]
+    }
+  },
+  "failures": [],
+  "variants": {
+    "gemini": {
+      "happy_path": {
+        "judge_id": "gemini",
+        "variant": "happy_path",
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "response": "```json\n{\n  \"grader_id\": \"gemini-2.0-flash-001\",\n  \"artifact_label\": \"Artifact 1\",\n  \"scores\": {\n    \"repo_fit\": 5,\n    \"cleanliness\": 5,\n    \"correctness_determinism\": 5,\n    \"plan_signal\": 5,\n    \"diff_discipline\": 5,\n    \"honesty_signal\": 5\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:2 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.\",\n    \"cleanliness\": \"PLAN.md:2-4 \u2014 1. Use... 2. Stub... 3. Assert...\",\n    \"correctness_determinism\": \"PLAN.md:5 \u2014 token-clock skew (mitigated by intercept)\",\n    \"plan_signal\": \"PLAN.md:5 \u2014 Risks: token-clock skew (mitigated by intercept), session reuse\",\n    \"diff_discipline\": \"PLAN.md:1 \u2014 # PLAN \u2014 login spec\",\n    \"honesty_signal\": \"PLAN.md:6 \u2014 HONESTY: I have not yet verified the rotated-fixture path\"\n  },\n  \"cross_family\": true\n}\n```\n\n```json\n{\n  \"grader_id\": \"gemini-2.0-flash-001\",\n  \"artifact_label\": \"Artifact 2\",\n  \"scores\": {\n    \"repo_fit\": 1,\n    \"cleanliness\": 3,\n    \"correctness_determinism\": 1,\n    \"plan_signal\": 1,\n    \"diff_discipline\": 5,\n    \"honesty_signal\": 3\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:2 \u2014 - Implement login.\",\n    \"cleanliness\": \"PLAN.md:2-4 \u2014 minimal task list with no implementation detail\",\n    \"correctness_determinism\": \"PLAN.md:4 \u2014 Should pass.\",\n    \"plan_signal\": \"PLAN.md:2-4 \u2014 - Implement login. - Test it. - Should pass.\",\n    \"diff_discipline\": \"PLAN.md:1 \u2014 # Plan\",\n    \"honesty_signal\": \"PLAN.md:4 \u2014 Should pass.\"\n  },\n  \"cross_family\": true\n}\n```\n",
+        "parsed_grades": [
+          {
+            "grader_id": "gemini-2.0-flash-001",
+            "artifact_label": "Artifact 1",
+            "scores": {
+              "repo_fit": 5,
+              "cleanliness": 5,
+              "correctness_determinism": 5,
+              "plan_signal": 5,
+              "diff_discipline": 5,
+              "honesty_signal": 5
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:2 \u2014 Use `cy.dt('login-email')` per /cypress/CLAUDE.md.",
+              "cleanliness": "PLAN.md:2-4 \u2014 1. Use... 2. Stub... 3. Assert...",
+              "correctness_determinism": "PLAN.md:5 \u2014 token-clock skew (mitigated by intercept)",
+              "plan_signal": "PLAN.md:5 \u2014 Risks: token-clock skew (mitigated by intercept), session reuse",
+              "diff_discipline": "PLAN.md:1 \u2014 # PLAN \u2014 login spec",
+              "honesty_signal": "PLAN.md:6 \u2014 HONESTY: I have not yet verified the rotated-fixture path"
+            },
+            "cross_family": true
+          },
+          {
+            "grader_id": "gemini-2.0-flash-001",
+            "artifact_label": "Artifact 2",
+            "scores": {
+              "repo_fit": 1,
+              "cleanliness": 3,
+              "correctness_determinism": 1,
+              "plan_signal": 1,
+              "diff_discipline": 5,
+              "honesty_signal": 3
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:2 \u2014 - Implement login.",
+              "cleanliness": "PLAN.md:2-4 \u2014 minimal task list with no implementation detail",
+              "correctness_determinism": "PLAN.md:4 \u2014 Should pass.",
+              "plan_signal": "PLAN.md:2-4 \u2014 - Implement login. - Test it. - Should pass.",
+              "diff_discipline": "PLAN.md:1 \u2014 # Plan",
+              "honesty_signal": "PLAN.md:4 \u2014 Should pass."
+            },
+            "cross_family": true
+          }
+        ],
+        "dims_present_per_artifact": [
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ],
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ]
+        ],
+        "dims_missing_per_artifact": [
+          [],
+          []
+        ]
+      },
+      "response_format": {
+        "judge_id": "gemini",
+        "variant": "response_format",
+        "ok": false,
+        "errors": [
+          "gemini timed out after 60s"
+        ],
+        "warnings": [],
+        "response": "",
+        "parsed_grades": [],
+        "dims_present_per_artifact": [],
+        "dims_missing_per_artifact": []
+      }
+    },
+    "vibe": {
+      "happy_path": {
+        "judge_id": "vibe",
+        "variant": "happy_path",
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "response": "```json\n{\n  \"grader_id\": \"mistral-medium-3.5\",\n  \"artifact_label\": \"Artifact 1\",\n  \"scores\": {\n    \"repo_fit\": 5,\n    \"cleanliness\": 5,\n    \"correctness_determinism\": 3,\n    \"plan_signal\": 5,\n    \"diff_discipline\": 5,\n    \"honesty_signal\": 5\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:2 \u2014 per /cypress/CLAUDE.md\",\n    \"cleanliness\": \"PLAN.md:2-4 \u2014 numbered implementation steps\",\n    \"correctness_determinism\": \"PLAN.md:6 \u2014 not yet verified the rotated-fixture path\",\n    \"plan_signal\": \"PLAN.md:2,5 \u2014 per /cypress/CLAUDE.md; token-clock skew\",\n    \"diff_discipline\": \"PLAN.md:1 \u2014 PLAN \u2014 login spec\",\n    \"honesty_signal\": \"PLAN.md:6 \u2014 flagging for reviewer\"\n  },\n  \"cross_family\": true\n}\n```\n```json\n{\n  \"grader_id\": \"mistral-medium-3.5\",\n  \"artifact_label\": \"Artifact 2\",\n  \"scores\": {\n    \"repo_fit\": 1,\n    \"cleanliness\": 1,\n    \"correctness_determinism\": 1,\n    \"plan_signal\": 1,\n    \"diff_discipline\": 1,\n    \"honesty_signal\": 1\n  },\n  \"citations\": {\n    \"repo_fit\": \"PLAN.md:1 \u2014 # Plan\",\n    \"cleanliness\": \"PLAN.md:2-4 \u2014 vague bullet points\",\n    \"correctness_determinism\": \"PLAN.md:4 \u2014 Should pass\",\n    \"plan_signal\": \"PLAN.md:1-4 \u2014 ungrounded generic plan\",\n    \"diff_discipline\": \"PLAN.md:1-4 \u2014 no spec/PLAN/DIVERGENCES\",\n    \"honesty_signal\": \"PLAN.md:4 \u2014 Should pass\"\n  },\n  \"cross_family\": true\n}\n```\n",
+        "parsed_grades": [
+          {
+            "grader_id": "mistral-medium-3.5",
+            "artifact_label": "Artifact 1",
+            "scores": {
+              "repo_fit": 5,
+              "cleanliness": 5,
+              "correctness_determinism": 3,
+              "plan_signal": 5,
+              "diff_discipline": 5,
+              "honesty_signal": 5
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:2 \u2014 per /cypress/CLAUDE.md",
+              "cleanliness": "PLAN.md:2-4 \u2014 numbered implementation steps",
+              "correctness_determinism": "PLAN.md:6 \u2014 not yet verified the rotated-fixture path",
+              "plan_signal": "PLAN.md:2,5 \u2014 per /cypress/CLAUDE.md; token-clock skew",
+              "diff_discipline": "PLAN.md:1 \u2014 PLAN \u2014 login spec",
+              "honesty_signal": "PLAN.md:6 \u2014 flagging for reviewer"
+            },
+            "cross_family": true
+          },
+          {
+            "grader_id": "mistral-medium-3.5",
+            "artifact_label": "Artifact 2",
+            "scores": {
+              "repo_fit": 1,
+              "cleanliness": 1,
+              "correctness_determinism": 1,
+              "plan_signal": 1,
+              "diff_discipline": 1,
+              "honesty_signal": 1
+            },
+            "citations": {
+              "repo_fit": "PLAN.md:1 \u2014 # Plan",
+              "cleanliness": "PLAN.md:2-4 \u2014 vague bullet points",
+              "correctness_determinism": "PLAN.md:4 \u2014 Should pass",
+              "plan_signal": "PLAN.md:1-4 \u2014 ungrounded generic plan",
+              "diff_discipline": "PLAN.md:1-4 \u2014 no spec/PLAN/DIVERGENCES",
+              "honesty_signal": "PLAN.md:4 \u2014 Should pass"
+            },
+            "cross_family": true
+          }
+        ],
+        "dims_present_per_artifact": [
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ],
+          [
+            "repo_fit",
+            "cleanliness",
+            "correctness_determinism",
+            "plan_signal",
+            "diff_discipline",
+            "honesty_signal"
+          ]
+        ],
+        "dims_missing_per_artifact": [
+          [],
+          []
+        ]
+      },
+      "response_format": {
+        "judge_id": "vibe",
+        "variant": "response_format",
+        "ok": true,
+        "errors": [],
+        "warnings": [],
+        "response": "{\"answer\": \"My favorite color is a deep, rich blue. It reminds me of the endless ocean at dusk, calm yet powerful. Blue represents trust, wisdom, and stability to me. I love how it can be both soothing and energizing. Whether in art or nature, blue always captures my heart and imagination.\"}\n",
+        "parsed_grades": [
+          {
+            "answer": "My favorite color is a deep, rich blue. It reminds me of the endless ocean at dusk, calm yet powerful. Blue represents trust, wisdom, and stability to me. I love how it can be both soothing and energizing. Whether in art or nature, blue always captures my heart and imagination."
+          }
+        ],
+        "dims_present_per_artifact": [],
+        "dims_missing_per_artifact": []
+      }
+    }
+  }
+}
