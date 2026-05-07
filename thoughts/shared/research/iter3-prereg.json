@@ -4,6 +4,30 @@
   "prereg_status": "CALIBRATED_VIA_PHASE_0_3_AGAINST_ITER_2_FROZEN",
   "phase_0_3_calibration_completed_at": "2026-05-07T12:00:00Z",
   "phase_0_3_calibration_basis": "iter-2 frozen v3 grade artifacts (90 grader-llm-*.json files across 8 tasks \u00d7 2 setups \u00d7 2 judges); methodology: per (setup, dim) SD across 8 task-means computed from (run \u00d7 judge) within-cell aggregation; see thoughts/shared/research/iter3-prereg-calibration-report.json",
+  "honest_meta_lessons": [
+    "L1 (per scientist round-5+6): the decomposer prompt was committed as load-bearing methodology and SHA-pinned in the prereg BEFORE measuring its inter-judge reliability. The reliability test ran fourth in the phase order; it should have run first. Pre-registered abort condition fired and fallback engaged, so the prereg discipline held — but the load order itself is the methodology bug. Iter-4 inverts: reliability gates precede SHA-pin.",
+    "L2 (per engineer round-6): validate-prereg's `is False` filter was sweep-permissive on string-valued failure statuses (FAILED_*/FALLBACK_*/PARTIAL_*). Strict semantics (`is not True`) required for any precondition gate that allows status-string values. Round-6 commit fixed; new regression test pinned.",
+    "L3 (per scientist round-6): `intersection_of_judge_sets` for binary rubric silently discards genuine semantic disagreement (judge_A 'attempted' vs judge_B 'declared_divergent'). Iter-4 design must report dual numerators (intersection-strict + union-permissive) as sensitivity rather than collapse to one.",
+    "L4 (per scientist round-6): exact (type, evidence_locator) Jaccard understates true semantic agreement when locator strings are free-form. Atomic-rescue path with fuzzy locator matching (Levenshtein/embedding cosine) deserves a Phase 0.5c probe before formal retirement of the atomic decomposer."
+  ],
+
+  "iter4_methodology_inheritance": {
+    "_purpose": "Per scientist round-6: process rules iter-4 must inherit from iter-3 Phase 0.5 FAIL — not hypotheses, but ordering constraints on phase execution that prevent committing unvalidated methodology as load-bearing.",
+    "rule_1_reliability_gates_precede_sha_pin": "Any rubric component whose output enters an inferential metric's denominator/numerator must pass a reliability gate (κ or Jaccard with lower-95-CI bound ≥ floor) BEFORE the prereg SHA-pin freezes the prompt.",
+    "rule_2_phase_ordering": "Phase 0.5-equivalents (reliability) must complete before Phase 0.4-equivalents (retroactive sanity). The iter-3 phase order ran 0.4 BEFORE 0.5; iter-4 inverts.",
+    "rule_3_lower_ci_not_point_estimates": "All reliability/agreement gates use lower-95-CI bounds (bootstrap B ≥ 1000), not point estimates. Avoids post-hoc threshold shopping.",
+    "rule_4_dual_estimator_reporting": "When a metric is computed via aggregation (mean-of-means vs lmer vs hierarchical-Bayesian), iter-4 reports MDE under all candidate estimators and pre-registers which is primary BEFORE calibration runs.",
+    "rule_5_intersection_vs_union_sensitivity": "Multi-judge agreement aggregates report both intersection-strict AND union-permissive numerators as sensitivity; verdict robust to combinator choice."
+  },
+
+  "iter3_sweep_kill_switch": {
+    "_purpose": "Per tech reviewer round-6: explicit pre-commit to iter-3-vs-iter-4 split based on Phase 0.5b + Phase 0.5c outcomes. Removes wiggle-room.",
+    "if_phase_0_5b_kappa_lower_ci_below_0_6_AND_phase_0_5c_atomic_rescue_jaccard_below_0_6": "iter-3 ships as METHODOLOGY CASE STUDY with NO sweep. Paper claims: pre-registered abort fired; calibration + reliability discipline; estimator-divergence finding (lmer vs mean-of-means flips scope); honest meta-lessons L1-L4. iter_3_inferential_scope = 0 (descriptive only across all metrics). iter-4 reruns full sweep with validated parser.",
+    "if_phase_0_5b_passes_OR_phase_0_5c_atomic_rescue_passes": "iter-3 sweep proceeds with whichever rubric survives. iter_3_inferential_scope = flake_locked_pass_rate + flake_rotated_pass_rate + (binary_c_at_a_min OR fuzzy-matched atomic c_at_a_min, whichever passed). 3 inferential + 1 borderline (honesty_signal under lmer) + 5 descriptive rubric dims.",
+    "if_both_pass": "iter-3 sweep proceeds; report both rubrics as sensitivity in §10. Stronger paper.",
+    "decision_tree_pre_committed_at_commit_sha": "PENDING_THIS_COMMIT (round-6 batch update)"
+  },
+
   "scope_claim_history": {
     "_purpose": "Per tech reviewer (round-4): owns the 6\u21923\u21928 trajectory explicitly so reviewers cannot frame this as a moving target. Owning the path beats hiding it.",
     "trajectory": [
@@ -29,11 +53,18 @@
         "status": "right_SD_prior + right_estimator + atomic-claim c_at_a_min \u2014 depends on Phase 0.5 decomposer reliability \u2014 SUPERSEDED by Phase 0.5 FAIL"
       },
       {
-        "commit_sha": "PENDING_THIS_COMMIT",
+        "commit_sha": "67005aa",
         "scope_claim": "2 inferential metrics under Phase 0.5 fallback (flake_locked_pass_rate, flake_rotated_pass_rate); binary_c_at_a_min provisional pending Phase 0.4 retroactive re-run",
         "basis": "Phase 0.5 decomposer reliability test FAILED (Jaccard 0.205 vs 0.6 floor; Pearson 0.384 vs 0.7 floor); pre-registered fallback to binary attempted-vs-divergent rubric triggered",
         "estimator": "lmer with task random effect (primary) \u2014 unchanged",
         "status": "Phase 0.5 fallback in effect; honors pre-registered abort condition"
+      },
+      {
+        "commit_sha": "PENDING_PHASE_0_5b",
+        "scope_claim_pre_committed": "either 3 inferential (binary_c_at_a_min readded if Phase 0.5b \u03ba-lower-CI \u2265 0.6) OR 2 inferential (binary \u03ba < 0.6, iter-3 ships as case study per kill_switch) OR 3 inferential under fuzzy-matched atomic (Phase 0.5c rescue)",
+        "basis": "Phase 0.5b Cohen \u03ba result + Phase 0.5c atomic-rescue Jaccard result",
+        "estimator": "lmer (unchanged across all branches)",
+        "status": "PRE-COMMITTED placeholder \u2014 see iter3_sweep_kill_switch for decision tree"
       }
     ],
     "round_4_pending_fixes_to_3dd4e51": [
@@ -114,7 +145,33 @@
         "declared_divergent_classifier": "A claim is 'declared_divergent' if AND only if it appears as a top-level bullet (markdown '-' or '*') under a heading containing 'divergent' OR 'divergence' in DIVERGENCES.md, OR is explicitly tagged with [DIVERGENT] / [BLOCKED] / [SKIP] in PLAN.md.",
         "attempted_classifier": "A claim is 'attempted' if AND only if it appears as a top-level bullet under PLAN.md's Required-Output-Artifacts / Tasks / Steps sections AND does NOT match declared_divergent_classifier.",
         "intersection_definition": "PER-JUDGE-AGREED count = |{(plan_path, claim_text) tuple : tuple labeled 'attempted' by judge_A AND tuple labeled 'attempted' by judge_B}|. Disagreements drop from numerator AND denominator (conservative against B; cannot inflate coverage).",
-        "phase_0_5b_required_before_adoption": "Cohen κ on per-claim binary labels after bipartite matching ≥ 0.6 across the same 10 fixtures. Without Phase 0.5b PASS, binary rubric is not yet adopted as primary; iter-3 inferential scope is 2 metrics only (flake_pass_rates)."
+        "phase_0_5b_required_before_adoption": "Cohen κ on per-claim binary labels after bipartite matching, lower-95-CI bound ≥ 0.6 (B=1000 bootstrap; per scientist round-6: lower-CI not point estimate, mirrors α gate's lower-CI rule). Across the same 10 fixtures × 2 judges (Gemini+Vibe). Without Phase 0.5b PASS, binary rubric is not yet adopted as primary; iter-3 inferential scope is 2 metrics only (flake_pass_rates).",
+      "phase_0_5b_protocol_pinned_per_tech_reviewer_round_6_q9": {
+        "fixtures": "same 10 PLAN.md files used for Phase 0.5 atomic test (see fixture_selection_methodology block)",
+        "judges": ["gemini", "vibe"],
+        "qwen_coder_status": "deferred to Phase 1.1; not in Phase 0.5b critical path",
+        "script": "TBD: thoughts/shared/research/scripts/run_binary_rubric_reliability.py (next session)",
+        "compute_kappa_method": "sklearn.metrics.cohen_kappa_score on per-claim binary labels after bipartite text-similarity matching (cosine ≥ 0.85 OR Jaccard-on-tokens ≥ 0.7)",
+        "bootstrap_protocol": "B=1000 task-paired resamples; report kappa point + lower-95-CI + upper-95-CI",
+        "gate_threshold": "lower-95-CI bound ≥ 0.6",
+        "abort_decision_tree": "see iter3_sweep_kill_switch top-level block",
+        "estimated_wall_clock_minutes": 0,
+        "estimated_cost_usd": 0.0,
+        "rationale_zero_cost": "binary classifier is deterministic markdown parsing — no LLM calls. Phase 0.5b runs without judge invocation."
+      },
+      "intersection_vs_union_sensitivity_per_scientist_round_6_q4": {
+        "_purpose": "Round-5 binary rubric used intersection-of-judge-sets for both numerator and denominator. Scientist round-6 flagged this as silently discarding the load-bearing signal (judge_A 'attempted' vs judge_B 'declared_divergent' IS the honesty disagreement Setup B is designed to detect). Pre-register dual numerators as sensitivity.",
+        "intersection_strict": "PER-JUDGE-AGREED count = |{(plan_path, claim_text) : tuple labeled 'attempted' by ALL judges}|. Conservative against B; cannot inflate coverage.",
+        "union_permissive": "ANY-JUDGE count = |{(plan_path, claim_text) : tuple labeled 'attempted' by AT LEAST ONE judge}|. Permissive; over-attributes coverage on disagreement.",
+        "primary_for_gating": "intersection_strict (matches round-5 commitment; conservative)",
+        "secondary_for_sensitivity_reporting_in_section_10": "union_permissive (surfaces honesty-disagreement signal)",
+        "verdict_robustness_check": "iter-3 §10 reports verdict under both; if reverses, abstract leads with that fact"
+      },
+      "attempted_section_heading_regex_per_engineer_round_6_q3": {
+        "regex": "^\\s*#{1,6}\\s+(required[- ]output[- ]artifacts|tasks|steps|deliverables|implementation|outputs)\\b",
+        "case_sensitive": false,
+        "_purpose": "Pin the heading-matching rule for 'attempted' classifier. Engineer round-6 Q3 flagged ambiguity ('Required Outputs' vs 'Required-Output-Artifacts'). Regex normalizes via case-insensitive + hyphen-or-space variant set."
+      }
       },
       "implication_for_iter_3_inferential_scope": "binary_c_at_a_min replaces c_at_a_min in iter_3_inferential_scope_under_primary_lmer_estimator IFF Phase 0.5b κ ≥ 0.6 PASSES. Partial 2/48 atomic-claim cells preserved at thoughts/shared/research/iter3-c-at-a-retroactive-iter2.atomic-claim.INVALIDATED.jsonl (with .README.md sibling) for audit; not used in inferential computations.",
       "downgraded_inferential_scope_under_fallback_pre_phase_0_5b": "iter_3_inferential_scope shrinks to 2 metrics (flake_locked_pass_rate, flake_rotated_pass_rate) under the conservative reading; binary_c_at_a_min readded ONLY if Phase 0.5b passes Cohen κ ≥ 0.6 AND Phase 0.4 retroactive re-run produces non-flat distribution (range > 0.05).",
@@ -176,11 +233,18 @@
     "promotion_to_true_blocked_by": "Qwen-Coder probe (Phase 1.1)"
   },
   "cannot_fire_sweep_until": [
-    "phase_0_4_c_at_a_retroactive_sanity_passed (c_at_a_min computed on iter-2 frozen does not produce flat distribution within \u00b10.05; if it does, abort plan)",
-    "phase_0_5_decomposer_reliability_passed (Jaccard on (type, evidence_locator) tuples \u2265 0.6 on the 10-doc fixture; abort if r_pearson_count < 0.7 OR jaccard < 0.6)",
-    "iter4_h_codebase_locked (H_iter4_2 codebase chosen; TBD removed)",
-    "validate_prereg_cli_implemented (eval/cli.py validate-prereg subcommand lands; SHA gates active)",
-    "phase_1_judge_set_validated (eval probe-judges --judges gemini,vibe,qwen-coder returns rc=0)"
+    "phase_0_5b_binary_classifier_kappa_lower_ci_>=_0.6 (eval binary-rubric-reliability run on same 10 fixtures \u00d7 2 judges; Cohen \u03ba on bipartite-matched per-claim binary labels with B\u22651000 bootstrap; lower-95-CI bound \u2014 not point estimate \u2014 must be \u2265 0.6)",
+    "phase_0_4_binary_retroactive_passed (binary_c_at_a_min computed on iter-2 frozen 48 cells; flat-distribution check range > 0.05; H_iter3_falsification_selection_bias re-fires on binary metric)",
+    "atomic_rescue_disposition_committed (Phase 0.5c: re-score atomic Jaccard with fuzzy locator matching \u2014 Levenshtein on file paths OR embedding cosine on prose snippets; if matched-Jaccard \u2265 0.6, atomic survives and binary fallback unnecessary; if < 0.6, atomic formally retired)",
+    "round_4_stats_fixes_landed (Q2 lmer paired-MDE formula validated against Hedges&Hedberg 2007; Q4 T_CRIT df=9-21 entries added; Q7 honesty 1.5x SD inflation applied to lmer MDE; Q8 ICC bootstrap CIs B=1000 \u2014 gate inferential list on lower-CI MDE)",
+    "phase_1_judge_set_validated_full (eval probe-judges --judges gemini,vibe,qwen-coder returns rc=0; currently PARTIAL with Qwen-Coder transport pending Phase 1.1)",
+    "iter3_sweep_kill_switch_evaluated (if Phase 0.5b \u03ba < 0.6 AND atomic-rescue Phase 0.5c < 0.6, iter-3 ships as methodology case study with NO sweep; iter-4 reruns full sweep with validated parser)"
+  ],
+  "previously_satisfied_preconditions_log": [
+    "iter4_h_codebase_locked (rails; commit 184d9ed; LOCKED_PRE_ITER_3_SWEEP)",
+    "validate_prereg_cli_implemented (commit 65a028d + round-6 security fix)",
+    "phase_0_5_decomposer_reliability (FAILED at commit 67005aa; pre-registered fallback fired)",
+    "phase_1_judge_set_validated_partial (commit 3544b3c; Gemini+Vibe pass, Qwen deferred)"
   ],
   "conflict_of_interest_disclosure": {
     "author_of_setup_b": "Jakub Sikora",
@@ -240,7 +304,7 @@
       },
       {
         "name": "correctness",
-        "rule": "c_at_a_min >= correctness_floor (Phase 0.3 calibrated)"
+        "rule": "flake_locked_pass_rate >= 0.90 AND flake_rotated_pass_rate >= 0.70 (per-cell n=28; primary inferential metrics under round-5 fallback). Prior 'c_at_a_min >= correctness_floor' DEMOTED post-round-5/round-6 to descriptive/tiebreak per scientist+engineer+tech-reviewer consensus — parser-reliability disproven by Phase 0.5 FAIL; binary_c_at_a_min OR fuzzy-matched-atomic c_at_a_min returns to gate-4 only after Phase 0.5b κ-lower-CI ≥ 0.6 OR Phase 0.5c rescue Jaccard ≥ 0.6 PASSES."
       }
     ],
     "primary_inferential_metrics": [
@@ -481,11 +545,12 @@
     },
     {
       "id": "H_iter3_falsification_selection_bias",
-      "claim": "If c_at_a_min on the n=4-tasks-where-B-failed-iter-2 (P0/T1/T2/E1) is meaningfully different from c_at_a_min on the n=3-unselected-tasks (T5/T7/T8/T9), selection bias is doing the work of the headline. Pre-registered falsification: |median(c_at_a_min, n=4 selected) - median(c_at_a_min, n=3 unselected)| > 0.15 fraction triggers selection-bias-explains-result interpretation in \u00a710.",
+      "claim": "If c_at_a_min (atomic; SUPERSEDED) OR binary_c_at_a_min (post-Phase-0.5b; primary under fallback) OR fuzzy-matched-atomic c_at_a_min (post-Phase-0.5c rescue path) on the n=4-tasks-where-B-failed-iter-2 (P0/T1/T2/E1) is meaningfully different from the same metric on the n=3-unselected-tasks (T5/T7/T8/T9), selection bias is doing the work of the headline. Pre-registered falsification: |median(metric, n=4 selected) - median(metric, n=3 unselected)| > 0.15 fraction triggers selection-bias-explains-result interpretation in \u00a710.",
       "predicted_outcome": "selection_bias_NOT_explanation_if_difference_below_0_15_fraction",
-      "test": "wilcoxon_two_sample_test_on_per_task_c_at_a_min_split_by_selected_vs_unselected_set",
-      "rationale": "P0/T1/T2/E1 chosen because B failed in iter-2; regression-to-mean predicts artificial improvement on these. If c_at_a_min lift on selected \u226b unselected, the iter-3 verdict is selection bias, not the methodology change. Per scientist review (round-3) \u2014 adds explicit falsification beyond BH-FDR correction.",
-      "metric_detectability": "wilcoxon_two_sample_n_4_vs_n_3"
+      "test": "wilcoxon_two_sample_test_on_per_task_metric_split_by_selected_vs_unselected_set; metric = whichever c_at_a_min variant survives Phase 0.5b/c (per scientist round-6: was implicit, now explicit)",
+      "rationale": "P0/T1/T2/E1 chosen because B failed in iter-2; regression-to-mean predicts artificial improvement on these. If c_at_a_min variant's lift on selected \u226b unselected, the iter-3 verdict is selection bias, not the methodology change.",
+      "metric_detectability": "wilcoxon_two_sample_n_4_vs_n_3",
+      "iter_2_retroactive_proxy_finding": "On locked_pass_rate proxy (atomic decomposer not yet run), |median_diff| = 0.33 > threshold 0.15 \u2014 falsification TRIGGERED on iter-2 retroactive (commit 3dd4e51). Phase 0.4 binary retroactive re-runs this on binary_c_at_a_min."
     }
   ],
   "iter4_hypotheses": [
