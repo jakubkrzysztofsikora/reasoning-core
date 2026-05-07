@@ -1,0 +1,216 @@
+{
+  "phase": "0.5b_binary_rubric_reliability",
+  "computed_at": "2026-05-07T13:09:39Z",
+  "fixtures": [
+    {
+      "setup": "A",
+      "task": "P0",
+      "run": 1
+    },
+    {
+      "setup": "B",
+      "task": "P0",
+      "run": 1
+    },
+    {
+      "setup": "A",
+      "task": "T1",
+      "run": 1
+    },
+    {
+      "setup": "B",
+      "task": "T1",
+      "run": 1
+    },
+    {
+      "setup": "A",
+      "task": "T2",
+      "run": 1
+    },
+    {
+      "setup": "B",
+      "task": "E1",
+      "run": 1
+    },
+    {
+      "setup": "A",
+      "task": "T5",
+      "run": 1
+    },
+    {
+      "setup": "B",
+      "task": "T7",
+      "run": 1
+    },
+    {
+      "setup": "A",
+      "task": "T8",
+      "run": 1
+    },
+    {
+      "setup": "B",
+      "task": "T9",
+      "run": 1
+    }
+  ],
+  "n_fixtures": 10,
+  "parse_fail_gate_ratio": 0.2,
+  "perturbation_modes": [
+    "identity",
+    "whitespace_normalize"
+  ],
+  "per_fixture_results": [
+    {
+      "setup": "A",
+      "task": "P0",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "B",
+      "task": "P0",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "A",
+      "task": "T1",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "B",
+      "task": "T1",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "A",
+      "task": "T2",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "B",
+      "task": "E1",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "A",
+      "task": "T5",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "B",
+      "task": "T7",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "A",
+      "task": "T8",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    },
+    {
+      "setup": "B",
+      "task": "T9",
+      "run": 1,
+      "parse_failed": true,
+      "parse_failure_reason": "zero sections matched attempted_section_heading_regex",
+      "n_claims": 0
+    }
+  ],
+  "parse_failures": [
+    {
+      "setup": "A",
+      "task": "P0",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "B",
+      "task": "P0",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "A",
+      "task": "T1",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "B",
+      "task": "T1",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "A",
+      "task": "T2",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "B",
+      "task": "E1",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "A",
+      "task": "T5",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "B",
+      "task": "T7",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "A",
+      "task": "T8",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    },
+    {
+      "setup": "B",
+      "task": "T9",
+      "run": 1,
+      "reason": "zero sections matched attempted_section_heading_regex"
+    }
+  ],
+  "verdict": {
+    "phase_0_5b_passed": false,
+    "reason": "parse-failure ratio 1.00 > gate 0.2 \u2192 ABORT per pre-registered policy",
+    "kill_switch_branch_fired": "A_iter3_ships_as_methodology_case_study",
+    "binary_rubric_status": "FORMALLY_RETIRED",
+    "next_action": "iter-3 ships as methodology case study with NO sweep; iter-4 must validate classifier rules against actual prompt-suite outputs BEFORE pinning"
+  },
+  "n_parse_failures": 10,
+  "parse_fail_ratio": 1.0,
+  "duration_s": 0.01
+}
