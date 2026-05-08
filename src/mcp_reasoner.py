@@ -150,5 +150,16 @@ def _sidecar_unavailable(extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
     return base
 
 
+# Phase 4: register gate_edit (synthetic PreToolUse for hosts without hooks).
+# Lives in src/mcp_gate.py to keep mcp_reasoner.py a thin sidecar bridge —
+# senior dev review flagged that two scoring tools on the same FastMCP server
+# must share an error contract (both return dict, neither raises McpError).
+try:
+    from src.mcp_gate import gate_edit as _gate_edit_impl
+    mcp.tool()(_gate_edit_impl)
+except Exception:  # noqa: BLE001 - registration failure must not break reason_over_edit
+    pass
+
+
 if __name__ == "__main__":
     mcp.run()

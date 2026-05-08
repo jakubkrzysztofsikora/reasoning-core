@@ -1,0 +1,21 @@
+# reasoning-core - Vibe CLI config (Phase 4).
+# Generated from this template by scripts/enable-in-repo-vibe.sh; <RC_REPO>
+# is substituted to an absolute path at install time. The generated
+# .vibe/config.toml is gitignored (per-machine).
+
+[[mcp_servers]]
+name = "hybrid-reasoner"
+transport = "stdio"
+command = "python3"
+args = ["-m", "src.mcp_reasoner"]
+cwd = "<RC_REPO>"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+
+[hooks]
+# post_agent_turn fires after each agent turn; retroactively flags missed
+# gate_edit calls (Vibe lacks PreToolUse today).
+post_agent_turn = "python3 <RC_REPO>/src/hooks/post_batch_lang_audit.py"
+
+[skills]
+paths = [".vibe/skills", "~/.vibe/skills"]
