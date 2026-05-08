@@ -51,6 +51,13 @@ try:
     import portalocker  # type: ignore
 except Exception:  # noqa: BLE001 - fallback to no-op lock if not installed
     portalocker = None  # type: ignore
+    # Surface the fallback so a missing pip install isn't silently a no-op
+    # lock in production. Reviewer-flagged Phase 0.5.
+    sys.stderr.write(
+        "[hybrid-reasoner] audit_log: portalocker not installed; "
+        "concurrent multi-host writes may interleave. "
+        "Run `pip install portalocker>=2.7`.\n"
+    )
 
 SCHEMA_VERSION = 2
 

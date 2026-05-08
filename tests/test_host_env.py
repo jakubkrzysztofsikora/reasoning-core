@@ -61,13 +61,17 @@ def test_concurrency_audit_log_no_corruption(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_SESSION_ID", "concurrency-test")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
+    # Each row is >8KB so it exceeds PIPE_BUF; without portalocker the
+    # write() syscall is NOT atomic and rows would interleave. This test
+    # actually exercises the lock path (not just well-behaved small writes).
     script = (
         "import sys, os\n"
         "sys.path.insert(0, %r)\n"
         "from src.hooks import audit_log\n"
+        "filler = 'X' * 9000\n"
         "for i in range(20):\n"
         "    audit_log.append_event({"
-        "'tool_name':'Edit','decision':'allow','i':i,'pid':os.getpid()}, fsync=True)\n"
+        "'tool_name':'Edit','decision':'allow','i':i,'pid':os.getpid(),'big':filler}, fsync=True)\n"
     ) % str(REPO)
 
     procs = [

@@ -68,7 +68,24 @@ def _fail_closed() -> bool:
 
 
 def _read_payload() -> Optional[Dict[str, Any]]:
-    """Read the PreToolUse JSON payload from stdin. None on parse failure."""
+    """Read the PreToolUse JSON payload from stdin via the adapter layer.
+
+    Routed through ``adapters.claude.parse_stdin`` (Phase 1a) so the same
+    dispatch chain serves Gemini / Copilot / Vibe — but for back-compat
+    this thin wrapper still returns the raw payload dict (the rest of
+    ``main()`` reads ``payload["tool_name"]`` etc.). Returns ``None`` on
+    parse failure to preserve the malformed-payload audit branch.
+    """
+    try:
+        from src.hooks.adapters import claude as _claude_adapter  # type: ignore
+        env = _claude_adapter.parse_stdin("PreToolUse")
+        if env.tool_name is None and not env.raw:
+            return None
+        return dict(env.raw)
+    except Exception:  # noqa: BLE001 - fall through to legacy path
+        pass
+    # Legacy path retained for environments where the adapter package
+    # cannot be imported (e.g. partial installs in CI sandboxes).
     try:
         raw = sys.stdin.read()
     except Exception:  # noqa: BLE001

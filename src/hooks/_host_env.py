@@ -39,6 +39,11 @@ _HOST_ENVS = {
     "vibe": ("VIBE_PROJECT_DIR", "VIBE_SESSION_ID"),
 }
 
+# Per-process cache of synthesised session id. Avoids mutating os.environ
+# (which leaks across pytest tests) while still giving stable ids within
+# a single hook process tree.
+_synthesised_sid_cache: dict = {}
+
 
 class HostAmbiguous(RuntimeError):
     """Raised when host detection is ambiguous and RC_HOST is unset."""
@@ -94,9 +99,11 @@ def session_id() -> str:
     # all hooks invoked by the same parent process share an id, but two
     # separate launches of the same CLI get distinct ids.
     seed = f"{os.getppid()}|{project_dir()}"
+    if seed in _synthesised_sid_cache:
+        return _synthesised_sid_cache[seed]
     digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
     sid = f"anon-{digest}"
-    os.environ["RC_SESSION_ID"] = sid  # propagate to children
+    _synthesised_sid_cache[seed] = sid
     return sid
 
 

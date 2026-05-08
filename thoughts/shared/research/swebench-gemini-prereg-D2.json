@@ -1,0 +1,165 @@
+{
+  "prereg_id": "swebench-gemini-prereg-D2",
+  "version": "1.0-DESIGN-MEMO (NOT a frozen prereg yet — Setup B definition is TBD; document is a design memo binding the SHAPE of the eventual prereg, not its content. Per Phase 0 reviewer feedback: 'D2 is a draft memo, not a prereg, until setup_b_definition fills in')",
+  "deliverable": "D2",
+  "deliverable_description": "Setup A vs Setup B replication on SWE-bench Verified Frontier+MultiFile+Holdout subset. Setup B = google-genai SDK loop + reasoning-core MCP server registered via `gemini mcp add reasoning-core <command>`. n=3 reps. Reports paired-bootstrap CI on resolved% Δ + 5 BARS dim Δ (BH-FDR corrected).",
+  "created_at": "2026-05-08",
+  "frozen_at_commit_sha": "TBD_AT_PHASE_8 — DO NOT FREEZE UNTIL RC-GEMINI MCP SERVER SHIPS AND PASSES smoke-setup-b.sh",
+  "frozen_status": "DRAFT — gated on RC-gemini integration shipping externally",
+  "author": "Jakub Sikora",
+
+  "supplements_iter": "claude-iter-3 + swebench-iter1-D1",
+  "iter_label": "swebench-iter1-D2",
+
+  "external_validity_claim": "directional concordance with iter-3 only. Magnitude NOT poolable across model families. 4 confounds — see swebench-gemini-prereg-D1.json:external_validity_claim. Treat D2 verdict as 'B beats A on a different model+task pair' NOT 'B is universally better'.",
+
+  "subset_inherited_from": "swebench-gemini-prereg-D1.json (same manifest_sha256, same 165-instance set)",
+
+  "design": {
+    "n_reps_per_instance": 3,
+    "total_cells_D2": 990,
+    "setups_in_scope_D2": ["A", "B"],
+    "agent_runner": "google-genai Python SDK multi-turn loop (same as D1)",
+    "host_platform": "Linux x86_64 cloud VM (same as D1)"
+  },
+
+  "setup_A_inherited_from": "swebench-gemini-prereg-D1.json (byte-identical; Phase 8 prereg validator MUST verify byte equality of A's .envrc + gemini.json + setups.yaml entry against D1's frozen sha)",
+  "setup_B_definition": {
+    "envrc_path": "~/eval-setups-gemini/B/.envrc",
+    "envrc_sha256": "TBD_AT_PHASE_8 — must be set when stub becomes real",
+    "gemini_config_path": "~/eval-setups-gemini/B/gemini.json",
+    "gemini_config_sha256": "TBD_AT_PHASE_8",
+    "mcp_server_command": "TBD_AT_PHASE_8 — exact `gemini mcp add reasoning-core <command>` invocation",
+    "mcp_server_command_sha256": "TBD_AT_PHASE_8",
+    "rc_gemini_version_pin": "TBD_AT_PHASE_8",
+    "guard_contract": "eval/setup_b_guard.py: gemini mcp list contains reasoning-core AND REASONING_CORE_PROFILE env set AND server-startup smoke succeeds within `mcp_startup_timeout_s` (default 30s; configurable; Phase 8 may tune based on RC-gemini cold-start observed). Hard-fail. No silent fallback.",
+    "mcp_startup_timeout_s": 30,
+    "TREATMENT_INTEGRITY_CONSTRAINTS": {
+      "rationale": "D2 setup_b is the treatment. To prevent post-hoc treatment mutation slipping in at Phase 8, these constraints are pre-committed NOW and the Phase 8 fill-in must satisfy them or trigger an amendment.",
+      "constraints": [
+        "Setup B's `model_id` MUST equal Setup A's `model_id` (gemini-2.5-pro-preview-XX-XX). No alternate model.",
+        "Setup B's `gemini_config` (gemini.json) MUST NOT add system_instruction or system_prompt fields beyond what A has. RC's planning influence must come via MCP tools, not via prepended prompts.",
+        "Setup B's `gemini_config` tool allowlist MUST be a strict superset of A's: A's tools ∪ {reasoning-core MCP tools}. No removed tools.",
+        "Setup B's sampling parameters (temperature, top_p, top_k, max_output_tokens) MUST equal A's.",
+        "Setup B's `max_turns` (agent loop ceiling) MUST equal A's (30).",
+        "Setup B's `per_cell_timeout_s` MUST equal A's (1800s).",
+        "If any constraint above is violated at Phase 8 fill-in, D2 prereg cannot freeze without an explicit amendment file documenting the deviation and rationale."
+      ]
+    }
+  },
+
+  "judges_inherited_from": "swebench-gemini-prereg-D1.json (vibe + qwen-coder + claude)",
+  "rubric_inherited_from": "swebench-gemini-prereg-D1.json",
+
+  "inferential_scope_D2": [
+    "resolved_percent_delta_BminusA (curated subset; paired-bootstrap 95% CI)",
+    "resolved_percent_delta_BminusA_holdout (random subset; generalizability)",
+    "BARS dim Δ B-A on each of {repo_fit, cleanliness, correctness_determinism, plan_signal, diff_discipline} — BH-FDR q ≤ 0.10 over 5 dims"
+  ],
+
+  "descriptive_scope_D2": [
+    "tokens_total_delta",
+    "cache_read_total_delta",
+    "cache_write_total_delta",
+    "wall_clock_s_delta",
+    "dollars_delta",
+    "patch_extractor_disagreement_rate"
+  ],
+
+  "patch_extractor_disagreement_rate_definition": {
+    "rationale": "Pre-commit the metric definition so kill_switch.branch_A_extractor_disagreement_asymmetric is well-defined.",
+    "definition": "Per cell, compute extracted_patch via Path 1 (regex extract of `diff --git` blocks) and Path 2 (secondary SDK call asking gemini to extract its own patch as JSON). Normalize both via `git diff --no-prefix --no-color`-equivalent canonicalization (strip trailing whitespace, normalize line endings to LF, sort hunks by file then by hunk-header line number). If canonical patches differ → cell flagged disagreement.",
+    "per_arm_rate": "disagreement_count(arm) / total_cells(arm)",
+    "asymmetry_threshold": "abs(rate_A - rate_B) > 0.10 → kill switch fires; demote resolved% to descriptive-only"
+  },
+
+  "mde_table": {
+    "resolved_percent_delta": {
+      "alpha": 0.05,
+      "power": 0.80,
+      "n_instances": 165,
+      "n_reps": 3,
+      "paired_bootstrap_mde": "≈0.05-0.07 on Δ. Adequate for 22pt SWE-bench Pro harness-config swing. INADEQUATE for iter-3-style +0.20-0.31 BARS Δs (those are out-of-scope for inferential at this n)."
+    },
+    "rubric_dim_delta": {
+      "note": "BH-FDR corrected. iter-3 lmer-cluster-bootstrap MDE 0.79-1.17 per dim. With n=165 instances vs iter-3 n=8 tasks, MDE should be lower; pre-commit MDE estimate to be computed from observed within-arm SDs in Phase 6 BEFORE freezing decision rule.",
+      "honest_constraint": "If observed MDE ≥ 0.5 on any dim, demote to descriptive-only via amendment."
+    }
+  },
+
+  "decision_rule_D2": {
+    "type": "lex order over GATES, then PRIMARY INFERENTIAL, then SECONDARY INFERENTIAL with BH-FDR, then TIEBREAKS",
+    "REVISED_2026_05_08": "v1 conflated gate-that-cannot-fail with primary inferential test. Renamed and separated.",
+    "gates": [
+      "G1. coverage gate (refuse verdict if <80% cells valid; iter-3 demanded 100%, here we relax slightly given external infra risk)",
+      "G2. safety gate (zero violations across both arms)"
+    ],
+    "primary_inferential_test": {
+      "metric": "resolved_percent_delta_BminusA",
+      "test": "paired-bootstrap 95% CI on Δ over 165 instances × 3 reps",
+      "outcomes": [
+        "CI excludes 0 with positive Δ → declare B WINS on primary; proceed to secondary for effect-size profiling.",
+        "CI excludes 0 with negative Δ → declare A WINS on primary; proceed to secondary for effect-size profiling.",
+        "CI brackets 0 → declare INCONCLUSIVE on primary; proceed to secondary BUT verdict cannot promote past 'inconclusive overall' regardless of secondary outcomes."
+      ]
+    },
+    "secondary_inferential_tests": {
+      "metrics": "5 BARS dim Δs B−A on {repo_fit, plan_signal, diff_discipline, correctness_determinism, cleanliness}",
+      "correction": "BH-FDR q ≤ 0.10 over the 5 dims",
+      "ordering_for_lex_tiebreak": "by iter-3 observed Δ magnitude largest-first: repo_fit, plan_signal, diff_discipline, correctness_determinism, cleanliness",
+      "interpretation": "If primary is inconclusive, secondary results are reported BUT cannot upgrade the verdict to 'B wins' (or A wins). They CAN refine the descriptive picture."
+    },
+    "tiebreaks_when_primary_AND_secondary_agree_but_close": [
+      "T1. total_tokens_lower (B was -8.2% in iter-3; tiebreak preserves consistency with iter-3 framing)",
+      "T2. wall_clock_s_lower"
+    ],
+    "no_pass_rate_minimum": "explicitly NO ≥0.90 gate. SWE-bench at gemini-2.5-pro level expected ~50-70% resolved; 0.90 would null both arms.",
+    "explicit_forbidden_meta_analytic_moves": [
+      "DO NOT pool magnitudes across iter-3 and swebench-iter1 D2.",
+      "DO NOT compute fixed/random-effects meta-analysis Δ across the two studies.",
+      "DO NOT report an 'overall B advantage' figure combining the two studies.",
+      "DO report directional concordance (sign agreement) and treat as qualitative external validity check ONLY."
+    ]
+  },
+
+  "multiple_comparisons": "BH-FDR q ≤ 0.10 over 5 BARS dims. Primary inferential (resolved% Δ) does not require correction.",
+
+  "kill_switches": {
+    "branch_A_setup_b_mcp_unhealthy": {
+      "trigger": "smoke-setup-b.sh fails 3 times.",
+      "observed_via": "scripts/smoke-setup-b.sh exit code; eval/setup_b_guard.assert_setup_b_ready raises after 3 attempts",
+      "action": "Abort D2 sweep entirely. D2 prereg unfreezes; ship D1 only."
+    },
+    "branch_A_inherited_from_D1": "all D1 kill switches inherited (sdk cache, image coverage, judge α, cost overrun, model retirement, subset below minimum)",
+    "branch_A_extractor_disagreement_asymmetric": {
+      "trigger": "abs(disagreement_rate_A - disagreement_rate_B) > 0.10 (rates defined under patch_extractor_disagreement_rate_definition above)",
+      "observed_via": "eval/aggregate.py computes per-arm disagreement rates from cell-level disagreement flags",
+      "action": "Demote resolved% to descriptive-only; report rubric Δs only with disagreement-rate caveat."
+    }
+  },
+
+  "amendment_protocol_inherited_from": "swebench-gemini-prereg-D1.json",
+
+  "cost_estimate_D2": {
+    "additional_cells_vs_D1": 495,
+    "agent_cost_per_cell_estimate": "≈$0.05-0.15 (Setup B may be slightly more if RC tools cost extra context)",
+    "judge_cost_per_cell_estimate": "≈$0.03 (judges grade BOTH arms; ~$30 incremental)",
+    "total_incremental_D2": "≈$50-90 agent + $30 judge ≈ $80-120",
+    "total_D1_plus_D2": "≈$145-225",
+    "hard_cap_USD": 400,
+    "abort_at_USD": 320
+  },
+
+  "publication_pairing": {
+    "ships_with": "iter-3 whitepaper as Appendix A: Cross-Family External Validity Supplement",
+    "framing_constraint": "Headline must read 'directional concordance' if both A vs B and iter-3 A vs B point same way. Must NOT pool magnitudes. Must NOT claim 'B is universally better than A'.",
+    "if_directionally_inconsistent": "publish anyway — null/inconsistent results are informative; do not file-drawer."
+  },
+
+  "open_questions_to_resolve_at_phase_8": [
+    "RC-gemini integration shape (MCP server vs ACP mode)",
+    "Setup B's exact gemini.json + envrc contents",
+    "RC-gemini token-overhead vs vanilla SDK (descriptive baseline before sweep)",
+    "Setup B's MCP-server health-check timeout calibration"
+  ]
+}

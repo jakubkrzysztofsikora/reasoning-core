@@ -1,0 +1,225 @@
+{
+  "prereg_id": "swebench-gemini-prereg-D1",
+  "version": "1.0",
+  "deliverable": "D1",
+  "deliverable_description": "Setup A baseline on SWE-bench Verified Frontier+MultiFile+Holdout subset using vanilla google-genai SDK agent loop. Single-arm, no winner declared. Standalone leaderboard-style result for gemini.",
+  "created_at": "2026-05-08",
+  "frozen_at_commit_sha": "TBD_at_commit_time",
+  "author": "Jakub Sikora",
+  "authorization": "operator (Jakub Sikora) authorized swebench-iter1 supplement-track-A pre-Phase-1",
+
+  "supplements_iter": "claude-iter-3 (whitepaper at thoughts/shared/research/2026-05-08-iter3-eval-whitepaper.md)",
+  "iter_label": "swebench-iter1 (own numbering line; NOT iter-4)",
+
+  "external_validity_claim": "directional concordance check only; magnitude NOT poolable across model families. 4 confounds vs iter-3: (1) model family Anthropic→Google, (2) task domain Circit-internal→OSS Python repos, (3) integration shape RC-claude→RC-gemini-MCP, (4) agent loop architecture claude -p → google-genai SDK loop.",
+
+  "subset": {
+    "manifest_path": "vendor/subset_manifest.json",
+    "manifest_sha256": "FROZEN_AT_D1_FREEZE — Phase 3 generates manifest deterministically, sha256 is pinned in this prereg AT D1 freeze commit (not later). D1 prereg cannot freeze until manifest is final. Reordering: Phase 3 dataset_prep + manifest generation runs BEFORE D1 freeze commit.",
+    "manifest_generation_protocol": "Deterministic. (1) Load princeton-nlp/SWE-bench_Verified test split. (2) Curated frontier (95) + multifile (40) IDs sourced from jatinganhotra.dev blog post archive PDF (saved to docs/jatinganhotra-subsets-2026-05-08.pdf). (3) Holdout = `random.Random(20260508).sample(verified \\ curated, 30)`. (4) Sort all three arrays by instance_id. (5) Write manifest. (6) sha256 = sha256sum of canonical JSON (`json.dumps(..., sort_keys=True, separators=(',',':'))`). Reproducible bit-for-bit.",
+    "frontier_count": 95,
+    "multifile_count": 40,
+    "holdout_count": 30,
+    "holdout_seed": 20260508,
+    "holdout_source": "random sample from princeton-nlp/SWE-bench_Verified test split, excluding frontier∪multifile",
+    "curated_source": "https://jatinganhotra.dev/blog/swe-agents/2025/06/05/swe-bench-verified-discriminative-subsets.html",
+    "curated_source_archive": "docs/jatinganhotra-subsets-2026-05-08.pdf (immutable PDF in toolkit repo)"
+  },
+
+  "design": {
+    "n_reps_per_instance": 3,
+    "total_cells_D1": 495,
+    "setups_in_scope_D1": ["A"],
+    "agent_runner": "google-genai Python SDK multi-turn loop",
+    "agent_runner_pin": "google-genai==1.75.0 (latest stable at 2026-05-08; 2.0.0 just released, unproven; see docs/google-genai-version-decision-2026-05-08.md)",
+    "agent_runner_wheel_sha256": "TBD_set_in_phase_1 (computed via `pip download google-genai==1.75.0 --no-deps -d /tmp && sha256sum /tmp/google_genai-1.75.0-*.whl`)",
+    "model_id": "gemini-2.5-pro-preview-XX-XX (DATED VARIANT — Phase 1 pins exact dated string from Google's published model registry. NOT the floating `gemini-2.5-pro` alias. If the dated variant retires before D2 sweep completes, kill_switch.branch_A_model_retired fires.)",
+    "model_id_alias_forbidden": true,
+    "max_turns": 30,
+    "per_cell_timeout_s": 1800,
+    "host_platform": "Linux x86_64 cloud VM (Hetzner CCX33 or GCP n2-standard-32 class). M-series Mac is dev-only — Rosetta + x86 SWE-bench images not viable for 495 cells."
+  },
+
+  "swebench_pin": {
+    "package_version": "TBD_set_in_phase_1",
+    "upstream_sha": "TBD_set_in_phase_1",
+    "epoch_ai_image_registry": "TBD_set_in_phase_1",
+    "image_digest_pinning": "Phase 7 freeze must capture every used image digest; sweep aborts if a digest changes mid-sweep."
+  },
+
+  "judges": {
+    "set": ["vibe", "qwen-coder", "claude"],
+    "rationale_for_dropping_gemini": "self-judging conflict — Gemini grading gemini-CLI/SDK output. iter-3 §5.5 L4: 'judges within the same family collapse to ~1 effective judge under correlation.' Gemini judge already showed +0.45 B-favoritism in iter-3 (whitepaper:142).",
+    "claude_substitute": {
+      "model_id": "claude-sonnet-4-6",
+      "rationale": "cross-family substitute. Sonnet not Opus to bound judge cost (~$50 for 990 cells)."
+    },
+    "alpha_gate": "Krippendorff α ≥ 0.6 across 3 judges per dim. If any dim falls below, that dim demoted to descriptive-only via amendment.",
+    "judge_runner_pins": "Phase 7 freeze captures vibe CLI version, claude API model ID, scaleway endpoint + qwen-coder model tag."
+  },
+
+  "rubric": {
+    "scale": "1-5 BARS",
+    "dims": ["repo_fit", "cleanliness", "correctness_determinism", "plan_signal", "diff_discipline"],
+    "anchors_inherited_from": "claude-iter-3 (rubric.py)",
+    "graded_artifacts_per_cell": ["plan", "impl"]
+  },
+
+  "inferential_scope_D1": [
+    "resolved_percent (curated subset, mean + paired-bootstrap 95% CI)",
+    "resolved_percent_holdout (random 30-instance subset, generalizability check)"
+  ],
+
+  "descriptive_scope_D1": [
+    "main_tokens_input",
+    "main_tokens_output",
+    "main_tokens_total",
+    "cache_read_total",
+    "cache_write_total",
+    "wall_clock_s",
+    "dollars (gemini API)",
+    "BARS rubric per-dim means (no inferential CI; inferential reserved for D2)"
+  ],
+
+  "mde_table": {
+    "REVISED_2026_05_08": "v1 cited iter-3 pass-rate SDs as the variance reference. INCORRECT for binary outcomes — Bernoulli SD = sqrt(p(1-p)), not iter-3 0/1/.../10 fractions. Re-derived under paired-binary McNemar / clustered-bootstrap below with sensitivity over A-vs-B correlation ρ.",
+    "resolved_percent": {
+      "model": "paired-binary; per (instance, rep), Bernoulli outcome. Cell mean over 3 reps has SD ≈ sqrt(p(1-p)/3).",
+      "assumed_p": 0.55,
+      "n_instances_curated": 135,
+      "n_instances_holdout": 30,
+      "n_reps": 3,
+      "alpha": 0.05,
+      "power": 0.80,
+      "sensitivity_over_rho_AB": {
+        "rho_0_3_paired_se_delta": "≈ sqrt(2 * 0.55*0.45/3 * (1-0.3) / 135) ≈ 0.026",
+        "rho_0_5_paired_se_delta": "≈ 0.022",
+        "rho_0_7_paired_se_delta": "≈ 0.017",
+        "interpretation": "MDE at 80% power, two-sided ≈ 2.8 × SE. So MDE ranges 0.048 (ρ=0.7) to 0.073 (ρ=0.3). Use ρ=0.5 as planning estimate: MDE ≈ 0.062 on Δ resolved%."
+      },
+      "comparison_to_documented_swing": "Scale AI SWE-bench Pro reports 22pp harness-config swing on identical model. MDE 0.06 detects 27% of that swing — adequate for D2 if true effect is anywhere near documented magnitude. D1 reports descriptive only.",
+      "honest_caveats": [
+        "Assumed p=0.55 derived from gemini-2.5-pro public leaderboard; if actual <0.4 or >0.7, MDE shifts; recompute in Phase 6 with observed p before final freeze.",
+        "ρ_AB unknown until D2 first 30 cells run; pre-commit ρ=0.5 planning estimate; recompute observed ρ in Phase 6, document in REPORT."
+      ],
+      "holdout_power_honest": "n=30 holdout subset cannot detect a curated-vs-random discrimination gap below ~15pp at α=0.05, 80% power. EXPLICIT FRAMING: holdout is a QUALITATIVE sanity check. If curated-resolved% and holdout-resolved% diverge by >15pp, that's a flag. Smaller divergences are inconclusive. No formal power claim on the holdout."
+    },
+    "rubric_dims": {
+      "note": "D1 does NOT pre-commit inferential CIs on rubric dims. iter-3 lmer-cluster-bootstrap MDE 0.79-1.17 per dim is the floor; D1 ships descriptive-only on rubric. BH-FDR clause REMOVED from D1 (was contradictory with descriptive-only — moved to D2 where rubric dims are inferential)."
+    }
+  },
+
+  "decision_rule_D1": {
+    "type": "descriptive (single-arm baseline)",
+    "primary_output": "resolved_percent + 95% CI on curated subset",
+    "secondary_outputs": "resolved_percent_holdout, BARS rubric means, token + cache + wall sums",
+    "no_winner_declared": true,
+    "comparison_to_leaderboard": "REPORT.md cites latest gemini-2.5-pro entry on swebench.com/verified.html as descriptive context, with date-stamped link"
+  },
+
+  "multiple_comparisons": "D1 has 1 primary inferential (resolved%) and 0 inferential rubric dims. No multiple-comparisons correction required for D1. (D2 carries the BH-FDR q ≤ 0.10 clause for its 5 BARS dim Δs.)",
+
+  "prereg_validator_requirement": "Phase 1 MUST ship `eval/prereg_validation.py` (port from claude toolkit's `prereg_validation.py`) with these CLI commands: `python3 -m eval.cli validate-prereg --prereg <path> --check-audit-trail --check-tbds-resolved --check-model-id-pinned --check-manifest-sha`. Pre-sweep gate at `scripts/run-d1-sweep.sh` MUST invoke this validator and abort on any TBD remaining or any audit-trail mismatch. Non-negotiable.",
+  "prereg_validator_runs_before": ["sweep cell 1 of D1", "sweep cell 1 of D2", "any decide/freeze command"],
+
+  "kill_switches": {
+    "branch_A_sdk_cache_capture_fails": {
+      "trigger": "Phase 1 smoke-gemini-sdk.sh asserts cached_content_token_count populated on identical 8k-token prompt repeated; if asserts fails on 3 attempts, kill switch fires.",
+      "action": "D1 prereg amended to demote cache_read_total + cache_write_total to descriptive-impossible (set to NULL in REPORT). Sweep proceeds; cache economics dropped from D1 deliverable.",
+      "amendment_required": true
+    },
+    "branch_A_swebench_arm_only": {
+      "trigger": "Phase 1: pulled SWE-bench Docker image fails to run on Linux x86 host (e.g. Epoch AI registry coverage gap on chosen instances).",
+      "action": "Drop affected instances from subset with documented amendment; minimum subset to proceed = 100 instances total."
+    },
+    "branch_A_judge_alpha_below_0_6": {
+      "trigger": "Phase 6 judge α < 0.6 on any dim across 3 judges.",
+      "action": "That dim demoted to descriptive-only via amendment; D1 still ships with remaining dims."
+    },
+    "branch_A_cost_overrun": {
+      "trigger": "80% of Phase 0 cost estimate consumed before sweep complete; observed_via: `eval/cost_tracker.py` (must be in audit_trail_files_to_pin and shipped Phase 5).",
+      "action": "Pause sweep; operator decision."
+    },
+    "branch_A_model_retired": {
+      "trigger": "API returns 404/410 on the dated model_id mid-sweep (Google retires variant).",
+      "action": "Hard abort. Amendment required to pin a successor variant; D1 result invalidated for that sweep run.",
+      "observed_via": "spawner retry-on-transient catches; cost_tracker logs 4xx codes."
+    },
+    "branch_A_subset_below_minimum": {
+      "trigger": "After Phase 3 dataset_prep + Docker pull validation, available instances <100 (out of 165 curated+holdout).",
+      "action": "HARD ABORT. No proceed-with-fewer logic. Amendment required to redefine subset; existing D1 prereg invalidated. Rationale: <100 instances loses statistical bite + introduces selection bias on 'instances that happen to have ARM Docker images'.",
+      "observed_via": "Phase 3 `eval.dataset_prep.validate_all_pullable()` returns set of unpullable IDs; len(curated+holdout) - len(unpullable) < 100 → abort."
+    }
+  },
+
+  "amendment_protocol": {
+    "policy": "Any methodology change after this prereg is FROZEN requires a documented amendment file at thoughts/shared/research/swebench-gemini-prereg-D1-v2.md (or v3, vN) with explicit diff vs frozen JSON. Amendments must cite the trigger event, the change, and the rationale.",
+    "operator_signoff_required": true,
+    "operator": "Jakub Sikora",
+    "inheritance_from": "iter3 prereg_freeze_commitment"
+  },
+
+  "cost_estimate_D1": {
+    "currency": "USD",
+    "as_of_date": "2026-05-08",
+    "source": "Google Cloud / Vertex AI public pricing for gemini-2.5-pro (archived to docs/gemini-pricing-2026-05-08.pdf in Phase 1)",
+    "input_price_per_mtok": 1.25,
+    "output_price_per_mtok": 10.00,
+    "cached_price_per_mtok": "TBD_phase_1 (Google offers cache discount; capture exact rate)",
+    "agent_tokens_per_cell_estimate": {
+      "input_uncached": 5000,
+      "input_cached": 50000,
+      "output": 2000,
+      "rationale": "SWE-bench multi-turn agent ~30 turns; repo context cached after turn 1."
+    },
+    "agent_cost_per_cell_estimate": "≈$0.05-0.15",
+    "judge_cost_per_cell_estimate": "≈$0.03 (vibe + qwen-coder + claude-sonnet-4-6)",
+    "total_estimate_D1_495_cells": "≈$50-90 agent + ≈$15 judge = $65-105 total D1 sweep",
+    "hard_cap_USD": 200,
+    "abort_at_USD": 160
+  },
+
+  "honest_meta_lessons_inherited_from_iter3": [
+    "L1: Reliability gates must precede SHA-pin.",
+    "L2: Kill-switches without documented amendment paths leave operators stuck.",
+    "L3: Infrastructure noise ≥ effect size invalidates inferential conclusions.",
+    "L4: 3-judge α is necessary but not sufficient — judges within the same family collapse to ~1 effective judge under correlation.",
+    "L5: Cost-of-change for rerun must equal cost-of-change for the failing cell, not for the entire sweep."
+  ],
+
+  "audit_trail_files_to_pin": [
+    "research-gemini-swebench-eval-scripts/eval/subset.py",
+    "research-gemini-swebench-eval-scripts/eval/dataset_prep.py",
+    "research-gemini-swebench-eval-scripts/eval/gemini_runner.py",
+    "research-gemini-swebench-eval-scripts/eval/agent_loop.py",
+    "research-gemini-swebench-eval-scripts/eval/patch_extractor.py",
+    "research-gemini-swebench-eval-scripts/eval/swebench_grader.py",
+    "research-gemini-swebench-eval-scripts/eval/judge_runner.py",
+    "research-gemini-swebench-eval-scripts/eval/aggregate.py",
+    "research-gemini-swebench-eval-scripts/eval/decision.py",
+    "research-gemini-swebench-eval-scripts/eval/reporter.py",
+    "research-gemini-swebench-eval-scripts/eval/freeze.py",
+    "research-gemini-swebench-eval-scripts/eval/prereg_validation.py",
+    "research-gemini-swebench-eval-scripts/eval/cost_tracker.py",
+    "research-gemini-swebench-eval-scripts/eval/setups.py",
+    "research-gemini-swebench-eval-scripts/eval/setup_b_guard.py",
+    "research-gemini-swebench-eval-scripts/eval/retry.py",
+    "research-gemini-swebench-eval-scripts/eval/parallel_runner.py",
+    "research-gemini-swebench-eval-scripts/eval/sweep.py",
+    "research-gemini-swebench-eval-scripts/vendor/subset_manifest.json",
+    "research-gemini-swebench-eval-scripts/vendor/SWEBENCH_PIN.txt",
+    "research-gemini-swebench-eval-scripts/scripts/run-d1-sweep.sh",
+    "research-gemini-swebench-eval-scripts/scripts/preflight-host.sh",
+    "research-gemini-swebench-eval-scripts/docs/jatinganhotra-subsets-2026-05-08.pdf",
+    "research-gemini-swebench-eval-scripts/docs/gemini-pricing-2026-05-08.pdf"
+  ],
+  "audit_trail_pinning_mechanism": "Phase 6/7 freeze records sha256 of each file at freeze time. Sweep validation step verifies live SHAs match frozen pins; aborts on mismatch.",
+
+  "open_questions": [
+    "gemini SDK cached_content_token_count reliability for our use pattern (resolved Phase 1).",
+    "SWE-bench Docker image ARM coverage (resolved Phase 1).",
+    "Linux x86 host provisioning (resolved by ops before Phase 5).",
+    "Subset manifest cross-check vs upstream experiments/ repo (resolved Phase 3).",
+    "swebench package vs upstream SHA divergence (resolved Phase 1)."
+  ]
+}
