@@ -1,0 +1,44 @@
+{
+  "name": "reasoning-core",
+  "description": "A System 2 sidecar for structural reasoning in LLM-based software development. Provides AST parsing, call graph analysis, and risk scoring for code changes.",
+  "version": "1.0.0",
+  "author": "Jakub Sikora",
+  "license": "MIT",
+  "homepage": "https://github.com/jakubkrzysztofsikora/reasoning-core",
+  "repository": "https://github.com/jakubkrzysztofsikora/reasoning-core",
+  "type": "http",
+  "endpoint": "127.0.0.1:8765",
+  "tools": [
+    {
+      "name": "gate_edit",
+      "description": "Gate edit operations based on structural analysis",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "before_src": {"type": "string"},
+          "after_src": {"type": "string"},
+          "session_id": {"type": "string"}
+        },
+        "required": ["path", "before_src", "after_src"]
+      }
+    },
+    {
+      "name": "get_health",
+      "description": "Get service health status",
+      "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+      "name": "list_languages",
+      "description": "List supported languages",
+      "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+      "name": "get_metrics",
+      "description": "Get service metrics",
+      "inputSchema": {"type": "object", "properties": {}}
+    }
+  ],
+  "tags": ["code-analysis", "llm", "system2", "structural-reasoning", "ast-parsing"],
+  "keywords": ["LLM", "code generation", "quality assurance", "Tree-sitter", "Mamba", "SSM"]
+}
