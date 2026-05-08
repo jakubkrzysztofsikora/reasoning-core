@@ -1,0 +1,39 @@
+%% APPENDIX B: EVALUATION PROTOCOL
+%% ============================================================================
+
+%% B.1 Pre-Registration
+
+The evaluation protocol was pre-registered in two documents:
+- iter3-prereg.json (commit 118e7a9): Original pre-registration
+- iter3-prereg-v2.md (commit 5c77aa9): Amendment lifting kill-switch branch A
+
+%% B.2 Pre-Registration Contents
+
+The pre-registration documents specify:
+- Tasks: 8 representative engineering tasks
+- Setups: A (vanilla) vs B (reasoning-core)
+- Runs: n=3 per cell
+- Total cells: 48
+- Judges: 3 cross-family models (Gemini, Vibe, Qwen-Coder)
+- Metrics: 7 inferential + 4 descriptive
+- Decision rule: Lexicographic (gates -> impl_q -> plan_q -> cost)
+
+%% B.3 Amendment Protocol
+
+The amendment protocol requires documented diff showing changes from original pre-registration with rationale and impact assessment.
+
+%% B.4 Evaluation Infrastructure
+
+16 worktrees created from Circit develop branch:
+circit-app-evals-{A,B}-{p0,t1,t2,t5,t7,t8,t9,e1}
+
+Each worktree is SHA-pinned to ensure reproducibility.
+
+%% B.5 Statistical Analysis
+
+Paired bootstrap with 95 percent confidence intervals for inferential metrics.
+Minimum Detectable Effect (MDE) for iter3-prereg-v2: approximately 0.07
+
+%% PLACEHOLDER: Add detailed statistical methodology
+%% PLACEHOLDER: Add power analysis
+%% PLACEHOLDER: Add multiple testing correction
