@@ -1,7 +1,7 @@
 # reasoning-core
 
-> **Stop AI coding agents from making architecturally bad changes** — by giving them a local
-> Mamba SSM that reasons about the *structure* of your codebase, not just the tokens.
+> **Stop the agent vibecoding files outside its plan**. Save your AI tokens. 100% locally.
+> Mamba SSM that reasons about the *structure* of your codebase, not treating it like a flat string.
 
 [![lint-and-test](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml/badge.svg)](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml)
 [![eval](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml/badge.svg)](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml)
@@ -37,9 +37,11 @@ untouched.
 
 ## Table of contents
 
+- [What you get out of the box](#what-you-get-out-of-the-box)
+  - [More details](#more-details)
+  - [Where it doesn't help ](#where-it-doesnt-help)
 - [Why this exists](#why-this-exists)
 - [The solution: System 1 + System 2](#the-solution-system-1--system-2)
-- [What you get out of the box](#what-you-get-out-of-the-box)
 - [Run it locally (6 steps, no global side-effects)](#run-it-locally-6-steps-no-global-side-effects)
 - [How it works under the hood](#how-it-works-under-the-hood)
 - [Hook layers](#hook-layers)
@@ -58,6 +60,42 @@ untouched.
 - [Contributing](#contributing)
 - [Acknowledgements + License](#acknowledgements--license)
 
+---
+
+## What you get out of the box
+
+- **Up to ~29% fewer tokens per task.** On the PR-review task in our 8-task eval, the sidecar pulled 724k cache-read tokens vs 1.02M for vanilla Claude Code — a 29% saving on that single task. Auth-abandonment task came in at 27% lower. At Anthropic's public cache-read price ($0.30/MTok), if you save ~300k cache-read tokens per task that's ~$0.09/task. 100 tasks/month ≈ $9 saved. 1,000 ≈ $90. 10,000 ≈ $900. Benchmark tests averaged across all 8 tasks saved 8.2%, while being more token-effecient on every task.
+
+- **The agent doesn't go vibecoding off-plan or inventing patterns your repo already has.** Two measured wins drive this: the agent stays inside the files it promised to touch (+0.23 on a 1–5 scale, 4.09 → 4.31), and plans use your repo's existing helpers and naming conventions instead of inventing fresh ones (+0.43, 3.71 → 4.14). In practice: less PR-review thrash, less rework, fewer "no, use the existing util" loops with the  agent.                                                          
+
+- **Plans you don't have to keep reviewing and amending.** Plan quality went from 3.62 → 3.94 on the same 1–5 scale. You get a structured, sound plan on the first run.
+                                                                                                                                                
+- **Privacy: 100% local, your code stays on your laptop.** The scoring model (130M params, ~200MB RAM) and all the planning/grounding hooks run next to your `claude` CLI process. Nothing extra leaves your machine compared to plain `claude` — no telemetry, no cloud relay, no third-party service inspecting your diffs. Your code is processed exactly where it was already going (Anthropic) and nowhere else.    
+
+### More details
+
+8 real engineering tasks. 3 runs each. 2 setups (vanilla `claude` vs `claude` + sidecar). 3 independent reviewer models from 3 different vendors graded every plan and every implementation, blind.
+                                                                                                                                                  
+  | | Vanilla `claude` | `claude` + sidecar |  |                                                                                      
+  |---|---|---|---|
+  | Tasks passed (locked tests) | 92% | 100% |                                  
+  | Tasks passed (rotated tests) | 90% | 100% |                                                                                            
+  | Plan quality (1–5) | 3.62 | 3.94 | +0.32 |
+  | Implementation quality (1–5) | 3.80 | 4.00 | +0.20 |                                                                                          
+  | Stays inside promised files (1–5) | 4.09 | 4.31 | Agent goes off-plan less often |
+  | Uses your repo's existing patterns (1–5) | 3.71 | 4.14 | Fewer invented helpers / new conventions |                                           
+  | Code legibility (1–5) | 4.26 | 4.26 | Tied — sidecar doesn't help here |                                                                      
+  | Total tokens used | 23.1M | 21.2M | −8.2% averaged across all 8 tasks |                                                                       
+  | Best single-task token saving | — | −29% (PR review) | Up to ~29% on cache-heavy tasks |                                                      
+  | Wall-clock per run | 547s | 645s | +98s slower — sidecar plans before it edits |
+  | Where your code is processed | Anthropic only | Anthropic only + your laptop | Nothing new leaves your machine |  
+
+### Where it doesn't help                                                                                                                        
+                                                                                                                                                  
+- **It costs you ~98 seconds per run.** The sidecar plans before the agent edits. If you live or die by raw turnaround, vanilla `claude` is faster.
+- **Code legibility was a tie.** Both setups produce equally readable code. **The sidecar doesn't make your code prettier** — it makes the agent comply with your standards and stay on-plan.                                                   
+- **Eval was 1 codebase, 8 tasks.** Numbers may shift on yours.     
+  
 ---
 
 ## Why this exists
@@ -187,78 +225,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the deep-dive and
 
 ---
 
-## What you get out of the box
-
-### Core scoring
-
-- ✅ **Real Mamba-130M weights** — `state-spaces/mamba-130m-hf` via `transformers.AutoModel`,
-  not a hash mock. Deterministic forward (`model.eval()` + `torch.no_grad()` + seeded).
-- ✅ **12 Tree-sitter languages** — Python, JS, TS, C#, SQL + 7 data languages (Markdown,
-  JSON, YAML, CSS, SCSS, HTML, Dockerfile). Vue routes through HTML grammar.
-- ✅ **Per-file-kind threshold dispatch** — `source_code` / `test_code` / `plan_md` /
-  `doc_md` / `config` each get tuned `coherence_delta`, `AIS`, and per-dim ceiling.
-- ✅ **Cold-start aware** — new-file Writes (empty `before_src`) don't trip absolute-state
-  saturation; structural risk dims zero out and only `novelty` polices content.
-- ✅ **Delta-semantics risk vector** — fan_in/fan_out/depth/coupling/cohesion measure the
-  *change*, not the file's absolute complexity.
-- ✅ **OOD detector + golden set** — calibration corpus + Mahalanobis distance over the
-  8-dim risk space; out-of-distribution edits surface in the audit log.
-- ✅ **Calibration pipeline** — `src/calibration.py` + `eval/recalibrate.py` recompute
-  per-kind thresholds from labeled history (Page-Hinkley monthly cadence).
-
-### Hook surface
-
-- ✅ **9-hook coverage** — Edit/Write, Plan, Bash, Task subagent, PreCompact, post-bash
-  revive, post-batch language audit, SessionStart manifest, session-resume re-inject.
-  Wired in [`.claude/settings.json`](.claude/settings.json).
-- ✅ **Structured repair hints** — every block lists top-3 risk contributors with per-dim
-  hints + retry-detection banner when Claude tries the same write twice.
-- ✅ **Mock-detector heuristics** — flags placeholder code (`pass`, `NotImplementedError`,
-  TODO bodies, suspicious return-zero) at gate time. Default-on via `RC_MOCK_DETECTOR=1`.
-- ✅ **Plan-quality gate (CGS)** — plan-time scoring of section drift, kNN novelty, and
-  plan→implementation coherence. Behind `RC_PLAN_QUALITY=1`.
-- ✅ **Language fingerprint lock** — `RC_LANG_LOCK=1` rejects edits introducing a
-  language not present in the project's existing fingerprint. PostToolUse audit tracks
-  drift after the fact.
-- ✅ **Generative repair head** — Qwen2.5-Coder-1.5B via MLX (Apple) / Scaleway (CI)
-  selected by `RC_REASONER_BACKEND`, budgeted by `RC_GEN_BUDGET_MS`. Started via
-  `scripts/start-gen-sidecar.sh`.
-- ✅ **Stdlib-only hook runtime** — survives broken venvs (`urllib.request` only).
-
-### Operations & ergonomics
-
-- ✅ **Repo-scoped via direnv** — env, hooks, MCP servers active *only* in this folder.
-- ✅ **Shadow mode by default** — `RC_SHADOW_MODE=1` logs every decision without
-  enforcing. Flip to `0` once calibrated on your codebase.
-- ✅ **Magic-comment escapes + kill-switches** — single-shot bypass via `# rc:bypass-next`
-  magic comment; session-wide off via `RC_BYPASS_NEXT=1`. Captured at session boot so
-  they cannot be edited mid-session.
-- ✅ **`rc` CLI shim** — `bin/rc` exposes operator commands
-  (`rc status`, `rc explain`, `rc bypass-next`, `rc skip-file`, `rc unskip-file`).
-- ✅ **launchd KeepAlive supervisor (macOS)** —
-  `scripts/install-supervisor-launchagent.sh` drops
-  `launchd/com.reasoning-core.supervisor.plist`; sidecar restarts on crash and on login.
-- ✅ **MCP-native bridge** — any MCP client (Claude Code, Claude Desktop, custom) can call
-  `reason_over_edit`.
-- ✅ **Structured audit log** — `~/.local/share/reasoning-core/events/<date>/<session>.jsonl`
-  per decision (override with `RC_AUDIT_ROOT`); rotation pruned by
-  `RC_AUDIT_RETENTION_DAYS` on session start.
-- ✅ **Grounding eval harness** — two datasets ship: v1
-  (`eval/datasets/grounding_pairs.jsonl`, 200 pairs git-mined) and v2
-  (`eval/datasets/grounding_pairs_v2.jsonl`, 138 pairs, devstral-123b
-  judge-relabeled high-confidence subset; `4ed3245`). `eval/qwen_grounding_eval.py`
-  computes Cohen κ; current sentinel target is `RC_QWEN_KAPPA_SENTINEL=0.7`.
-  Live measurement on v2 is **κ=0.74** but contaminated by kin-judge
-  family (relabeling judge and held-out test model are both coder-LLMs);
-  the gate runs **advisory** until a v3 cross-family dataset is built
-  (Phase 3.5 of [`2026-05-06-system-2-loop-closure.md`](thoughts/shared/plans/2026-05-06-system-2-loop-closure.md)).
-
----
-
 ## Run it locally (6 steps, no global side-effects)
 
-The recommended setup is **repo-scoped**: leaves every other repo and Claude session
-untouched. Promote to global only after you're convinced it earns its keep.
+The recommended setup is **repo-scoped**: leaves every other repo and Claude session untouched. Promote to global only after you're convinced it earns its keep.
 
 ### 1. Clone + venv
 
