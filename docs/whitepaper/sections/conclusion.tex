@@ -1,0 +1,25 @@
+%% 10. CONCLUSION
+%% ============================================================================
+
+We have presented reasoning-core, a System 2 sidecar that addresses the structural blind spot in LLM-based software development. By combining Tree-sitter parsing for AST and call graph extraction with a Mamba SSM backbone for semantic embedding, our system provides structural reasoning capabilities that complement the linguistic strengths of LLMs.
+
+Across a comprehensive evaluation with 48 runs across 8 real-world engineering tasks, we demonstrated that reasoning-core:
+
+\begin{itemize}
+    \item Improves plan quality by +0.32 (3.62 to 3.94 on 1-5 BARS scale)
+    \item Improves implementation quality by +0.20 (3.80 to 4.00)
+    \item Reduces token usage by 8.2 percent on average (up to 29 percent on cache-heavy tasks)
+    \item Achieves 100 percent pass rates on locked and rotated tests (vs 92 percent/90 percent for vanilla)
+    \item Reduces off-plan edits, improving diff discipline by +0.23
+    \item Better adheres to existing repository patterns (+0.43)
+\end{itemize}
+
+The system operates 100 percent locally with no external telemetry, addressing privacy concerns that have limited adoption of cloud-based code analysis tools. While the sidecar adds approximately 98 seconds per run, it prevents costly regression loops and off-plan edits, resulting in net time and cost savings in practice.
+
+Our evaluation methodology represents a significant contribution in its own right, demonstrating the importance of pre-registration, kill-switches with documented amendment paths, and rigorous infrastructure for reliable evaluation.
+
+The results support our hypothesis that hybrid System 1 + System 2 architectures will be the durable solution for LLM-based software development. LLMs excel at linguistic tasks, but specialized components are needed for structural reasoning.
+
+%% PLACEHOLDER: Add summary of contributions
+%% PLACEHOLDER: Add impact statement
+%% PLACEHOLDER: Add call to action for the research community
