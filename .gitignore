@@ -32,3 +32,4 @@ node_modules/
 eval/runs/*.partial.jsonl
 eval/datasets/*.judge.jsonl
 eval/calibrated/
+.gemini/settings.json
