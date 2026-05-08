@@ -1,0 +1,90 @@
+%% 3. ARCHITECTURE OVERVIEW
+%% ============================================================================
+
+%% 3.1 System 1 + System 2 Architecture
+
+Inspired by Kahnemans dual-process theory, we adopt a System 1 + System 2 architecture:
+
+\begin{description}
+    \item[System 1] Fast, linguistic, intuitive processing performed by the LLM coding agent
+    \item[System 2] Slow, structural, deliberate processing performed by our reasoning-core sidecar
+\end{description}
+
+The architecture is designed such that:
+
+\begin{itemize}
+    \item System 1 (the LLM) handles token-level pattern completion and natural language understanding
+    \item System 2 (our sidecar) handles structural analysis, regression detection, and quality gating
+    \item The LLM defers structural decisions to the specialist (System 2)
+    \item System 2 can veto or modify System 1s proposals based on structural analysis
+\end{itemize}
+
+%% 3.2 Component Overview
+
+The reasoning-core system consists of several key components:
+
+\begin{itemize}
+    \item SIDECAR SERVICE (src/s2_core.py): FastAPI HTTP service running on 127.0.0.1:8765
+    \item HOOK LAYER (src/hooks/): Pre- and post-tool use hooks for various CLI agents
+    \item SCORING ENGINE: Tree-sitter AST parser + Mamba SSM embeddings + risk vector computation
+    \item SUPERVISOR (src/sidecar_supervisor.py): Process manager ensuring sidecar reliability
+    \item EVALUATION HARNESS (eval/): Comprehensive testing and calibration framework
+\end{itemize}
+
+%% 3.3 Sidecar Service
+
+The sidecar is a long-lived FastAPI process that provides the following HTTP endpoints:
+
+\begin{table*}[t]
+    \centering
+    \caption{Sidecar HTTP API Endpoints}
+    \label{tab:api_endpoints}
+    \begin{tabular}{lllp{8cm}}
+        \toprule
+        Method & Endpoint & Input & Description \\\n        \midrule
+        GET & /health & - & Returns service status, model loaded state, supported languages \\\n        POST & /score & JSON: path, before_src, after_src, session_id & Computes impact report for a proposed edit \\\n        GET & /metrics & - & Returns service metrics (latency percentiles, error counts) \\\n        POST & /baseline & JSON: session_id, files & Establishes session baseline for drift detection \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 3.4 Public API
+
+The sidecar exposes the following public API functions (consumed by hooks and MCP reasoner):
+
+\begin{itemize}
+    \item parse_source(path, src) -> ParseResult: Parse source code using Tree-sitter
+    \item build_call_graph(tree, src, language) -> dict: Build call graph from AST
+    \item score_change(path, before_src, after_src) -> ImpactReport: Compute impact report
+    \item select_grammar(path) -> (language_id, parser): Select appropriate Tree-sitter grammar
+\end{itemize}
+
+%% 3.5 Hook Layer
+
+The hook layer intercepts LLM agent actions before they affect the codebase. We implement 9 hook layers (L1-L9) as shown in Table \ref{tab:hook_layers}.
+
+\begin{table*}[t]
+    \centering
+    \caption{Hook Layers and Their Purposes}
+    \label{tab:hook_layers}
+    \begin{tabular}{cllp{7cm}}
+        \toprule
+        Layer & Hook & Event/Matcher & Purpose \\\n        \midrule
+        L1 & pre_bash_guard.py & PreToolUse / Bash & Blocks shell-level source writes, kills against sidecar, env tampering \\\n        L2 & pre_edit_guard.py & PreToolUse / Edit|Write|MultiEdit & SSM scoring; per-kind threshold dispatch; mock detector; OOD detector \\\n        L3 & pre_plan_guard.py & PreToolUse / Write (plans/**.md) & Plan-time heuristics + plan-quality CGS \\\n        L4 & pre_task_guard.py & PreToolUse / Task & Regex screen on subagent prompts mentioning guarded paths \\\n        L5 & post_bash_revive.py & PostToolUse / Bash & Re-spawns sidecar when /health stops responding \\\n        L6 & post_batch_lang_audit.py & PostToolUse / Edit|Write|MultiEdit & Language-fingerprint audit \\\n        L7 & pre_compact_guard.py & PreCompact & Captures pre-compaction state \\\n        L8 & session_start_manifest.py & SessionStart & Snapshots RC_* env, repo SHA, language fingerprint \\\n        L9 & session_resume_inject.py & SessionStart + UserPromptSubmit & Re-injects pinned env from prior session \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 3.6 Multi-CLI Support
+
+reasoning-core supports multiple LLM CLI agents through adapter layers:
+
+\begin{itemize}
+    \item CLAUDE CODE: Native hook support via .claude/settings.json
+    \item GEMINI CLI: Claude-compatible hook surface via gemini hooks migrate
+    \item GITHUB COPILOT CLI: MCP tool-based gating via gate_edit MCP tool
+    \item MISTRAL VIBE CLI: Post-turn hook + MCP tool gating
+\end{itemize}
+
+Each CLI has per-host install scripts that configure the appropriate hooks and environment variables.
+
+%% PLACEHOLDER: Add detailed architecture diagram description
+%% PLACEHOLDER: Add data flow diagrams
+%% PLACEHOLDER: Add failure mode analysis
