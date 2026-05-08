@@ -1,0 +1,68 @@
+%% 2. RELATED WORK
+%% ============================================================================
+
+%% 2.1 LLM-Based Code Generation
+
+The field of LLM-based code generation has seen rapid advancement. GitHub Copilot demonstrated the commercial viability of AI-assisted coding, while subsequent research has focused on improving code quality, reducing hallucinations, and integrating with development workflows.
+
+Recent work has explored the use of larger context windows to enable whole-repository reasoning. However, as noted by Liu et al. (2024), long context alone does not solve the structural reasoning problem - the model still lacks explicit representations of code structure.
+
+%% 2.2 Structural Analysis in Software Engineering
+
+Traditional software engineering tools have long used structural analysis for quality assurance:
+
+\begin{itemize}
+    \item STATIC ANALYSIS: Tools like SonarQube, PMD, and Checkstyle analyze ASTs to detect code smells and anti-patterns.
+    \item TYPE SYSTEMS: Modern type systems (TypeScript, Python type hints, Rust) catch errors at compile time by understanding code structure.
+    \item LINTERS: ESLint, Pylint, and similar tools enforce coding standards using AST traversal.
+\end{itemize}
+
+%% 2.3 Code Representation Learning
+
+Learning representations of code structure has been an active research area:
+
+\begin{itemize}
+    \item CODEBERT (Feng et al., 2020): A pre-trained model for programming and natural languages using a multi-modal transformer architecture.
+    \item GRAPHCODEBERT (Guo et al., 2020): Incorporates data flow into pre-training for better code understanding.
+    \item CODE2VEC (Alon & Shalev, 2019): Learns distributed representations of code using AST paths.
+    \item PLBART (Ahmad et al., 2021): A pre-trained model for program and natural language that can handle code generation and understanding.
+\end{itemize}
+
+%% 2.4 Hybrid LLM-Specialist Architectures
+
+Our work builds on the emerging paradigm of hybrid architectures:
+
+\begin{itemize}
+    \item TOOL-USING AGENTS: Systems that call external tools for specific tasks (Schick et al., 2023; Qin et al., 2023).
+    \item MIXTURE OF EXPERTS: Models that route different types of problems to specialized sub-models (Shazeer et al., 2017; Fedus et al., 2021).
+    \item RETRIEVAL-AUGMENTED GENERATION: Systems that retrieve relevant information to augment LLM outputs (Lewis et al., 2020; Guu et al., 2020).
+\end{itemize}
+
+%% 2.5 State Space Models for Code
+
+State Space Models (SSMs) have gained attention for their efficiency and theoretical properties:
+
+\begin{itemize}
+    \item MAMBA (Gu & Goel, 2023): A selective SSM that achieves linear scaling with respect to sequence length while maintaining competitive performance with Transformers.
+    \item MAMBA-2 (Gu et al., 2024): Improves upon the original Mamba architecture with better performance and efficiency.
+    \item APPLICATIONS TO CODE: Recent work has explored using SSMs for code tasks due to their efficiency and ability to handle long sequences.
+\end{itemize}
+
+Our work is the first to combine SSM-based embeddings with structural analysis for real-time code quality gating in LLM-based development workflows.
+
+%% 2.6 Evaluation of Code Generation
+
+Evaluating code generation systems presents unique challenges:
+
+\begin{itemize}
+    \item HUMANEVAL (Chen et al., 2021): A benchmark for evaluating functional correctness of code generation.
+    \item MBPP (Austin et al., 2021): A benchmark with 1,000 Python problems for assessing code generation.
+    \item SWE-BENCH (Jin et al., 2024): A benchmark for evaluating LLMs on real-world software engineering tasks.
+    \item AGENTBENCH (Liu et al., 2023): A comprehensive benchmark for LLM-based agents.
+\end{itemize}
+
+Our evaluation methodology extends these approaches by incorporating structural quality metrics and multi-judge cross-family assessment.
+
+%% PLACEHOLDER: Add comparison to specific papers on LLM code review
+%% PLACEHOLDER: Add discussion of concurrent work
+%% PLACEHOLDER: Add positioning relative to commercial products
