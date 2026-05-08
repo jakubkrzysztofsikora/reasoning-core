@@ -1,0 +1,41 @@
+%% APPENDIX A: TECHNICAL SPECIFICATIONS
+%% ============================================================================
+
+%% A.1 System Requirements
+
+\begin{table*}[t]
+    \centering
+    \caption{System Requirements}
+    \label{tab:sys_reqs}
+    \begin{tabular}{ll}
+        \toprule
+        Component & Requirement \\\n        \midrule
+        Python version & 3.11+ \\\n        Disk space & ~250MB for Mamba checkpoint \\\n        Memory (RAM) & ~200MB for model inference \\\n        CPU & Modern x86_64 or ARM64 processor \\\n        Operating System & macOS, Linux, Windows (WSL) \\\n        Network & Internet access for initial model download \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% A.2 Supported Languages
+
+Current supported languages via Tree-sitter grammars:
+Python, JavaScript, TypeScript, Java, Go, Rust, C/C++, Ruby, PHP, Swift, Kotlin, Scala, Bash, YAML, JSON, TOML, Markdown
+
+%% A.3 Performance Characteristics
+
+\begin{table*}[t]
+    \centering
+    \caption{Performance Characteristics}
+    \label{tab:performance}
+    \begin{tabular}{ll}
+        \toprule
+        Metric & Value \\\n        \midrule
+        Model parameters & 130M \\\n        Hidden size & 768 \\\n        Model size on disk & ~250MB \\\n        Memory usage (inference) & ~200MB \\\n        Average /score latency (CPU) & ~5s (p95) \\\n        Startup time (cold) & ~30s (includes model loading) \\\n        Startup time (warm) & ~1s \\\n        Throughput & ~12 requests/minute (CPU) \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% A.4 API Specification
+
+Endpoints: GET /health, POST /score, GET /metrics, POST /baseline
+
+%% PLACEHOLDER: Add detailed technical specifications
+%% PLACEHOLDER: Add benchmark results
+%% PLACEHOLDER: Add scalability analysis
