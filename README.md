@@ -27,6 +27,8 @@ export PATH="$PWD/bin:$PATH"                     # `rc` admin shim
 claude   # every Edit/Write Claude proposes is now scored before it lands
 ```
 
+Also works headless on **Gemini CLI**, **GitHub Copilot CLI**, and **Mistral Vibe CLI** — same sidecar, per-host install scripts ([§5c–5e](#5c-enable-for-gemini-cli)).
+
 After that, every change Claude proposes goes through a structural-regression scorer.
 The gate ships in **shadow mode** by default (`RC_SHADOW_MODE=1`) — decisions are logged
 to the audit trail without enforcing, so you can observe what *would* be blocked on your
@@ -43,6 +45,7 @@ untouched.
 - [Why this exists](#why-this-exists)
 - [The solution: System 1 + System 2](#the-solution-system-1--system-2)
 - [Run it locally (6 steps, no global side-effects)](#run-it-locally-6-steps-no-global-side-effects)
+- [Multi-CLI support — Gemini / Copilot / Vibe](#5c-enable-for-gemini-cli)
 - [How it works under the hood](#how-it-works-under-the-hood)
 - [Hook layers](#hook-layers)
 - [CLI](#cli)
@@ -318,6 +321,46 @@ it only writes inside the cwd — nothing global is touched. Iter-3 levers
 `.envrc`; uncomment + `direnv reload` to opt in.
 
 To revert: delete `.envrc` and `.claude/settings.local.json` from the repo.
+
+### 5c. Enable for Gemini CLI
+
+`gemini hooks migrate` makes Gemini's hook surface Claude-compatible by design. The same sidecar + adapter layer serves Gemini agents transparently — only the config file path differs.
+
+```bash
+export RC_REPO=$HOME/Repos/personal/reasoning-core
+bash $RC_REPO/scripts/enable-in-repo-gemini.sh        # writes .gemini/settings.json + .gemini/skills/
+direnv allow .
+gemini --yolo "say hi"                                # --yolo bypasses MCP trust prompt
+```
+
+The install script renders `.gemini/settings.json.template` with `<RC_REPO>` substituted to an absolute path (per-machine; gitignored). The template ships event names that Claude already uses (`PreToolUse`, `PostToolUse`, `SessionStart`, `UserPromptSubmit`, `PreCompact`) — no rename table.
+
+Verified against `gemini` v0.37.1.
+
+### 5d. Enable for GitHub Copilot CLI
+
+GitHub Copilot CLI v1.0.29 has **no hook subcommand** — runtime gating is the `gate_edit` MCP tool only, enforced by `.copilot/copilot-instructions.md` (always loaded). Post-turn audit retroactively flags missed calls (see `eval/reconcile_session.py`).
+
+```bash
+export RC_REPO=$HOME/Repos/personal/reasoning-core
+bash $RC_REPO/scripts/enable-in-repo-copilot.sh       # merges hybrid-reasoner into ~/.copilot/mcp-config.json
+copilot --allow-all-tools "say hi"                    # or env COPILOT_ALLOW_ALL=1
+```
+
+The script preserves any existing user MCP servers via atomic temp-rename with a timestamped backup. Tier-2 caveat: under context pressure the agent will sometimes skip `gate_edit` — for mission-critical work prefer Claude or Gemini, where the gate is a runtime hook.
+
+### 5e. Enable for Mistral Vibe CLI
+
+Vibe v2.9.4 ships only a `post-agent-turn` hook today. Like Copilot, the runtime gate is `gate_edit` MCP; instructions live in `.vibe/AGENTS.md` (Vibe-scoped, NOT repo-root, to avoid double-scoring on hosts that also read `AGENTS.md`).
+
+```bash
+export RC_REPO=$HOME/Repos/personal/reasoning-core
+bash $RC_REPO/scripts/enable-in-repo-vibe.sh          # writes .vibe/config.toml + AGENTS.md, registers in trusted_folders
+direnv allow .
+vibe --prompt "say hi" --trust                        # --trust skips per-invocation trust prompt
+```
+
+For more on per-host gaps and the production caveats (tier-2 vs tier-1 gating, `flock`-on-macOS, `direnv allow` requirement, MCP startup races), see [`docs/CLI_PARITY.md`](docs/CLI_PARITY.md).
 
 ### 6. (Optional) Promote globally — one path, every project
 
