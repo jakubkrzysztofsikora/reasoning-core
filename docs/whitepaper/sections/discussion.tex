@@ -1,0 +1,59 @@
+%% 8. DISCUSSION
+%% ============================================================================
+
+%% 8.1 Key Findings
+
+Our evaluation demonstrates that reasoning-core successfully addresses the structural blind spot in LLM-based software development. The key findings are:
+
+\begin{itemize}
+    \item PLAN QUALITY IMPROVEMENT: The sidecars planning hooks produce plans that are better aligned with existing repository conventions (+0.32 on plan quality, +0.43 on repo_fit). This is the most significant improvement, indicating that the System 2 architecture effectively complements System 1s linguistic strengths with structural awareness.
+    \item AGENTS STAY ON TRACK: The system significantly reduces off-plan edits (+0.23 on diff_discipline), meaning agents are more likely to stay within the files they promised to touch.
+    \item TOKEN EFFICIENCY: Despite adding computational overhead (~98 seconds per run), the system reduces total token usage by 8.2 percent on average, with up to 29 percent savings on cache-heavy tasks.
+    \item CORRECTNESS IMPROVEMENTS: The system achieves 100 percent pass rates on both locked and rotated tests (vs 92 percent/90 percent for vanilla Claude Code).
+    \item LOCAL OPERATION: The entire system runs locally with no external telemetry, addressing privacy concerns.
+\end{itemize}
+
+%% 8.2 Performance Trade-offs
+
+The system introduces a performance trade-off:
+
+\begin{itemize}
+    \item ADDITIONAL LATENCY: The sidecar adds approximately 98 seconds per run due to structural analysis overhead.
+    \item MEMORY USAGE: The Mamba-130M model requires ~200MB RAM.
+    \item CPU USAGE: The system uses CPU for inference.
+\end{itemize}
+
+These costs are offset by:
+\begin{itemize}
+    \item REDUCED TOKEN COSTS: 8.2 percent average token savings.
+    \item FEWER REGRESSION LOOPS: Preventing off-plan edits reduces manual intervention.
+    \item IMPROVED QUALITY: Better code that requires less review and revision.
+\end{itemize}
+
+%% 8.3 Why This Works
+
+The success of reasoning-core can be attributed to several design decisions:
+
+\begin{itemize}
+    \item HYBRID ARCHITECTURE: Combining System 1 (LLM) and System 2 (structural specialist)
+    \item LIGHTWEIGHT SPECIALIST: Mamba-130M is small enough to run locally
+    \item TREE-SITTER PARSING: Using a proven, fast parser for AST extraction
+    \item PER-FILE-KIND THRESHOLDS: Different file types have different acceptable risk profiles
+    \item COLD-START HANDLING: New files are handled gracefully
+    \item SHADOW MODE: Allows safe observation before enforcement
+\end{itemize}
+
+%% 8.4 Comparison to Alternative Approaches
+
+\begin{description}
+    \item[PURE LLM SCALING] Increasing model size and context window does not address the structural blind spot.
+    \item[TOOL-USING AGENTS] Agents that call external tools can catch some structural issues, but these calls are stateless.
+    \item[RETRIEVAL-AUGMENTED GENERATION] RAG can provide relevant context, but does not inherently understand code structure.
+    \item[FINE-TUNED MODELS] Domain-specific fine-tuning can improve code understanding, but requires significant resources.
+\end{description}
+
+Our hybrid approach combines the strengths of these approaches while addressing their limitations.
+
+%% PLACEHOLDER: Add comparison to specific alternative systems
+%% PLACEHOLDER: Add discussion of theoretical implications
+%% PLACEHOLDER: Add implications for AI safety and alignment
