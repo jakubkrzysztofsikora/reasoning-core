@@ -1,0 +1,22 @@
+%% ABSTRACT
+%% ============================================================================
+
+Large Language Models (LLMs) have demonstrated remarkable capabilities in token-level pattern completion, matching or exceeding mid-level engineers on bounded coding tasks. However, when deployed in large codebases (50k+ lines of code), their quality collapses due to a fundamental structural blind spot: LLMs reason over token streams without access to the AST, call graph, or embedding manifold of the repository as a whole. This leads to failures in maintaining architectural invariants, understanding cross-file consequences, preserving cyclomatic complexity boundaries, and maintaining coherence with existing project conventions.
+
+We present reasoning-core, a System 2 sidecar that augments LLM-based coding agents with structural reasoning capabilities. Our approach combines Tree-sitter parsing for AST and call graph extraction with a Mamba State Space Model (SSM) backbone (130M parameters) for semantic embedding. The sidecar computes an 8-dimensional risk vector capturing cyclomatic complexity, fan-in/out, depth, churn, coupling, cohesion, and novelty deltas between pre- and post-edit states.
+
+Across 8 real-world engineering tasks with 48 total runs (n=3 per task x setup), our evaluation shows that the reasoning-core sidecar achieves:
+
+- Up to 29 percent reduction in token usage on cache-heavy tasks (29 percent on PR review, 27 percent on auth-abandonment)
+- 8.2 percent average token savings across all tasks while maintaining or improving quality
+- +0.32 improvement in plan quality (3.62 to 3.94 on 1-5 BARS scale)
+- +0.20 improvement in implementation quality (3.80 to 4.00)
+- 100 percent pass rate on locked and rotated tests (vs 92 percent/90 percent for vanilla Claude Code)
+- Agents stay inside promised files more often (+0.23, 4.09 to 4.31)
+- Better adherence to existing repo patterns (+0.43, 3.71 to 4.14)
+
+The system operates 100 percent locally with no external telemetry, processing code entirely on the developers machine. While the sidecar adds approximately 98 seconds per run, it prevents costly regression loops and off-plan edits, resulting in net time savings in practice.
+
+%% PLACEHOLDER: Add statistical significance results from iter-3 evaluation
+%% PLACEHOLDER: Add comparison to other state-of-the-art approaches
+%% PLACEHOLDER: Add theoretical contributions summary
