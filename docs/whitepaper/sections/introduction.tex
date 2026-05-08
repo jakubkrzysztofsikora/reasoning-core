@@ -1,0 +1,61 @@
+%% 1. INTRODUCTION
+%% ============================================================================
+
+%% 1.1 The Promise and Limitations of LLMs in Software Engineering
+
+Large Language Models have transformed software development by providing extraordinary capabilities in token-level pattern completion. Given a function signature and docstring, frontier models can generate plausible implementations. Presented with a stack trace, they can suggest fixes. Provided with a dataset and goal, they can produce boilerplate code. In bounded contexts where the answer requires a local rewrite, LLMs match or exceed mid-level human engineers.
+
+However, this capability does not scale to large codebases. When the same models are deployed in repositories with 50,000+ lines of code, quality collapses. The fundamental issue is a STRUCTURAL BLIND SPOT: LLMs reason over token streams without understanding the underlying structure of the codebase.
+
+%% 1.2 Where LLMs Fail in Large Codebases
+
+Our analysis identifies six critical failure modes:
+
+\begin{description}
+    \item[Architectural Invariants] Does an edit preserve layer boundaries? The model has no concept of layer - only tokens.
+    \item[Cross-file Consequences] A one-line edit may affect 30 callers across the codebase; the model only sees one file at a time.
+    \item[Cyclomatic Complexity] Adding a 4th conditional to an already 8-branch function makes it untestable; the model sees another if statement.
+    \item[Coupling Drift] Each new import moves a module further from single responsibility with no penalty in the loss function.
+    \item[Coherence] A new helper introducing different idioms from the codebase is novel, but novelty can be a bug rather than a feature.
+    \item[Plan-Implementation Alignment] Plans promising 4 phases may only deliver 2; plans specifying file A may also rewrite files B and C. The model does not audit itself.
+\end{description}
+
+%% 1.3 The Structural Blind Spot
+
+LLMs lack persistent representations of code structure. While long-context windows (1M+ tokens) help, the model must still infer structure from tokens at every inference step. Reasoning over structure requires different computation: graph diffs, embedding distances, dimensionality analysis. LLMs are not optimized for these operations and perform poorly compared to small specialist models.
+
+%% 1.4 Will Scaling Fix It?
+
+Evidence from 2024-25 long-context literature suggests PROBABLY NOT, at least not soon:
+
+\begin{itemize}
+    \item COMPUTE SCALING: Long-context studies show degraded consistent cross-document reasoning even at 1M+ tokens. The bottleneck is architectural, not budget.
+    \item TOOL SCALING: Agents calling structural tools (linters, type checkers, AST search) outperform those that do not. However, tool calls are stateless per question and do not accumulate repo-level reasoning.
+    \item SPECIALIZED MODELS: Small models trained for code structure (CodeBERT-style retrievers, code-aware embedders) consistently outperform much larger general models on code-similarity tasks.
+\end{itemize}
+
+The forecast: LLMs will continue improving at linguistic tasks (intent decoding, emission, prose) but will not spontaneously develop reliable structural reasoning. HYBRID SYSTEMS where the LLM defers structural decisions to a specialist will be the durable architecture.
+
+%% 1.5 Our Contribution
+
+We present reasoning-core, a hybrid System 1 + System 2 architecture that addresses the structural blind spot:
+
+\begin{itemize}
+    \item SYSTEM 1 (Fast, linguistic, intuitive): The LLM coding agent (Claude Code, Gemini CLI, etc.)
+    \item SYSTEM 2 (Slow, structural, deliberate): A sidecar service that analyzes code structure using Tree-sitter AST parsing and Mamba SSM embeddings
+\end{itemize}
+
+Our contribution includes:
+
+\begin{itemize}
+    \item An 8-dimensional risk vector for structural regression detection
+    \item Per-file-kind thresholding (source, test, plan, documentation)
+    \item Cold-start handling for new files
+    \item Shadow mode for safe observation before enforcement
+    \item Multi-CLI support (Claude Code, Gemini CLI, GitHub Copilot CLI, Mistral Vibe CLI)
+    \item Comprehensive evaluation methodology with 3 cross-family judges
+\end{itemize}
+
+%% PLACEHOLDER: Add formal problem definition
+%% PLACEHOLDER: Add research questions
+%% PLACEHOLDER: Add paper organization overview
