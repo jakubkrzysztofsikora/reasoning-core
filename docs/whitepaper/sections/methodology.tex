@@ -1,0 +1,52 @@
+%% 6. EVALUATION METHODOLOGY
+%% ============================================================================
+
+%% 6.1 Overview
+
+We conducted a comprehensive evaluation comparing vanilla Claude Code (Setup A) against Claude Code with reasoning-core sidecar (Setup B) across 8 real-world engineering tasks. The evaluation followed a pre-registered protocol with 48 total runs (8 tasks x 2 setups x n=3).
+
+%% 6.2 Evaluation Design
+
+\begin{table*}[t]
+    \centering
+    \caption{Evaluation Design Summary}
+    \label{tab:evaluation_design}
+    \begin{tabular}{ll}
+        \toprule
+        Factor & Details \\\n        \midrule
+        Tasks & 8 real Circit engineering scenarios \\\n        Setups & A (vanilla) vs B (reasoning-core) \\\n        Runs per cell & n=3 \\\n        Total cells & 48 \\\n        Judges & 3 cross-family models \\\n        Metrics & 7 inferential + 4 descriptive \\\n        Decision rule & Lexicographic: gates -> impl_q -> plan_q -> cost \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 6.3 Tasks
+
+8 representative engineering tasks from real Circit scenarios:
+P0 (Login to dashboard Cypress test), T1 (BDA banking auth), T2 (Auth abandonment), T5 (RBAC negative tests), T7 (Sentry-sourced bug), T8 (Cross-workload refactor), T9 (PR review), E1 (3-hour endurance).
+
+%% 6.4 Setups
+
+Setup A: vanilla claude -p (Anthropic headless)
+Setup B: claude -p + reasoning-core hooks
+
+%% 6.5 Judges
+
+Three cross-family judges: Gemini 2.0 Pro (Google CLI), Vibe (Mistral AI CLI), Qwen-Coder qwen3-coder-30b-a3b-instruct via Scaleway HTTP.
+
+%% 6.6 Rubric Dimensions
+
+5 rubric dimensions per artifact (plan + impl), 1-5 BARS scale:
+repo_fit, cleanliness, correctness_determinism, plan_signal, diff_discipline
+
+%% 6.7 Decision Rule
+
+Lexicographic order (frozen pre-registration):
+1. Coverage gate
+2. Safety gate
+3. Honesty gate
+4. Correctness gate (flake_locked >= 0.90 AND flake_rotated >= 0.70)
+5. Lex quality dims: repo_fit, cleanliness, plan_signal, diff_discipline
+6. Tiebreak: wall_clock_s_lower
+
+%% PLACEHOLDER: Add detailed statistical methodology
+%% PLACEHOLDER: Add judge calibration details
+%% PLACEHOLDER: Add inter-rater reliability analysis
