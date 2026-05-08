@@ -157,8 +157,17 @@ def _sidecar_unavailable(extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
 try:
     from src.mcp_gate import gate_edit as _gate_edit_impl
     mcp.tool()(_gate_edit_impl)
-except Exception:  # noqa: BLE001 - registration failure must not break reason_over_edit
-    pass
+except Exception as exc:  # noqa: BLE001 - registration failure must not break reason_over_edit
+    # Silent gate-loss is the worst-case for Vibe/Copilot; surface to stderr.
+    import sys as _sys
+    try:
+        _sys.stderr.write(
+            f"[hybrid-reasoner] WARNING: gate_edit MCP tool registration failed: {exc!r}\n"
+            "  Vibe / Copilot CLI will have no runtime gate. "
+            "Check src.mcp_gate imports.\n"
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 if __name__ == "__main__":

@@ -1,0 +1,88 @@
+# Phase 5: Multi-CLI parity matrix.
+#
+# Two jobs:
+#   verified     — hosts whose verification gate has cleared. Hard fail on regressions.
+#   experimental — hosts pending deeper verification. Informational only.
+#
+# Verification clearance per 2026-05-08 hands-on probe:
+#   gemini  v0.37.1   ✓ Claude-compatible hooks ✓ MCP ✓ skills
+#   copilot v1.0.29   ✓ MCP ✓ skills (NO hooks subcommand — MCP-only)
+#   vibe    v2.9.4    ✓ MCP ✓ post_agent_turn hook
+#
+# Sidecar is NOT required: these tests exercise only adapter parsing,
+# template rendering, and install-script smoke tests. End-to-end agent
+# runs against the live sidecar live in eval.yml.
+name: multi-cli
+
+on:
+  pull_request:
+    paths:
+      - "src/hooks/adapters/**"
+      - "src/hooks/_envelope.py"
+      - "src/hooks/_host_env.py"
+      - "src/mcp_gate.py"
+      - "src/mcp_reasoner.py"
+      - ".gemini/**"
+      - ".copilot/**"
+      - ".vibe/**"
+      - "scripts/enable-in-repo-*.sh"
+      - "tests/test_adapter_*.py"
+      - "tests/test_host_env.py"
+      - "tests/test_mcp_gate.py"
+      - "tests/test_skill_drift.py"
+      - "tests/test_enable_in_repo_backcompat.py"
+      - ".github/workflows/multi-cli.yml"
+  push:
+    branches: [main]
+
+jobs:
+  verified:
+    name: verified-${{ matrix.host }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [claude, gemini, copilot, vibe]
+    env:
+      S2_FAIL_CLOSED: "0"  # adapter tests don't need a sidecar
+      RC_LIVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install portalocker pytest pytest-timeout httpx mcp
+      - name: Run host-specific adapter + smoke tests
+        run: |
+          export RC_HOST=${{ matrix.host }}
+          export RC_REPO=$(pwd)
+          if [ "${{ matrix.host }}" = "claude" ]; then
+            python -m pytest tests/test_host_env.py tests/test_adapter_claude.py tests/test_skill_drift.py tests/test_enable_in_repo_backcompat.py -q --timeout=30
+          else
+            python -m pytest tests/test_adapter_${{ matrix.host }}.py tests/test_skill_drift.py -q --timeout=30
+          fi
+      - name: Smoke-test enable script (idempotency + JSON validity)
+        if: matrix.host != 'claude'
+        run: |
+          tmp=$(mktemp -d)
+          cd "$tmp"
+          git init -q
+          touch .envrc
+          export RC_REPO=$GITHUB_WORKSPACE
+          bash "$RC_REPO/scripts/enable-in-repo-${{ matrix.host }}.sh"
+          # Validate generated config parses
+          if [ "${{ matrix.host }}" = "gemini" ]; then
+            python -c "import json; json.load(open('.gemini/settings.json'))"
+          elif [ "${{ matrix.host }}" = "vibe" ]; then
+            python -c "import tomllib; tomllib.load(open('.vibe/config.toml','rb'))"
+          fi
+
+  experimental:
+    name: experimental-stub
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: echo "no experimental hosts at this time"

@@ -34,6 +34,14 @@ mkdir -p "$HOME/.copilot"
 ts=$(date +%s)
 [[ -f "$target" ]] && cp "$target" "$target.bak.$ts"
 
+# File-lock around the merge so concurrent installs from two repos
+# don't lost-update each other (review-driven, Phase 2-4).
+lockfile="$target.lock"
+exec 9>"$lockfile"
+if command -v flock >/dev/null 2>&1; then
+  flock -x 9
+fi
+
 python3 - "$target" "$RC_REPO" <<'PYEOF'
 import json, os, sys
 target_path, rc_repo = sys.argv[1], sys.argv[2]
@@ -41,7 +49,11 @@ existing = {}
 if os.path.exists(target_path):
     try:
         existing = json.load(open(target_path))
-    except Exception:
+    except Exception as exc:
+        sys.stderr.write(
+            f"warn: existing {target_path} is unparseable ({exc!r}); "
+            f"backup at {target_path}.bak.* — proceeding with empty config\n"
+        )
         existing = {}
 servers = existing.setdefault("mcpServers", {})
 servers["hybrid-reasoner"] = {
