@@ -1,0 +1,13 @@
+host: copilot
+binary: copilot
+trust_args: ["--allow-all-tools"]       # required for non-interactive
+config_files:
+  - .copilot/copilot-instructions.md
+env:
+  RC_HOST: copilot
+  S2_FAIL_CLOSED: "1"
+  COPILOT_ALLOW_ALL: "1"
+notes: |
+  GitHub Copilot CLI v1.0.29+. NO hook subcommand — runtime gate is the
+  gate_edit MCP tool only. AGENTS.md / copilot-instructions.md is the
+  pre-edit contract; post-turn audit retroactively flags missed calls.

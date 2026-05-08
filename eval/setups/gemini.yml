@@ -1,0 +1,11 @@
+host: gemini
+binary: gemini
+trust_args: ["--yolo"]                  # bypass MCP trust prompt
+config_files:
+  - .gemini/settings.json
+env:
+  RC_HOST: gemini
+  S2_FAIL_CLOSED: "1"
+notes: |
+  Gemini CLI v0.37.1+. Hooks Claude-compatible (gemini hooks migrate).
+  --yolo skips the trust prompt that blocks headless runs.

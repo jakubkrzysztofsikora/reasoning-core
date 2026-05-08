@@ -1,0 +1,13 @@
+# Phase 6: per-host eval setup for Claude Code.
+# Read by eval/spawner.py to dispatch to the right CLI binary.
+host: claude
+binary: claude
+trust_args: []                          # built-in default
+config_files:
+  - .claude/settings.json
+env:
+  RC_HOST: claude
+  S2_FAIL_CLOSED: "1"
+notes: |
+  Claude Code with reasoning-core hooks enabled.
+  Reference setup; other hosts measured against this baseline.

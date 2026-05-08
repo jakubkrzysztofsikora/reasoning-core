@@ -1,0 +1,12 @@
+host: vibe
+binary: vibe
+trust_args: ["--trust"]                 # per-invocation trust
+config_files:
+  - .vibe/config.toml
+  - .vibe/AGENTS.md
+env:
+  RC_HOST: vibe
+  S2_FAIL_CLOSED: "1"
+notes: |
+  Mistral Vibe CLI v2.9.4+. PreToolUse hooks not yet shipped — runtime
+  gate is gate_edit MCP tool. Use --prompt for headless mode.
