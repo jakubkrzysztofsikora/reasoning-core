@@ -1,0 +1,201 @@
+%% reasoning-core: A System 2 Sidecar for Structural Reasoning in LLM-Based Software Development
+%% Professional Scientific Whitepaper - LaTeX Boilerplate
+%% Version: 1.0
+%% Date: May 8, 2026
+%% Author: Jakub Sikora
+
+%% DOCUMENT CLASS AND PACKAGES
+%% ============================================================================
+\documentclass[10pt, twocolumn, letterpaper]{article}
+
+%% arXiv compatibility - use TeX Live 2025
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage[svgnames]{xcolor}
+
+%% Mathematics
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{bm}
+\usepackage{booktabs}
+
+%% Graphics and Tables
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{longtable}
+
+%% Bibliography
+\usepackage{natbib}
+\usepackage{doi}
+\usepackage{url}
+\usepackage{hyperref}
+
+%% Layout
+\usepackage{geometry}
+\geometry{letterpaper, margin=1in}
+
+%% Custom commands
+\usepackage{xspace}
+\usepackage{enumitem}
+\setlist[itemize]{noitemsep,topsep=0pt}
+\setlist[enumerate]{noitemsep,topsep=0pt}
+
+%% Code listings
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+%% PAPER METADATA
+%% ============================================================================
+\title{\Large\bfseries reasoning-core: A System 2 Sidecar for Structural Reasoning in LLM-Based Software Development}
+
+\author{
+    Jakub Sikora \thanks{Correspondence: jakub.sikora@example.com} \\
+    \small Independent Researcher \\
+    \small Warsaw, Poland
+}
+
+\date{\today}
+
+%% ABSTRACT
+%% ============================================================================
+\begin{abstract}
+\input{abstract}
+\end{abstract}
+
+%% KEYWORDS
+%% ============================================================================
+\keywords{
+    Large Language Models,
+    Software Engineering,
+    Code Generation,
+    Structural Reasoning,
+    Agentic Workflows,
+    Quality Assurance,
+    System 1/System 2,
+    Mamba SSM,
+    Tree-sitter,
+    Call Graph Analysis
+}
+
+%% MAIN DOCUMENT
+%% ============================================================================
+\begin{document}
+
+\maketitle
+
+%% 1. INTRODUCTION
+%% ----------------------------------------------------------------------------
+\section{Introduction}
+\label{sec:introduction}
+\input{sections/introduction}
+
+%% 2. RELATED WORK
+%% ----------------------------------------------------------------------------
+\section{Related Work}
+\label{sec:related}
+\input{sections/related_work}
+
+%% 3. ARCHITECTURE OVERVIEW
+%% ----------------------------------------------------------------------------
+\section{Architecture Overview}
+\label{sec:architecture}
+\input{sections/architecture}
+
+%% 4. SCORING SYSTEM
+%% ----------------------------------------------------------------------------
+\section{Scoring System}
+\label{sec:scoring}
+\input{sections/scoring}
+
+%% 5. IMPLEMENTATION DETAILS
+%% ----------------------------------------------------------------------------
+\section{Implementation Details}
+\label{sec:implementation}
+\input{sections/implementation}
+
+%% 6. EVALUATION METHODOLOGY
+%% ----------------------------------------------------------------------------
+\section{Evaluation Methodology}
+\label{sec:methodology}
+\input{sections/methodology}
+
+%% 7. RESULTS
+%% ----------------------------------------------------------------------------
+\section{Results}
+\label{sec:results}
+\input{sections/results}
+
+%% 8. DISCUSSION
+%% ----------------------------------------------------------------------------
+\section{Discussion}
+\label{sec:discussion}
+\input{sections/discussion}
+
+%% 9. LIMITATIONS AND FUTURE WORK
+%% ----------------------------------------------------------------------------
+\section{Limitations and Future Work}
+\label{sec:limitations}
+\input{sections/limitations}
+
+%% 10. CONCLUSION
+%% ----------------------------------------------------------------------------
+\section{Conclusion}
+\label{sec:conclusion}
+\input{sections/conclusion}
+
+%% ACKNOWLEDGEMENTS
+%% ----------------------------------------------------------------------------
+\section*{Acknowledgements}
+\label{sec:acknowledgements}
+\input{sections/acknowledgements}
+
+%% REFERENCES
+%% ----------------------------------------------------------------------------
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+%% APPENDICES
+%% ----------------------------------------------------------------------------
+\appendix
+
+\section{Technical Specifications}
+\label{app:specs}
+\input{appendices/specifications}
+
+\section{Evaluation Protocol}
+\label{app:protocol}
+\input{appendices/protocol}
+
+\section{Additional Results}
+\label{app:additional}
+\input{appendices/additional_results}
+
+\end{document}
