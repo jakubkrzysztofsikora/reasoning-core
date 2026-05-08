@@ -88,16 +88,24 @@ def _guess_project_dir() -> str:
 
 
 def main() -> None:
+    payload = None
     try:
-        raw = sys.stdin.read()
+        from src.hooks.adapters import claude as _claude_adapter  # type: ignore
+        env = _claude_adapter.parse_stdin("PostToolUse")
+        payload = dict(env.raw) if env.raw else None
     except Exception:  # noqa: BLE001
-        sys.exit(0)
-    if not raw:
-        sys.exit(0)
-    try:
-        payload = json.loads(raw)
-    except (ValueError, TypeError):
-        sys.exit(0)
+        payload = None
+    if payload is None:
+        try:
+            raw = sys.stdin.read()
+        except Exception:  # noqa: BLE001
+            sys.exit(0)
+        if not raw:
+            sys.exit(0)
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            sys.exit(0)
     if not isinstance(payload, dict):
         sys.exit(0)
     if payload.get("tool_name") != "Bash":

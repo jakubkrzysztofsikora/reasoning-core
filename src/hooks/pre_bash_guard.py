@@ -151,6 +151,15 @@ SAFE_LEADING_TOKENS = (
 
 
 def _read_payload() -> Optional[Dict[str, Any]]:
+    """Phase 1b: stdin via host-agnostic adapter; legacy fallback retained."""
+    try:
+        from src.hooks.adapters import claude as _claude_adapter  # type: ignore
+        env = _claude_adapter.parse_stdin("PreToolUse")
+        if env.tool_name is None and not env.raw:
+            return None
+        return dict(env.raw)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         raw = sys.stdin.read()
     except Exception:  # noqa: BLE001

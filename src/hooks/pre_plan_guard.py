@@ -69,6 +69,14 @@ def _is_plan_path(path: str) -> bool:
 
 def _read_payload() -> Optional[Dict[str, Any]]:
     try:
+        from src.hooks.adapters import claude as _claude_adapter  # type: ignore
+        env = _claude_adapter.parse_stdin("PreToolUse")
+        if env.tool_name is None and not env.raw:
+            return None
+        return dict(env.raw)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         raw = sys.stdin.read()
     except Exception:  # noqa: BLE001
         return None

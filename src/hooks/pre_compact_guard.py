@@ -26,6 +26,13 @@ def _read_session_id_from_stdin() -> str:
     """Reviewer-flagged: CLAUDE_SESSION_ID env is NOT exported by Claude Code.
     The session_id comes from the JSON payload on stdin per hook spec."""
     try:
+        from src.hooks.adapters import claude as _claude_adapter  # type: ignore
+        env = _claude_adapter.parse_stdin("PreCompact")
+        if env.session_id:
+            return env.session_id
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         raw = sys.stdin.read()
         if raw:
             data = json.loads(raw)

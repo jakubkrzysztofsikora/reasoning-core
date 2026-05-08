@@ -4,10 +4,13 @@ Adapters in :mod:`src.hooks.adapters` parse host-specific stdin payloads
 (Claude Code, Gemini CLI, Copilot CLI, Vibe CLI) into a single
 ``HookEnvelope`` shape consumed by the dispatch chain.
 
-The dataclass is frozen and the ``raw`` escape hatch is wrapped in
-``MappingProxyType`` so the envelope is genuinely immutable — required
-because dispatch passes the same envelope through multiple gates and
-mutation would create order-dependent bugs.
+The dataclass is frozen and ``raw``/``tool_input`` are wrapped in
+``MappingProxyType`` so the envelope is immutable AT THE TOP LEVEL only.
+**Caveat (Phase 1a review)**: nested objects (e.g. ``raw["tool_input"]``,
+``tool_input["edits"][0]``) remain the original mutable Python dicts.
+Gates that need to compare/hash deep state should ``copy.deepcopy`` the
+field themselves — we deliberately don't deep-freeze because that would
+force adapters to copy multi-MB Edit payloads on every hook invocation.
 """
 
 from __future__ import annotations

@@ -24,6 +24,13 @@ import _session_manifest as _sm  # type: ignore  # noqa: E402
 def _read_payload() -> dict:
     """Read full hook stdin payload once; reused for event name and session_id."""
     try:
+        from src.hooks.adapters import claude as _claude_adapter  # type: ignore
+        env = _claude_adapter.parse_stdin("SessionStart")
+        if env.raw:
+            return dict(env.raw)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         raw = sys.stdin.read()
         if raw:
             data = json.loads(raw)

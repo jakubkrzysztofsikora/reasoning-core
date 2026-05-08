@@ -75,6 +75,10 @@ def _read_payload() -> Optional[Dict[str, Any]]:
     this thin wrapper still returns the raw payload dict (the rest of
     ``main()`` reads ``payload["tool_name"]`` etc.). Returns ``None`` on
     parse failure to preserve the malformed-payload audit branch.
+
+    Phase 1a review: emit a stderr canary if the adapter import fails so
+    the silent-fallback path isn't invisible. ``RC_ADAPTER_REQUIRED=1``
+    hard-fails (CI canary).
     """
     try:
         from src.hooks.adapters import claude as _claude_adapter  # type: ignore
@@ -82,8 +86,15 @@ def _read_payload() -> Optional[Dict[str, Any]]:
         if env.tool_name is None and not env.raw:
             return None
         return dict(env.raw)
-    except Exception:  # noqa: BLE001 - fall through to legacy path
-        pass
+    except Exception as exc:  # noqa: BLE001 - fall through to legacy path
+        try:
+            sys.stderr.write(
+                f"[hybrid-reasoner] adapter fallback (PreToolUse): {exc!r}\n"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        if os.environ.get("RC_ADAPTER_REQUIRED") == "1":
+            raise
     # Legacy path retained for environments where the adapter package
     # cannot be imported (e.g. partial installs in CI sandboxes).
     try:
@@ -435,7 +446,11 @@ def main() -> None:
     ):
         try:
             import _session_manifest  # type: ignore
-            cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+            try:
+                from src.hooks import _host_env  # type: ignore
+                cwd = str(_host_env.project_dir())
+            except Exception:  # noqa: BLE001
+                cwd = os.environ.get("RC_PROJECT_DIR") or os.getcwd()
             task_spec = os.environ.get("RC_TASK_SPEC") or ""
             key = _session_manifest.manifest_key(cwd, task_spec)
             mani = _session_manifest.load(key)
@@ -611,7 +626,11 @@ def main() -> None:
             ):
                 import _mock_detector  # type: ignore
                 from pathlib import Path as _Path
-                project_root = _Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+                try:
+                    from src.hooks import _host_env  # type: ignore
+                    project_root = _host_env.project_dir()
+                except Exception:  # noqa: BLE001
+                    project_root = _Path(os.environ.get("RC_PROJECT_DIR") or os.getcwd())
                 if _mock_detector.is_likely_mocked(after_src, project_root):
                     auth = _mock_detector.integration_authenticity(after_src, project_root)
                     report = dict(report)
