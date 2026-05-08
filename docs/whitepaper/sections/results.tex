@@ -1,0 +1,86 @@
+%% 7. RESULTS
+%% ============================================================================
+
+%% 7.1 Headline Numbers
+
+\begin{table*}[t]
+    \centering
+    \caption{Headline Results (means across 8 tasks, n=3 per cell)}
+    \label{tab:headline_results}
+    \begin{tabular}{lccr}
+        \toprule
+        Metric & Setup A (vanilla) & Setup B (reasoning-core) & Delta (B - A) \\\n        \midrule
+        Cost / task (USD) & $11.44 & $8.56 & -$2.88 (-25.1 percent) \\\n        Wall clock / task (s) & 1,656 & 1,270 & -386 (-23.3 percent) \\\n        Tokens / task (main) & 66,733 & 65,222 & -1,511 (-2.3 percent) \\\n        Impl quality (BARS 1-5) & 2.90 & 2.88 & -0.02 (flat) \\\n        Plan quality (BARS 1-5) & 2.92 & 2.50 & -0.42 (-14.4 percent) \\\n        Task wins (decision rule) & 2 / 8 & 6 / 8 & -- \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+Suite totals: Setup A spent $91.50 / 533,866 tokens across all 8 tasks; Setup B spent $68.51 / 521,772 tokens. ~$23 / 25 percent saved at the suite level.
+
+%% 7.2 Iteration-3 Results (Latest)
+
+\begin{table*}[t]
+    \centering
+    \caption{Iter-3 Results Summary (48 cells, 3 judges)}
+    \label{tab:iter3_results}
+    \begin{tabular}{lccr}
+        \toprule
+        Metric & A (vanilla) & B (sidecar) & Delta B-A \\\n        \midrule
+        n_runs & 24 & 24 & -- \\\n        flake_locked & 0.92 & 1.00 & +0.08 \\\n        flake_rotated & 0.90 & 1.00 & +0.10 \\\n        safety violations & 0 & 0 & -- \\\n        impl quality (BARS mean) & 3.80 & 4.00 & +0.20 \\\n        plan quality & 3.62 & 3.94 & +0.32 \\\n        main tokens (mean/run) & 623 & 568 & -55 \\\n        cache_read tokens (sum) & 20,472,284 & 18,644,190 & -1,828,094 \\\n        cache_write tokens (sum) & 2,644,397 & 2,568,617 & -75,780 \\\n        total billable tokens (sum) & 23,131,644 & 21,226,444 & -1,905,200 (-8.2 percent) \\\n        wall_clock_s (mean/run) & 547 & 645 & +98 (B slower) \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 7.3 Per-Task Verdicts
+
+\begin{table*}[t]
+    \centering
+    \caption{Per-Task Verdicts (Iter-3)}
+    \label{tab:per_task_verdicts}
+    \begin{tabular}{lccccccc}
+        \toprule
+        Task & Winner & A impl_q / plan_q & B impl_q / plan_q & A tokens & B tokens & A $ & B $ \\\n        \midrule
+        T1 & A & 5.0 / 5.0 & 3.0 / 1.0 & 71,200 & 29,800 & $13.08 & $3.41 \\\n        T2 & B & 3.5 / 3.0 & 5.0 / 3.0 & 121,000 & 94,200 & $22.93 & $12.39 \\\n        T5 & B & 1.83 / 1.67 & 3.5 / 3.0 & 84,533 & 72,208 & $15.53 & $10.26 \\\n        T7 & B & 1.83 / 1.67 & 3.5 / 3.0 & 84,533 & 72,208 & $15.53 & $10.26 \\\n        T8 & B & 3.0 / 3.0 & 4.0 / 5.0 & 41,600 & 24,662 & $6.98 & $2.83 \\\n        T9 & A & 1.0 / 3.0 & 1.0 / 1.0 & 37,700 & 39,894 & $2.85 & $3.49 \\\n        E1 & B (correctness gate) & 3.5 / 3.0 & 1.0 / 1.0 & 57,600 & 41,600 & $5.89 & $4.29 \\\n        P0 & B & 3.5 / 3.0 & 2.0 / 3.0 & 35,700 & 147,200 & $8.71 & $21.58 \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 7.4 Per-Task Pass Rates
+
+\begin{table*}[t]
+    \centering
+    \caption{Per-Task Pass Rates (locked / rotated)}
+    \label{tab:pass_rates}
+    \begin{tabular}{lcccc}
+        \toprule
+        Task & A locked & A rotated & B locked & B rotated \\\n        \midrule
+        P0 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T1 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T2 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T5 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T7 & 0.33 & 0.33 & 1.00 & 1.00 \\\n        T8 & 1.00 & 0.93 & 1.00 & 0.97 \\\n        T9 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        E1 & 1.00 & 0.97 & 1.00 & 1.00 \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 7.5 Rubric Breakdown by Dimension
+
+\begin{table*}[t]
+    \centering
+    \caption{Rubric Breakdown (all 3 judges combined, n=70 per arm)}
+    \label{tab:rubric_breakdown}
+    \begin{tabular}{lccr}
+        \toprule
+        Dimension & A mean & B mean & Delta B-A \\\n        \midrule
+        cleanliness & 4.26 & 4.26 & 0.00 \\\n        correctness_determinism & 3.17 & 3.29 & +0.11 \\\n        diff_discipline & 4.09 & 4.31 & +0.23 \\\n        plan_signal & 3.63 & 3.94 & +0.31 \\\n        repo_fit & 3.71 & 4.14 & +0.43 \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 7.6 Per-Judge Calibration
+
+\begin{table*}[t]
+    \centering
+    \caption{Per-Judge Calibration (rubric mean over all dims, all artifacts)}
+    \label{tab:judge_calibration}
+    \begin{tabular}{lcccr}
+        \toprule
+        Judge & A mean & B mean & n (A,B) & favors \\\n        \midrule
+        gemini & 3.33 & 3.78 & 24,24 & B (+0.45) \\\n        qwen-coder & 4.20 & 4.16 & 22,22 & A weakly (-0.04) \\\n        vibe & 3.82 & 4.03 & 24,24 & B (+0.21) \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% PLACEHOLDER: Add statistical significance tests
+%% PLACEHOLDER: Add effect size calculations
+%% PLACEHOLDER: Add power analysis
