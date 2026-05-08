@@ -33,7 +33,11 @@ def _today_dir() -> Path:
 
 
 def _session_id() -> str:
-    return os.environ.get("CLAUDE_SESSION_ID") or ""
+    try:
+        from src.hooks import _host_env  # type: ignore
+        return _host_env.session_id()
+    except Exception:  # noqa: BLE001
+        return os.environ.get("CLAUDE_SESSION_ID") or ""
 
 
 def _emit_advisory(text: str) -> None:
@@ -55,7 +59,11 @@ def main() -> None:
         threshold = float(os.environ.get("RC_LANG_AUDIT_THRESHOLD", "0.33"))
     except ValueError:
         threshold = 0.33
-    cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    try:
+        from src.hooks import _host_env  # type: ignore
+        cwd = str(_host_env.project_dir())
+    except Exception:  # noqa: BLE001
+        cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     task_spec = os.environ.get("RC_TASK_SPEC") or ""
     key = _sm.manifest_key(cwd, task_spec)
     mani = _sm.load(key)

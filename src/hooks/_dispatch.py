@@ -152,7 +152,11 @@ def gate_lang_lock(*, file_path: str, read_before_src) -> GateOutcome:
         except ImportError:
             _shadow_mode = None  # type: ignore
 
-        cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+        try:
+            from src.hooks import _host_env  # type: ignore
+            cwd = str(_host_env.project_dir())
+        except Exception:  # noqa: BLE001
+            cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
         task_spec = os.environ.get("RC_TASK_SPEC") or ""
         key = _session_manifest.manifest_key(cwd, task_spec)
         mani = _session_manifest.load(key)
@@ -191,16 +195,24 @@ def gate_lang_lock(*, file_path: str, read_before_src) -> GateOutcome:
 
 
 def _resolve_plan_path() -> Optional[Path]:
-    """PLAN.md resolution precedence: RC_RUN_DIR > CLAUDE_PROJECT_DIR > cwd.
+    """PLAN.md resolution precedence: RC_RUN_DIR > host project_dir > cwd.
 
     Returns the first existing PLAN.md or None. Used by gate_plan_grounding.
     """
-    for env_key in ("RC_RUN_DIR", "CLAUDE_PROJECT_DIR"):
-        base = os.environ.get(env_key)
-        if base:
-            p = Path(base) / "PLAN.md"
-            if p.exists():
-                return p
+    rc_run = os.environ.get("RC_RUN_DIR")
+    if rc_run:
+        p = Path(rc_run) / "PLAN.md"
+        if p.exists():
+            return p
+    try:
+        from src.hooks import _host_env  # type: ignore
+        host_root = _host_env.project_dir()
+    except Exception:  # noqa: BLE001
+        host_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or "")
+    if host_root and host_root.exists():
+        p = host_root / "PLAN.md"
+        if p.exists():
+            return p
     p = Path.cwd() / "PLAN.md"
     return p if p.exists() else None
 
@@ -332,7 +344,11 @@ def gate_mock_detector(
         ):
             import _mock_detector  # type: ignore
 
-            project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+            try:
+                from src.hooks import _host_env  # type: ignore
+                project_root = _host_env.project_dir()
+            except Exception:  # noqa: BLE001
+                project_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
             if _mock_detector.is_likely_mocked(after_src, project_root):
                 auth = _mock_detector.integration_authenticity(after_src, project_root)
                 new_report = dict(report)

@@ -39,6 +39,21 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+try:
+    from src.hooks import _host_env  # type: ignore
+except Exception:  # noqa: BLE001 - fallback when imported as a sibling
+    try:
+        import _host_env  # type: ignore
+    except Exception:  # noqa: BLE001
+        _host_env = None  # type: ignore
+
+try:
+    import portalocker  # type: ignore
+except Exception:  # noqa: BLE001 - fallback to no-op lock if not installed
+    portalocker = None  # type: ignore
+
+SCHEMA_VERSION = 2
+
 # Audit log lives under XDG state per v2 plan; falls back to /tmp on legacy
 # operators. Override via RC_AUDIT_ROOT for tests.
 _DEFAULT_ROOT = os.path.expanduser("~/.local/share/reasoning-core/events")
@@ -82,22 +97,44 @@ def _today() -> str:
 def _session_id() -> str:
     """Stable per-process session id.
 
-    Prefers ``CLAUDE_SESSION_ID`` (set by Claude Code), falls back to a hash
-    of (pid, project_dir, boot-time-ish marker) so the file name is at least
-    consistent within a single hook process tree.
+    Routes through ``_host_env.session_id()`` so non-Claude hosts share the
+    same retry-marker / per-session JSONL key as Claude. Falls back to the
+    legacy CLAUDE_SESSION_ID-or-pid scheme if ``_host_env`` cannot import
+    (degraded environment). Output is sanitised to a safe basename.
     """
-    sid = os.environ.get("CLAUDE_SESSION_ID")
-    if sid and isinstance(sid, str):
-        # Limit to a safe basename character set.
-        clean = re.sub(r"[^A-Za-z0-9_\-]", "_", sid)[:64]
-        if clean:
-            return clean
-    seed = f"{os.getpid()}|{os.environ.get('CLAUDE_PROJECT_DIR', '')}"
-    return "anon-" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
+    raw = ""
+    if _host_env is not None:
+        try:
+            raw = _host_env.session_id()
+        except Exception:  # noqa: BLE001
+            raw = ""
+    if not raw:
+        sid = os.environ.get("CLAUDE_SESSION_ID")
+        if sid and isinstance(sid, str):
+            raw = sid
+        else:
+            seed = f"{os.getpid()}|{os.environ.get('CLAUDE_PROJECT_DIR', '')}"
+            raw = "anon-" + hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
+    clean = re.sub(r"[^A-Za-z0-9_\-]", "_", str(raw))[:64]
+    return clean or "anon-unknown"
 
 
 def _project_dir() -> str:
+    if _host_env is not None:
+        try:
+            return str(_host_env.project_dir())
+        except Exception:  # noqa: BLE001
+            pass
     return os.environ.get("CLAUDE_PROJECT_DIR", "")
+
+
+def _host_label() -> str:
+    if _host_env is not None:
+        try:
+            return _host_env.host()
+        except Exception:  # noqa: BLE001
+            pass
+    return "claude"
 
 
 def _is_secret_path(path: str) -> bool:
@@ -154,6 +191,8 @@ def new_event(
         "decision_id": uuid.uuid4().hex[:12],
         "session_id": _session_id(),
         "project_dir": _project_dir(),
+        "host": _host_label(),
+        "schema_version": SCHEMA_VERSION,
         "tool_name": tool_name,
         "decision": decision,
     }
@@ -163,7 +202,7 @@ def new_event(
     return base
 
 
-def append_event(event: Dict[str, Any]) -> None:
+def append_event(event: Dict[str, Any], *, fsync: bool = False) -> None:
     """Append ``event`` to the per-session JSONL. Best-effort, never raises.
 
     Side effects:
@@ -173,6 +212,11 @@ def append_event(event: Dict[str, Any]) -> None:
         and returns silently.
     """
     try:
+        # Auto-inject host + schema_version if caller skipped new_event().
+        if "host" not in event:
+            event = {**event, "host": _host_label()}
+        if "schema_version" not in event:
+            event = {**event, "schema_version": SCHEMA_VERSION}
         redacted = _redact(event)
     except Exception:  # noqa: BLE001
         # If redaction itself blows up, skip the record entirely rather than
@@ -186,7 +230,23 @@ def append_event(event: Dict[str, Any]) -> None:
         path = day_dir / f"{_session_id()}.jsonl"
         line = json.dumps(redacted, ensure_ascii=False, sort_keys=True)
         with open(path, "a", encoding="utf-8") as fh:
+            if portalocker is not None:
+                try:
+                    portalocker.lock(fh, portalocker.LOCK_EX)
+                except Exception:  # noqa: BLE001 - lock is best-effort
+                    pass
             fh.write(line + "\n")
+            if fsync:
+                try:
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                except Exception:  # noqa: BLE001
+                    pass
+            if portalocker is not None:
+                try:
+                    portalocker.unlock(fh)
+                except Exception:  # noqa: BLE001
+                    pass
         try:
             from _audit_rotation import rotate  # type: ignore
             rotate(_AUDIT_ROOT, today)

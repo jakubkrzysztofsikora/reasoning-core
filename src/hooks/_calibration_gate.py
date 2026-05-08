@@ -66,7 +66,11 @@ def _calibration_path() -> Path:
     override = os.environ.get("RC_CALIBRATION_PATH")
     if override:
         return Path(override)
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    try:
+        from src.hooks import _host_env  # type: ignore
+        project_dir = str(_host_env.project_dir())
+    except Exception:  # noqa: BLE001
+        project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     return Path(project_dir) / "eval" / "runs" / "calibration.json"
 
 
