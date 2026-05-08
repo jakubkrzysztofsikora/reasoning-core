@@ -1,0 +1,106 @@
+%% 4. SCORING SYSTEM
+%% ============================================================================
+
+%% 4.1 Overview
+
+The scoring system is the core of reasoning-cores System 2. It analyzes proposed code changes and computes an IMPACT REPORT that determines whether the change should be allowed, blocked, or flagged.
+
+The scoring pipeline consists of:
+
+\begin{enumerate}
+    \item Parse both before and after source code using Tree-sitter
+    \item Build ASTs and call graphs for both versions
+    \item Extract structural metrics from both ASTs
+    \item Compute Mamba SSM embeddings for both versions
+    \item Calculate delta metrics (8-dimensional risk vector)
+    \item Compute coherence delta (embedding distance)
+    \item Compute architectural impact score
+    \item Apply per-file-kind thresholds
+    \item Generate human-readable summary and repair hints
+\end{enumerate}
+
+%% 4.2 Risk Vector
+
+The system computes 8 risk dimensions, all based on delta semantics (difference between before and after states):
+
+\begin{table*}[t]
+    \centering
+    \caption{Risk Vector Dimensions and Normalizers}
+    \label{tab:risk_vector}
+    \begin{tabular}{llp{6cm}l}
+        \toprule
+        Dimension & Formula & Description & Normalizer \\\n        \midrule
+        cyclomatic & max(0, b_after - b_before) & Change in cyclomatic complexity & 20.0 \\\n        fan_in & max(in-deg(after) - in-deg(before), 0) & Change in in-degree (callers) & 8.0 \\\n        fan_out & max(out-deg(after) - out-deg(before), 0) & Change in out-degree (callees) & 12.0 \\\n        depth & max(d_after - d_before, 0) & Change in nesting depth & 40.0 \\\n        churn & len(symdiff(line_set_before, line_set_after)) & Lines added/removed & 200.0 \\\n        coupling & max(edges_after - edges_before, 0) & Change in total call graph edges & 40.0 \\\n        cohesion & max(lack_cohesion_after - lack_cohesion_before, 0) & Change in cohesion metric & 1.0 \\\n        novelty & 1 - max(cos(emb_before, emb_after), 0) & Semantic divergence from embedding & 1.0 \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 4.3 Coherence Delta
+
+Coherence delta measures the Euclidean distance between embeddings, normalized by hidden size:
+
+coherence_delta = ||emb(after) - emb(before)||_2 / sqrt(hidden_size)
+
+For cold-start files (empty before_src or <32 characters), coherence_delta is set to 0.0.
+
+%% 4.4 Architectural Impact Score
+
+The architectural impact score (AIS) is computed as a weighted combination of the risk vector, passed through a sigmoid function.
+
+Currently using equal weights with sigmoid activation.
+
+%% 4.5 Per-File-Kind Thresholds
+
+Different file types have different acceptable risk profiles. We define per-kind thresholds as shown in Table \ref{tab:thresholds}.
+
+\begin{table*}[t]
+    \centering
+    \caption{Per-File-Kind Thresholds}
+    \label{tab:thresholds}
+    \begin{tabular}{lccc}
+        \toprule
+        File Kind & Coherence Delta (cd) & Architectural Impact Score (ais) & Dim Ceiling \\\n        \midrule
+        source_code & 1.5 & 0.4 & 0.9 \\\n        test_code & 2.0 & 0.3 & 0.95 \\\n        plan_md & 3.0 & 0.3 & 1.0 \\\n        doc_md & 3.0 & 0.3 & 1.0 \\\n        config & 1.2 & 0.5 & 0.9 \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+A block is triggered if:
+\begin{itemize}
+    \item ais < threshold[kind]
+    \item coherence_delta > threshold[kind]
+    \item Any risk_dim > dim_ceiling[kind]
+\end{itemize}
+
+%% 4.6 Mamba SSM Backbone
+
+We use a Mamba-130M State Space Model as our embedding backbone:
+
+\begin{itemize}
+    \item 130M parameters
+    \item Hidden size: 768
+    \item Memory: ~200MB RAM
+    \item Runs entirely on CPU
+    \item Pre-trained checkpoint: state-spaces/mamba-130m-hf from HuggingFace
+\end{itemize}
+
+The Mamba architecture provides linear scaling with respect to sequence length, making it efficient for code analysis where files can be long.
+
+%% 4.7 Impact Report
+
+The scoring system returns an ImpactReport containing:
+
+\begin{itemize}
+    \item architectural_impact_score: float (0-1)
+    \item coherence_delta: float
+    \item risk_vector: list of 8 floats
+    \item regression_detected: bool
+    \item human_summary: str
+    \item risk_labels: list of 8 strings
+    \item cumulative_drift: optional float
+    \item cold_start: bool
+    \item file_kind: optional str
+    \item cd_threshold: optional float
+\end{itemize}
+
+%% PLACEHOLDER: Add detailed scoring math derivations
+%% PLACEHOLDER: Add calibration methodology
+%% PLACEHOLDER: Add comparison with other scoring approaches
