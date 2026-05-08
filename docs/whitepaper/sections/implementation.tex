@@ -1,0 +1,113 @@
+%% 5. IMPLEMENTATION DETAILS
+%% ============================================================================
+
+%% 5.1 System Requirements
+
+reasoning-core has minimal system requirements:
+
+\begin{itemize}
+    \item Python 3.11+
+    \item ~250MB disk space for Mamba checkpoint
+    \item ~200MB RAM for model inference
+    \item CPU (no GPU required)
+    \item Supported operating systems: macOS, Linux, Windows (WSL)
+\end{itemize}
+
+%% 5.2 Installation
+
+\begin{lstlisting}[language=bash, caption={Installation Commands}]
+git clone https://github.com/jakubkrzysztofsikora/reasoning-core.git
+cd reasoning-core
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+huggingface-cli download state-spaces/mamba-130m-hf
+\end{lstlisting}
+
+%% 5.3 Dependencies
+
+Key dependencies include:
+
+\begin{itemize}
+    \item tree-sitter: For AST parsing
+    \item transformers: HuggingFace integration
+    \item fastapi: HTTP service
+    \item uvicorn: ASGI server
+    \item torch: PyTorch (CPU only)
+    \item mamba-ssm: Mamba implementation
+\end{itemize}
+
+%% 5.4 Directory Structure
+
+\begin{lstlisting}[language=text, caption={Project Directory Structure}]
+reasoning-core/
+├── src/
+│   ├── s2_core.py          # Main sidecar service
+│   ├── sidecar_supervisor.py
+│   ├── ssm_backbone.py      # Mamba SSM integration
+│   ├── grammars.py         # Tree-sitter grammar management
+│   ├── calibration.py      # Threshold calibration
+│   ├── gen_client.py       # Generative critic client
+│   ├── mcp_gate.py          # MCP server
+│   ├── mcp_reasoner.py     # MCP reasoner
+│   ├── rc_cli.py            # CLI tool
+│   └── hooks/              # Hook implementations
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── EVAL_DESIGN.md
+│   ├── EVAL_RESULTS.md
+│   ├── HARDENING.md
+│   └── whitepaper/         # This LaTeX boilerplate
+├── eval/
+│   ├── run_suite.py
+│   ├── aggregate.py
+│   └── stats.py
+├── scripts/
+│   ├── start-sidecar.sh
+│   ├── install-supervisor-launchagent.sh
+│   └── enable-in-repo*.sh
+└── README.md
+\end{lstlisting}
+
+%% 5.5 Sidecar Service
+
+The sidecar service (src/s2_core.py) is a FastAPI application that can be started with:
+
+\begin{lstlisting}[language=bash, caption={Starting the Sidecar}]
+python3 -m src.s2_core
+# or
+bash scripts/start-sidecar.sh
+\end{lstlisting}
+
+The service listens on 127.0.0.1:8765 by default.
+
+%% 5.6 Hook Configuration
+
+Hooks are configured in .claude/settings.json (for Claude Code) and similar configuration files for other CLIs.
+
+%% 5.7 Supervisor
+
+The supervisor (src/sidecar_supervisor.py) ensures the sidecar remains available with automatic restart on crash and launchd/systemd integration.
+
+%% 5.8 CLI Tool
+
+The rc CLI tool (bin/rc) provides diagnostics and control:
+
+\begin{table*}[t]
+    \centering
+    \caption{CLI Commands}
+    \label{tab:cli_commands}
+    \begin{tabular}{lp{10cm}}
+        \toprule
+        Command & Description \\\n        \midrule
+        rc status & Sidecar health + threshold posture \\\n        rc explain & Explain the most recent block decision \\\n        rc bypass-next & Arm a single-shot bypass \\\n        rc skip-file <path> & Add path to skip list \\\n        rc unskip-file <path> & Remove path from skip list \\\n        \bottomrule
+    \end{tabular}
+\end{table*}
+
+%% 5.9 Environment Variables
+
+Configuration via environment variables for sidecar runtime, thresholds, and hook policy.
+
+%% PLACEHOLDER: Add detailed implementation of key algorithms
+%% PLACEHOLDER: Add performance optimizations
+%% PLACEHOLDER: Add error handling details
