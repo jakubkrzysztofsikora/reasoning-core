@@ -300,6 +300,25 @@ ls ~/.local/share/reasoning-core/events/$(date +%F)/ | head               # per-
 rc status                                                                 # sidecar health + posture
 ```
 
+### 5b. Enable on another repo (3 commands)
+
+You've already cloned `reasoning-core` and the sidecar is running. To gate one of
+your other repos with the same hooks, run from inside that repo:
+
+```bash
+export RC_REPO=$HOME/Repos/personal/reasoning-core   # or wherever you cloned it
+bash $RC_REPO/scripts/enable-in-repo.sh              # writes .envrc + .claude/settings.local.json
+direnv allow .                                       # load the env
+```
+
+That's it. `claude` from that repo now goes through reasoning-core. The script
+refuses to overwrite an existing `.envrc` or `.claude/settings.local.json`, and
+it only writes inside the cwd — nothing global is touched. Iter-3 levers
+(`RC_BEST_EFFORT_SPEC`, `RC_PLAN_GROUNDING`) are commented out in the generated
+`.envrc`; uncomment + `direnv reload` to opt in.
+
+To revert: delete `.envrc` and `.claude/settings.local.json` from the repo.
+
 ### 6. (Optional) Promote globally — one path, every project
 
 Repo-scoped hooks fire only when Claude runs from inside this folder. To get the same
