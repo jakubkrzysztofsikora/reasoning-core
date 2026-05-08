@@ -1,0 +1,44 @@
+%% 9. LIMITATIONS AND FUTURE WORK
+%% ============================================================================
+
+%% 9.1 Current Limitations
+
+\begin{enumerate}
+    \item WALL_CLOCK_S is the only inferentially-significant delta. Everything else falls inside iter3-prereg-v2 MDE.
+    \item Cache tokens are collected per-cell but not aggregated in REPORT.md. Iter-4 should add cache_read_total + cache_write_total.
+    \item meta.json started_at/ended_at empty for some cells. Iter-4 should backfill meta during collect_arm.
+    \item 3 of 4 within-arm SDs near zero in the paired-bootstrap means the 95 percent CIs collapse to a point.
+    \item A/T7 fair-result: Leaving Setup A without Sentry auth means correctness comparison is asymmetric.
+    \item Single-host sweep: docker port collision was the iter-2 v2 collapse; iter-3 mitigated via sequential A/B.
+\end{enumerate}
+
+%% 9.2 Technical Limitations
+
+\begin{itemize}
+    \item LANGUAGE SUPPORT: Currently supports a limited set of languages via Tree-sitter grammars.
+    \item PERFORMANCE: The current implementation uses CPU-only inference.
+    \item MEMORY USAGE: Mamba-130M model requires ~200MB RAM.
+    \item FALSE POSITIVES/NEGATIVES: Like any automated system, there is a risk of both.
+\end{itemize}
+
+%% 9.3 Methodological Limitations
+
+\begin{itemize}
+    \item SINGLE CODEBASE: The evaluation was conducted on a single codebase (Circit).
+    \item LIMITED TASK DIVERSITY: 8 tasks may not capture all possible use cases.
+    \item JUDGE BIAS: Despite using 3 cross-family judges, there may still be biases.
+\end{itemize}
+
+%% 9.4 Future Work
+
+\begin{itemize}
+    \item GPU SUPPORT: Add GPU acceleration for faster inference.
+    \item LARGER MODEL: Experiment with larger Mamba models (350M, 750M parameters).
+    \item MULTI-LANGUAGE SUPPORT: Add support for more programming languages.
+    \item ONLINE LEARNING: Implement mechanisms for the system to learn from developer feedback.
+    \item DISTRIBUTED OPERATION: Enable distributed operation for very large codebases.
+\end{itemize}
+
+%% PLACEHOLDER: Add detailed roadmap with timelines
+%% PLACEHOLDER: Add resource requirements for future work
+%% PLACEHOLDER: Add expected impact of proposed improvements
