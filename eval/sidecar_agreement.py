@@ -67,14 +67,16 @@ def main(argv: list[str]) -> int:
             "report_summary": report.get("human_summary", "")[:120],
         })
     pct = agree / len(pairs) if pairs else 0.0
+    threshold = float(os.environ.get("RC_AGREEMENT_MIN", "1.0"))
     out = {
         "host": host,
         "n": len(pairs),
         "agreement": round(pct, 4),
+        "threshold": threshold,
         "rows": rows,
     }
     print(json.dumps(out, indent=2))
-    return 0 if agree == len(pairs) else 1
+    return 0 if pct >= threshold else 1
 
 
 if __name__ == "__main__":

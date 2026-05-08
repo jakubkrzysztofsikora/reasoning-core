@@ -39,7 +39,10 @@ cp -n "$RC_REPO/.vibe/skills/reasoning/SKILL.md" .vibe/skills/reasoning/SKILL.md
 # Trusted-folder registration (best-effort)
 trusted="$HOME/.vibe/trusted_folders.toml"
 mkdir -p "$HOME/.vibe"
-if ! grep -qF "$(pwd)" "$trusted" 2>/dev/null; then
+# Use exact-line match (not substring grep) so /foo/bar doesn't false-positive
+# against /foo/bar-baz. Power-user review fix.
+pwd_line=$(printf 'path = %q' "$(pwd)")
+if ! grep -qxF "$pwd_line" "$trusted" 2>/dev/null; then
   printf '\n[[trusted]]\npath = %q\n' "$(pwd)" >> "$trusted"
   echo "added $(pwd) to ~/.vibe/trusted_folders.toml"
 fi

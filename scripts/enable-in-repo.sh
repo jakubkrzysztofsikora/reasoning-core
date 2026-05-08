@@ -32,7 +32,7 @@ if [[ -e "$target_envrc" ]] || [[ -e "$target_settings" ]]; then
   echo "error: refusing to overwrite existing files:"
   [[ -e "$target_envrc" ]] && echo "  $target_envrc"
   [[ -e "$target_settings" ]] && echo "  $target_settings"
-  echo "remove them first, or merge by hand from $RC_REPO/scripts/templates/."
+  echo "remove them first, or merge by hand against the heredoc blocks in $RC_REPO/scripts/enable-in-repo.sh."
   exit 1
 fi
 

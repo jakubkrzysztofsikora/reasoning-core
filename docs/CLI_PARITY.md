@@ -75,6 +75,39 @@ All scripts:
 - `GEMINI.md` is per-cwd; running `gemini` from a parent dir won't
   pick it up.
 
+## Production caveats (power-user review 2026-05-08)
+
+- **Tier-2 gating on Copilot / Vibe**: the runtime gate is the `gate_edit`
+  MCP tool, enforced only by `AGENTS.md` / `copilot-instructions.md` —
+  a soft prompt. Under context pressure or multi-step tool chains the
+  agent sometimes skips the call, the regression lands, and the
+  post-hoc audit row is never written (because the tool was never
+  called). For mission-critical work, use Claude or Gemini where the
+  gate is a runtime hook, not a model-honoured contract.
+
+- **Session-end reconciliation**: run `SESSION_ID=<sid>
+  python -m eval.reconcile_session` after a Copilot/Vibe session to
+  diff git working-tree changes against `gate_edit` audit rows.
+  Mismatches indicate skipped gate calls that need human review.
+
+- **`flock` on macOS**: install scripts use `command -v flock` and skip
+  locking if absent. Two parallel `enable-in-repo-copilot.sh` runs from
+  different repos can lost-update on stock macOS unless `brew install
+  flock` is present. Sequential installs are safe.
+
+- **Sidecar must be running before agent launch**: install scripts do
+  not start the sidecar. Run `bash scripts/start-sidecar.sh` first; the
+  install scripts only configure the host CLI to call it.
+
+- **`COPILOT_ALLOW_ALL=1` does not auto-trust new MCP servers**: first
+  Copilot session after install may surface a one-shot MCP-trust prompt.
+  Pre-seed `~/.copilot/trusted-servers` for fully unattended runs.
+
+- **`direnv allow` required**: enable scripts append `RC_HOST=...` to
+  `.envrc` but do not run `direnv allow` for you. Headless runs from
+  shells without direnv get `RC_HOST=unknown`, which collapses the
+  audit log's per-host slicing.
+
 ## Concurrency notes
 
 All hosts hit a single sidecar at `127.0.0.1:8765`. Multi-host concurrent
