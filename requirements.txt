@@ -36,7 +36,7 @@ transformers>=4.39,<5.0
 torch>=2.2,<3.0
 accelerate>=0.27
 safetensors>=0.4
-sentencepiece>=0.1.99       # tokenizer for some Mamba checkpoints
+sentencepiece>=0.2.1       # tokenizer for some Mamba checkpoints
 einops>=0.7                  # required by mamba-ssm code paths
 
 # --- Cross-platform file locking for audit_log multi-host writers ---
