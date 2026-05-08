@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "hybrid-reasoner": {
+      "command": "python3",
+      "args": ["-m", "src.mcp_reasoner"],
+      "cwd": "<RC_REPO>",
+      "env": {}
+    }
+  }
+}
