@@ -2,7 +2,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./docs/logo-dark.svg">
-    <img alt="reasoning-core logo" src="./docs/logo.svg" width="300" height="150">
+    <img alt="reasoning-core logo" src="./docs/logo.svg" width="300">
   </picture>
 </p>
 
