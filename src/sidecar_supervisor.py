@@ -150,6 +150,27 @@ def _broker_health(children: List[_Child]) -> Dict[str, Any]:
     return broker_health_snapshot(children)
 
 
+def _resolve_repo_root() -> Path:
+    """Resolve repo root and verify supervisor module lives inside it.
+
+    Defends against CLAUDE_PROJECT_DIR pointing at attacker-controlled dir
+    with malicious scripts/start-sidecar.sh.
+    """
+    raw = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    repo_root = Path(raw).resolve(strict=True)
+    self_path = Path(__file__).resolve(strict=True)
+    try:
+        self_path.relative_to(repo_root)
+    except ValueError:
+        raise RuntimeError(
+            f"[supervisor] CLAUDE_PROJECT_DIR={raw!r} resolves to {repo_root}, "
+            f"but supervisor module {self_path} is not inside it. Refusing to spawn."
+        )
+    if not (repo_root / "pyproject.toml").is_file():
+        raise RuntimeError(f"[supervisor] {repo_root} missing pyproject.toml marker")
+    return repo_root
+
+
 def _build_children(repo_root: Path) -> List[_Child]:
     children: List[_Child] = []
     mamba_port = int(os.environ.get("S2_PORT", "8765"))
@@ -172,7 +193,7 @@ def _build_children(repo_root: Path) -> List[_Child]:
 
 
 def main() -> int:
-    repo_root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    repo_root = _resolve_repo_root()
     children = _build_children(repo_root)
     stop = threading.Event()
 

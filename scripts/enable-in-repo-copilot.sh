@@ -85,5 +85,5 @@ merged hybrid-reasoner into $target
 
 next:
   curl -fsS http://127.0.0.1:8765/health         # confirm sidecar
-  copilot --allow-all-tools "say hi"             # smoke-test (env: COPILOT_ALLOW_ALL=1)
+  copilot "say hi"                               # smoke-test (review tool-trust prompts; do NOT pass --allow-all-tools)
 DONE

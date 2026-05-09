@@ -16,6 +16,7 @@ Per v2 plan reviewer corrections folded in:
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -31,6 +32,59 @@ def _default_url() -> str:
     return os.environ.get("RC_GEN_URL", "http://127.0.0.1:8766/v1/chat/completions")
 
 
+def _is_loopback_host(host: str) -> bool:
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _allowed_remote_hosts() -> frozenset[str]:
+    """Hosts permitted to receive the Bearer token. Empty by default.
+
+    Operators using a hosted critic (e.g. api.scaleway.ai) must opt in by
+    listing the host in RC_GEN_ALLOWED_HOSTS (CSV).
+    """
+    raw = os.environ.get("RC_GEN_ALLOWED_HOSTS", "")
+    return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
+
+
+def _bearer_safe_for(url: str) -> bool:
+    """Return True when it is safe to attach Authorization to this URL.
+
+    Loopback always safe. Remote hosts must be explicitly allowlisted via
+    RC_GEN_ALLOWED_HOSTS to prevent leaking the API key to an attacker who
+    redirects RC_GEN_URL through dotfile / .envrc / IDE-config injection.
+    """
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    if _is_loopback_host(host):
+        return True
+    if parsed.scheme != "https":
+        return False
+    return host in _allowed_remote_hosts()
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """urllib does not strip Authorization on cross-origin 30x redirects
+    (unlike requests' rebuild_auth). Refuse redirects to keep the Bearer
+    token from leaving the originally-validated host.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirectHandler)
+
+
 def _default_budget_ms() -> int:
     return int(os.environ.get("RC_GEN_BUDGET_MS", "2500"))
 
@@ -42,12 +96,19 @@ def _backend_active() -> bool:
 def _audit_emit(reason: str, **fields: Any) -> None:
     """Emit a JSONL event so CDGS BM25 fallback is visible in audit."""
     try:
-        path = os.environ.get(
-            "RC_GEN_FALLBACK_LOG",
-            os.path.expanduser("~/.local/share/reasoning-core/events/gen_fallback.jsonl"),
-        )
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a") as f:
+        default_path = os.path.expanduser("~/.local/share/reasoning-core/events/gen_fallback.jsonl")
+        path = os.environ.get("RC_GEN_FALLBACK_LOG", default_path)
+        allowed_prefixes = [
+            os.path.realpath(os.path.expanduser("~/.local/share/reasoning-core")),
+            os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".cache")),
+        ]
+        resolved = os.path.realpath(path)
+        if not any(resolved == p or resolved.startswith(p + os.sep) for p in allowed_prefixes):
+            return
+        os.makedirs(os.path.dirname(resolved), exist_ok=True)
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(resolved, flags, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write(json.dumps({
                 "ts": time.time(),
                 "signal_source": "bm25_fallback",
@@ -64,13 +125,14 @@ def health_ok(url: Optional[str] = None) -> bool:
     target = url or _default_url()
     parsed = urllib.parse.urlsplit(target)
     base = f"{parsed.scheme}://{parsed.netloc}"
+    probe_url = f"{base}/v1/models"
     headers = {}
     api_key = os.environ.get("RC_GEN_API_KEY") or os.environ.get("SCALEWAY_API_KEY")
-    if api_key:
+    if api_key and _bearer_safe_for(probe_url):
         headers["Authorization"] = f"Bearer {api_key}"
     try:
-        req = urllib.request.Request(f"{base}/v1/models", headers=headers)
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        req = urllib.request.Request(probe_url, headers=headers)
+        with _NO_REDIRECT_OPENER.open(req, timeout=5.0) as resp:
             return 200 <= resp.status < 300
     except (urllib.error.URLError, OSError, ValueError):
         return False
@@ -80,7 +142,7 @@ def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, 
     raw = json.dumps(body).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     api_key = os.environ.get("RC_GEN_API_KEY") or os.environ.get("SCALEWAY_API_KEY")
-    if api_key:
+    if api_key and _bearer_safe_for(url):
         headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
         url,
@@ -89,7 +151,7 @@ def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, 
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=budget_ms / 1000.0) as resp:
+        with _NO_REDIRECT_OPENER.open(req, timeout=budget_ms / 1000.0) as resp:
             data = resp.read().decode("utf-8")
         return json.loads(data)
     except urllib.error.HTTPError as exc:

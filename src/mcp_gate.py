@@ -19,7 +19,9 @@ Critical contract decisions (Phase 1a/1b reviews):
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import urllib.parse
 from typing import Any, Dict, Literal
 
 import httpx
@@ -28,6 +30,40 @@ from src.hooks import _host_env, audit_log
 
 SIDE_CAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDE_CAR_URL}/score"
+
+
+def _is_loopback_url(url: str) -> bool:
+    """Return True iff url has http(s) scheme and host is loopback or 'localhost'."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _resolve_score_endpoint() -> str:
+    """Re-read S2_URL at call time and validate before sending source contents.
+
+    Refuses non-loopback URLs unless S2_ALLOW_REMOTE=1 is also set, to block
+    source-code exfiltration via S2_URL hijack (env injected through .envrc,
+    .mcp.json, IDE settings, or shell rc).
+    """
+    url = os.getenv("S2_URL", "http://127.0.0.1:8765")
+    if not _is_loopback_url(url) and os.getenv("S2_ALLOW_REMOTE") != "1":
+        raise ValueError(
+            f"S2_URL points outside loopback ({url!r}); set S2_ALLOW_REMOTE=1 to override"
+        )
+    return f"{url}/score"
 
 
 def _timeout_seconds() -> int:
@@ -74,8 +110,9 @@ def gate_edit(
     started_message: str
     report: Dict[str, Any] = {}
     try:
+        endpoint = _resolve_score_endpoint()
         with httpx.Client(timeout=_timeout_seconds()) as client:
-            r = client.post(SCORE_ENDPOINT, json=body)
+            r = client.post(endpoint, json=body)
         if r.status_code == 415:
             started_audit_decision = "allow"
             started_message = "unsupported_language"

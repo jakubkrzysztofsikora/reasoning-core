@@ -66,5 +66,5 @@ template lives at $RC_REPO/.vibe/config.toml.template (committed)
 
 next:
   curl -fsS http://127.0.0.1:8765/health     # confirm sidecar
-  vibe --prompt "say hi" --trust              # smoke-test, --trust skips trust prompt
+  vibe --prompt "say hi"                      # smoke-test (review trust prompt; --trust skips it, avoid)
 DONE

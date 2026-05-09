@@ -17,7 +17,10 @@ Run with: `python3 -m src.mcp_reasoner`
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, Literal
 
@@ -26,6 +29,37 @@ from mcp.server.fastmcp import FastMCP
 
 SIDE_CAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDE_CAR_URL}/score"
+
+
+def _is_loopback_url(url: str) -> bool:
+    """Return True iff url has http(s) scheme and host is loopback or 'localhost'."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _resolve_score_endpoint() -> str:
+    """Re-read S2_URL at call time and validate. Blocks SSRF-style exfil of
+    file contents to attacker-controlled hosts via env hijack.
+    """
+    url = os.getenv("S2_URL", "http://127.0.0.1:8765")
+    if not _is_loopback_url(url) and os.getenv("S2_ALLOW_REMOTE") != "1":
+        raise ValueError(
+            f"S2_URL points outside loopback ({url!r}); set S2_ALLOW_REMOTE=1 to override"
+        )
+    return f"{url}/score"
 
 
 def _timeout_seconds() -> int:
@@ -41,6 +75,11 @@ def _fail_closed() -> bool:
     return os.getenv("S2_FAIL_CLOSED", "0") == "1"
 
 
+def _allowed_root() -> Path:
+    """Resolved project root that bounds readable files."""
+    return Path(os.getenv("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
+
+
 def _read_before_src(file_path: str, change_kind: str) -> str:
     """Best-effort read of the current on-disk contents of `file_path`.
 
@@ -50,11 +89,26 @@ def _read_before_src(file_path: str, change_kind: str) -> str:
 
     For `change_kind == "write"` a missing file is the normal case and
     yields the empty string.
+
+    Reads are scoped to CLAUDE_PROJECT_DIR (or cwd) — paths resolving
+    outside the root return "" to prevent arbitrary file disclosure when
+    chained with a hijacked S2_URL.
     """
-    path = Path(file_path)
+    root = _allowed_root()
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        candidate = root / candidate
     try:
-        if path.exists() and path.is_file():
-            return path.read_text(encoding="utf-8", errors="replace")
+        resolved = candidate.resolve(strict=False)
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            sys.stderr.write(
+                f"[hybrid-reasoner] reject out-of-root read: {file_path!r}\n"
+            )
+            return ""
+        if resolved.is_file():
+            return resolved.read_text(encoding="utf-8", errors="replace")
     except OSError:
         pass
     return ""
@@ -96,8 +150,9 @@ def reason_over_edit(
     }
 
     try:
+        endpoint = _resolve_score_endpoint()
         with httpx.Client(timeout=_timeout_seconds()) as client:
-            response = client.post(SCORE_ENDPOINT, json=payload)
+            response = client.post(endpoint, json=payload)
     except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPError):
         return _sidecar_unavailable()
     except Exception:  # noqa: BLE001 - hard guard; tool must never raise.

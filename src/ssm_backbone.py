@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -43,6 +44,49 @@ FALLBACK_CHECKPOINTS = (
     # the sidecar honest in air-gapped envs by still producing real embeddings.
     "sshleifer/tiny-gpt2",
 )
+
+# Hard allowlist for `S2_SSM_CHECKPOINT`. The checkpoint id must come
+# from a fixed set — env override of an arbitrary HF repo is supply-chain RCE.
+_ALLOWED_CHECKPOINTS = frozenset({DEFAULT_CHECKPOINT, *FALLBACK_CHECKPOINTS})
+
+# Pinned commit SHAs (verified against huggingface.co/api/models/<repo>
+# 2026-05-09). HF branches and tags are mutable refs; only commit SHAs are
+# immutable, so a malicious push to upstream main cannot reach a sidecar
+# pinned to a known-good SHA.
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_PINNED_REVISIONS: dict[str, str] = {
+    "state-spaces/mamba-130m-hf": "1e76775f628fbf1350fbe4dbb3d971ba64af25a1",
+    "state-spaces/mamba2-130m":   "3a5aea0c25d0fb43cc360e2c2aac82c26e3eed49",
+    "sshleifer/tiny-gpt2":        "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
+}
+
+
+def _revision_env_key(repo_id: str) -> str:
+    return "RC_" + re.sub(r"[^A-Z0-9]", "_", repo_id.upper()) + "_REVISION"
+
+
+def _resolve_revision(repo_id: str) -> str:
+    """Return a 40-char commit SHA for `repo_id`. Fails closed on mutable refs.
+
+    Optional override via `RC_<REPO_SLUG>_REVISION` env var, which must also
+    be a 40-char hex SHA. Branch names like 'main' are explicitly rejected
+    to prevent supply-chain attacks via a malicious upstream push.
+    """
+    env_key = _revision_env_key(repo_id)
+    override = os.environ.get(env_key, "").strip()
+    if override:
+        if not _SHA_RE.match(override):
+            raise BackboneUnavailableError(
+                f"{env_key}={override!r} is not a 40-char hex commit SHA. "
+                f"Mutable refs (branches/tags) are forbidden."
+            )
+        return override
+    pin = _PINNED_REVISIONS.get(repo_id)
+    if not pin:
+        raise BackboneUnavailableError(
+            f"No pinned revision for {repo_id!r}. Add it to _PINNED_REVISIONS."
+        )
+    return pin
 
 # Filled in after first successful load_backbone() call. Consumed by the
 # /health endpoint and ARCHITECTURE.md generation.
@@ -91,8 +135,16 @@ def _resolve_checkpoint(checkpoint: Optional[str]) -> str:
     # Env wins when caller didn't pass an explicit override.
     env_val = os.environ.get("S2_SSM_CHECKPOINT", "").strip()
     if checkpoint is None:
-        return env_val or DEFAULT_CHECKPOINT
-    return env_val or checkpoint or DEFAULT_CHECKPOINT
+        resolved = env_val or DEFAULT_CHECKPOINT
+    else:
+        resolved = env_val or checkpoint or DEFAULT_CHECKPOINT
+    if resolved not in _ALLOWED_CHECKPOINTS:
+        raise BackboneUnavailableError(
+            f"checkpoint {resolved!r} is not in the allowlist "
+            f"{sorted(_ALLOWED_CHECKPOINTS)}; refusing to load with "
+            f"trust_remote_code=True against an arbitrary HF repo"
+        )
+    return resolved
 
 
 def _try_load(ckpt: str, device: str) -> Optional[_BackboneHandle]:
@@ -106,11 +158,22 @@ def _try_load(ckpt: str, device: str) -> Optional[_BackboneHandle]:
         return None
 
     try:
-        logger.info("Loading SSM backbone checkpoint=%s device=%s", ckpt, device)
-        # trust_remote_code is permitted for state-spaces/* in case the
-        # repo ships custom modeling code; HF will only execute it if present.
-        tokenizer = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
-        model = AutoModel.from_pretrained(ckpt, trust_remote_code=True)
+        revision = _resolve_revision(ckpt)
+        logger.info(
+            "Loading SSM backbone checkpoint=%s revision=%s device=%s",
+            ckpt, revision[:12], device,
+        )
+        # trust_remote_code=False: mamba(-2) + tiny-gpt2 are all natively
+        # supported in transformers >=4.39 (Mamba) / >=4.40 (Mamba2). Setting
+        # this to True would let a malicious HF repo execute arbitrary Python
+        # at load time, which is the primary supply-chain RCE vector for
+        # AutoModel.from_pretrained.
+        tokenizer = AutoTokenizer.from_pretrained(
+            ckpt, revision=revision, trust_remote_code=False,
+        )
+        model = AutoModel.from_pretrained(
+            ckpt, revision=revision, trust_remote_code=False,
+        )
         model.eval()
         try:
             model.to(device)

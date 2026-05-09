@@ -67,5 +67,5 @@ template lives at $RC_REPO/.gemini/settings.json.template (committed)
 
 next:
   curl -fsS http://127.0.0.1:8765/health   # confirm sidecar
-  gemini --yolo "say hi"                    # smoke-test, --yolo bypasses MCP trust prompt
+  gemini "say hi"                           # smoke-test (review MCP trust prompt; --yolo bypasses it, avoid)
 DONE
