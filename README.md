@@ -750,7 +750,7 @@ spottable later.
 | `calibration_corpus.py` | Mines labeled (good-edit, bad-edit) pairs from git history |
 | `golden_set.py` | Pinned regression cases that must keep their decisions across releases |
 | `recalibrate.py` | Page-Hinkley monthly recal of per-kind thresholds |
-| `qwen_grounding_eval.py` | Computes Cohen κ between SSM gate and the generative critic. Two datasets: v1 (`datasets/grounding_pairs.jsonl`, 200 pairs git-mined) and v2 (`datasets/grounding_pairs_v2.jsonl`, 138 pairs, devstral-123b judge-relabeled). Live κ on v2 = 0.74 but contaminated by kin-judge family + selection bias (v2 keeps only pairs where judge agreed with teacher); gate runs **advisory** until v3 cross-family dataset lands. Default arg `--gate-kappa 0.6` ≠ docstring `0.7` target — see [tracker #74-86](thoughts/shared/plans/2026-05-06-iter2-100pct-eval-plan.md) for the v3 gate plan. |
+| `qwen_grounding_eval.py` | Computes Cohen κ between SSM gate and the generative critic. Three datasets: v1 (`datasets/grounding_pairs.jsonl`, 200 pairs git-mined), v2 (`datasets/grounding_pairs_v2.jsonl`, 138 pairs, devstral-123b judge-relabeled, kin-judge contaminated), and v3 (`datasets/grounding_pairs_v3.jsonl`, 131 high-confidence pairs from a 200-pair input × 3 cross-family judges: devstral + llama-3.3-70b + mistral-small). Independence test on v3 reports max pairwise κ = 0.6998 (passes the < 0.7 gate by 0.0002). Live sentinel `eval/runs/qwen_kappa_gate.json`: gate_pass=true, κ=0.8025, dataset_version=v3. NB: `coh_delta_epsilon.json` is currently a bootstrap placeholder; needs live-derivation from the v3 benign subset before SCR promotion. |
 | `relabel_grounding_pairs.py` | Pipeline that produced v2 from v1 via Scaleway-hosted devstral-2-123b judge (`4ed3245`) |
 | `run_suite.py` + `aggregate.py` + `stats.py` | Paired Wilcoxon harness across N runs |
 | `synthetic_drift.py` | Generates drifted variants for stress testing |
@@ -1197,6 +1197,12 @@ risk-vector-delta-refactor + coherence-delta-calibration write-ups and
   (`b7f0517`).
 - **P5 grounding pairs v2** — judge-relabeled high-confidence subset; live κ=0.74
   on v2 (kin-judge contaminated, gate advisory) (`4ed3245`).
+- **P5 grounding pairs v3 — cross-family κ dataset** — 131 high-confidence
+  pairs (200 input) × 3 judges (devstral + llama-3.3-70b + mistral-small);
+  max pairwise-κ = 0.6998 < 0.7 independence gate; sentinel `qwen_kappa_gate.json`
+  reports gate_pass=true at κ=0.8025. Replaces the kin-judge-contaminated v2.
+- **Linux systemd user-unit recipe** — copy-paste `~/.config/systemd/user/reasoning-core-sidecar.service`
+  documented inline in §6 (mirrors the macOS launchd supervisor).
 - **P7 — Calibration concurrent with shadow mode** (Mahalanobis + Ledoit-Wolf
   shrinkage + empirical-Bayes per-kind anchor).
 - **P7 supervisor watcher** — consumes `recalibrate.signal` for hot-refit without
@@ -1222,13 +1228,10 @@ risk-vector-delta-refactor + coherence-delta-calibration write-ups and
 - **TTFV (<15 min) + drift visualization** — Phase 1: `rc audit-history` (last
   N commits, what would have been blocked) + `rc viz` Mermaid sparkline +
   `npx reasoning-core init` one-line installer.
-- **v3 cross-family κ dataset** — Phase 3.5: 200 pairs × 3 judges (devstral
-  + llama-3.3-70b + mistral-small) with pairwise-κ < 0.7 independence test.
-  Replaces the kin-judge-contaminated v2 sentinel.
 - **CUDA / MLX kernels** for the Mamba forward pass (currently CPU-only; p95 ~5s).
-- **SSE `/score/stream`** + Prometheus textfmt `/metrics`.
+- **SSE `/score/stream`** + Prometheus textfmt `/metrics` (current `/metrics`
+  returns JSON; SSE endpoint not yet wired).
 - **Pre-commit variant** so non-Claude editors are also gated.
-- **Linux systemd service** to mirror the macOS launchd supervisor.
 - **Mamba-3 watch + Plan-B Mamba-2-2.7B fallback** — Phase 4: HOLD on Mamba-3
   (no public HF checkpoint as of 2026-05; CUDA-only kernels; only 1/8 risk
   dims uses SSM embedding). Plan-B fallback ships behind `RC_USE_MAMBA2_2_7B=1`.
