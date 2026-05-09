@@ -155,6 +155,18 @@ def _sidecar_unavailable(extra: Dict[str, Any] | None = None) -> Dict[str, Any]:
 # senior dev review flagged that two scoring tools on the same FastMCP server
 # must share an error contract (both return dict, neither raises McpError).
 try:
+    from src.mcp_diff_validator import validate_unified_diff as _validate_diff_impl
+    mcp.tool()(_validate_diff_impl)
+except Exception as exc:  # noqa: BLE001 - never break reason_over_edit
+    import sys as _sys
+    try:
+        _sys.stderr.write(
+            f"[hybrid-reasoner] WARNING: validate_unified_diff registration failed: {exc!r}\n"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+try:
     from src.mcp_gate import gate_edit as _gate_edit_impl
     mcp.tool()(_gate_edit_impl)
 except Exception as exc:  # noqa: BLE001 - registration failure must not break reason_over_edit

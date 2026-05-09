@@ -21,6 +21,20 @@ GUIDANCE = (
 
 RETRY = "\n  RETRY DETECTED: same file was blocked recently. Revise content; do not retry the same write.\n"
 
+DEGRADED_FALLBACK = (
+    "\n  RECOVERY PATH (if retries keep failing):\n"
+    "    1. Emit final patch as a fenced ```diff … ``` block.\n"
+    "    2. Every hunk-body line MUST start with one of: ' ', '+', '-', '\\\\'.\n"
+    "    3. Do NOT wrap long lines — each hunk-body line stays on ONE\n"
+    "       physical line regardless of length.\n"
+    "    4. Hunk header `@@ -A,B +C,D @@` MUST satisfy:\n"
+    "         B == count(context) + count(removed)\n"
+    "         D == count(context) + count(added)\n"
+    "    5. Blank context lines are encoded as a single space, never empty.\n"
+    "    6. Optional: call MCP tool `validate_unified_diff` before final\n"
+    "       emission to catch structural errors.\n"
+)
+
 
 def _f(v):
     try:
@@ -51,5 +65,5 @@ def format_block(file_path, report, is_retry=False):
         f"  coherence_delta: {_f(report.get('coherence_delta'))}  (thr {cd_thr_str})\n"
         f"  top risk contributors:\n{contribs}\n"
         f"  summary: {report.get('human_summary') or '(none)'}"
-        f"{retry}{GUIDANCE}"
+        f"{retry}{GUIDANCE}{DEGRADED_FALLBACK if is_retry else ''}"
     )
