@@ -1,15 +1,42 @@
-# reasoning-core
+<!--- Logo --->
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/logo-dark.svg">
+    <img alt="reasoning-core logo" src="./docs/logo.svg" width="300" height="150">
+  </picture>
+</p>
 
-> **Stop the agent vibecoding files outside its plan**. Save your AI tokens. 100% locally.
-> Mamba SSM that reasons about the *structure* of your codebase, not treating it like a flat string.
+<p align="center">
+  <strong>reasoning-core</strong>
+</p>
 
-[![lint-and-test](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml/badge.svg)](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml)
-[![eval](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml/badge.svg)](https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#roadmap)
-[![Mamba 130M](https://img.shields.io/badge/SSM-mamba--130m-purple.svg)](https://huggingface.co/state-spaces/mamba-130m-hf)
-[![MCP](https://img.shields.io/badge/MCP-FastMCP-3b82f6.svg)](https://modelcontextprotocol.io/)
+<p align="center">
+  Stop the agent vibecoding files outside its plan. Save your AI tokens. 100% locally.
+</p>
+
+<p align="center">
+  <a href="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml">
+    <img src="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/lint-and-test.yml/badge.svg" alt="lint-and-test">
+  </a>
+  <a href="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml">
+    <img src="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml/badge.svg" alt="eval">
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
+  </a>
+  <a href="https://www.python.org/downloads/">
+    <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+">
+  </a>
+  <a href="#roadmap">
+    <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Status: alpha">
+  </a>
+  <a href="https://huggingface.co/state-spaces/mamba-130m-hf">
+    <img src="https://img.shields.io/badge/SSM-mamba--130m-purple.svg" alt="Mamba 130M">
+  </a>
+  <a href="https://modelcontextprotocol.io/">
+    <img src="https://img.shields.io/badge/MCP-FastMCP-3b82f6.svg" alt="MCP">
+  </a>
+</p>
 
 ---
 
