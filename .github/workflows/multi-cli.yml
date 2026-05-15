@@ -15,25 +15,15 @@
 name: multi-cli
 
 on:
+  # Run on every PR (no paths filter): an install.sh / uninstall.sh / docs
+  # change can break the multi-CLI install contract just as easily as a
+  # change under src/hooks/adapters. The matrix is cheap (~2 min/cell) and
+  # the user-facing complaint that some recent PRs landed green-with-errors
+  # in logs argues for *more* coverage, not less.
   pull_request:
-    paths:
-      - "src/hooks/adapters/**"
-      - "src/hooks/_envelope.py"
-      - "src/hooks/_host_env.py"
-      - "src/mcp_gate.py"
-      - "src/mcp_reasoner.py"
-      - ".gemini/**"
-      - ".copilot/**"
-      - ".vibe/**"
-      - "scripts/enable-in-repo-*.sh"
-      - "tests/test_adapter_*.py"
-      - "tests/test_host_env.py"
-      - "tests/test_mcp_gate.py"
-      - "tests/test_skill_drift.py"
-      - "tests/test_enable_in_repo_backcompat.py"
-      - ".github/workflows/multi-cli.yml"
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   verified:
@@ -53,32 +43,88 @@ jobs:
           python-version: "3.11"
       - name: Install python deps
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
+          # Minimal set the adapter+smoke tests need. If a test transitively
+          # pulls in something heavier (torch / transformers / tree_sitter),
+          # pytest will report ERROR rather than masking it as a skip.
           pip install portalocker pytest pytest-timeout httpx mcp
       - name: Run host-specific adapter + smoke tests
+        # -ra: summarise all skips/errors/xfails at the bottom of the run so a
+        # silently-skipped test is visible in CI logs.
+        # --strict-markers: a typo in a marker becomes a failure, not a warn.
+        # --maxfail=1: stop on first failure so the log isn't drowned in
+        # downstream cascades.
         run: |
+          set -euo pipefail
           export RC_HOST=${{ matrix.host }}
           export RC_REPO=$(pwd)
           if [ "${{ matrix.host }}" = "claude" ]; then
-            python -m pytest tests/test_host_env.py tests/test_adapter_claude.py tests/test_skill_drift.py tests/test_enable_in_repo_backcompat.py -q --timeout=30
+            python -m pytest \
+              tests/test_host_env.py tests/test_adapter_claude.py \
+              tests/test_skill_drift.py tests/test_enable_in_repo_backcompat.py \
+              -ra --strict-markers --maxfail=1 --timeout=30
           else
-            python -m pytest tests/test_adapter_${{ matrix.host }}.py tests/test_skill_drift.py -q --timeout=30
+            python -m pytest \
+              tests/test_adapter_${{ matrix.host }}.py tests/test_skill_drift.py \
+              -ra --strict-markers --maxfail=1 --timeout=30
           fi
-      - name: Smoke-test enable script (idempotency + JSON validity)
+      - name: Smoke-test legacy enable-in-repo-${{ matrix.host }}.sh
+        # Per-host script — gemini / copilot / vibe each have one. Claude
+        # is covered by enable-in-repo.sh + the back-compat pytest above.
         if: matrix.host != 'claude'
         run: |
+          set -euo pipefail
           tmp=$(mktemp -d)
           cd "$tmp"
           git init -q
           touch .envrc
           export RC_REPO=$GITHUB_WORKSPACE
           bash "$RC_REPO/scripts/enable-in-repo-${{ matrix.host }}.sh"
-          # Validate generated config parses
+          # Validate generated config parses.
           if [ "${{ matrix.host }}" = "gemini" ]; then
             python -c "import json; json.load(open('.gemini/settings.json'))"
           elif [ "${{ matrix.host }}" = "vibe" ]; then
             python -c "import tomllib; tomllib.load(open('.vibe/config.toml','rb'))"
           fi
+      - name: Smoke-test unified install.sh / uninstall.sh round-trip
+        # Runs once per matrix host (the unified installer wires ALL hosts;
+        # matrix gives us four independent fresh runs per PR). HOME is
+        # redirected to a sandbox so the test doesn't mutate the runner's
+        # real ~/.copilot or ~/.vibe state.
+        if: hashFiles('install.sh') != ''
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          fake_home=$(mktemp -d)
+          cd "$tmp"
+          git init -q
+          touch .gitignore
+          HOME="$fake_home" bash "$GITHUB_WORKSPACE/install.sh"
+          test -f .envrc                          || { echo "::error::install.sh did not write .envrc";                     exit 1; }
+          test -f .claude/settings.local.json     || { echo "::error::install.sh did not write .claude/settings.local.json"; exit 1; }
+          test -f .gemini/settings.json           || { echo "::error::install.sh did not write .gemini/settings.json";       exit 1; }
+          test -f .copilot/copilot-instructions.md || { echo "::error::install.sh did not write .copilot/copilot-instructions.md"; exit 1; }
+          test -f .vibe/config.toml               || { echo "::error::install.sh did not write .vibe/config.toml";           exit 1; }
+          test -f .reasoning-core/install.manifest || { echo "::error::install.sh did not write the manifest";               exit 1; }
+          python -c "import json; json.load(open('.claude/settings.local.json'))"
+          python -c "import json; json.load(open('.gemini/settings.json'))"
+          python -c "import tomllib; tomllib.load(open('.vibe/config.toml','rb'))"
+          python -c "import json; json.load(open('$fake_home/.copilot/mcp-config.json'))"
+          # Round-trip
+          HOME="$fake_home" bash "$GITHUB_WORKSPACE/uninstall.sh"
+          # After uninstall, only .git/, .gitignore (plus possibly the
+          # `tricky&path with spaces` parent on test runs) should remain.
+          remaining=$(ls -A | grep -vxE '\.git|\.gitignore' || true)
+          if [[ -n "$remaining" ]]; then
+            echo "::error::uninstall.sh left files behind: $remaining"
+            exit 1
+          fi
+          # Re-install must be idempotent — second pass touches nothing
+          # fatally.
+          HOME="$fake_home" bash "$GITHUB_WORKSPACE/install.sh"
+          HOME="$fake_home" bash "$GITHUB_WORKSPACE/install.sh"  # second pass = no-op
+          rm -rf "$tmp" "$fake_home"
 
   experimental:
     name: experimental-stub
