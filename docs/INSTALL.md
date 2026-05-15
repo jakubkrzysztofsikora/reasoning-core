@@ -59,6 +59,24 @@ First CPU boot is ~30s to load Mamba weights.
 brew install direnv                                  # or: apt-get install direnv
 echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc         # or bash equivalent
 cd /path/to/your-repo
+```
+
+Create a `.envrc` in the target repo (the one-command `install.sh` does this
+for you; for a manual install, hand-author one — minimal form below — or
+copy from the reasoning-core repo's own `.envrc` and trim to taste).
+
+```bash
+cat > .envrc <<'EOF'
+export RC_REPO="$HOME/Repos/personal/reasoning-core"
+if [[ -d "$RC_REPO/.venv/bin" ]]; then PATH_add "$RC_REPO/.venv/bin"; fi
+export S2_DEVICE="${S2_DEVICE:-cpu}"
+export S2_PORT="${S2_PORT:-8765}"
+export S2_TIMEOUT="${S2_TIMEOUT:-30}"
+export S2_FAIL_CLOSED="${S2_FAIL_CLOSED:-0}"
+export RC_SHADOW_MODE="${RC_SHADOW_MODE:-1}"
+[[ -f .envrc.local ]] && source_env .envrc.local
+EOF
+
 direnv allow .
 export PATH="$RC_REPO/bin:$PATH"                     # so `rc` shim resolves
 ```

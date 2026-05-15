@@ -36,9 +36,16 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | L9 | `session_resume_inject.py` | SessionStart (resume) + UserPromptSubmit | Re-injects pinned env from the prior session manifest into the resumed shell |
 | L10 | `post_assistant_diff_audit.py` | Stop (opt-in, `RC_DIFF_AUDIT=1`) | Scans the last assistant diff in transcript via `validate_unified_diff`; injects advisory + best-effort repaired patch |
 
-All wired in [`.claude/settings.json`](../.claude/settings.json) (L1–L9
-default; L10 opt-in). Every fire emits an audit row to
+L1–L9 are wired in the reasoning-core repo's own
+[`.claude/settings.json`](../.claude/settings.json) and in the per-repo
+[`.claude/settings.local.json`](../install.sh) that `install.sh` generates
+for any target repo. L10 is opt-in. Every fire emits an audit row to
 `~/.local/share/reasoning-core/events/` (schema v3).
+
+Note: hook arrays in `~/.claude/settings.json`, the repo's
+`.claude/settings.json`, and a per-repo `.claude/settings.local.json` merge
+**additively**. Register the same hook in two of those and it runs twice
+per edit. Pick one source-of-truth per environment.
 
 Internal helpers (libraries, not hook entrypoints): `_audit_rotation`,
 `_block_format`, `_calibration_gate`, `_dispatch`, `_guard_paths`,

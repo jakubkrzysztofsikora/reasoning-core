@@ -29,6 +29,19 @@ on:
       - "src/**"
       - "eval/**"
       - ".github/workflows/eval.yml"
+  pull_request:
+    # Same paths filter: skip eval on doc-only PRs to keep the gate cheap.
+    # PR runs use n_tasks=1 + RC_LIVE=0 (no live LLM calls) so they fit
+    # comfortably inside a 30-minute free-runner budget.
+    paths:
+      - "src/**"
+      - "eval/**"
+      - "scripts/start-sidecar.sh"
+      - "scripts/start-gen-sidecar.sh"
+      - "install.sh"
+      - "uninstall.sh"
+      - "requirements.txt"
+      - ".github/workflows/eval.yml"
   workflow_dispatch:
     inputs:
       n_tasks:
@@ -59,7 +72,9 @@ concurrency:
 env:
   S2_FAIL_CLOSED: "0"
   S2_TIMEOUT: "60"
-  RC_LIVE: "1"
+  # PR runs use stub/offline mode so we don't burn live LLM credits on every
+  # commit. Push/dispatch keep RC_LIVE=1 to exercise the full hosted critic.
+  RC_LIVE: ${{ github.event_name == 'pull_request' && '0' || '1' }}
   PYTHONDONTWRITEBYTECODE: "1"
   HF_HOME: ${{ github.workspace }}/.cache/huggingface
   TRANSFORMERS_CACHE: ${{ github.workspace }}/.cache/huggingface/hub
@@ -72,10 +87,12 @@ jobs:
     name: eval-smoke (n<=5)
     if: >-
       github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
       (github.event_name == 'workflow_dispatch' &&
        fromJSON(github.event.inputs.n_tasks || '5') <= 5)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # PR runs are capped to 20 min (n=1, no live LLM); push/dispatch get 30.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 20 || 30 }}
 
     steps:
       - name: Checkout
@@ -144,7 +161,10 @@ jobs:
       - name: Run eval suite
         id: run
         env:
-          N_TASKS: ${{ github.event.inputs.n_tasks || '2' }}
+          # PR: n=1 (smallest possible, ~5 min on free runner, offline arms only).
+          # Push: n=2 (the EM-validated comfortable default).
+          # Dispatch: whatever the human picked.
+          N_TASKS: ${{ github.event.inputs.n_tasks || (github.event_name == 'pull_request' && '1') || '2' }}
           ARMS: ${{ github.event.inputs.arms || 'vanilla,treatment' }}
         run: |
           set -euo pipefail

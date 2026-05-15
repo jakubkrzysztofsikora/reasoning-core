@@ -31,8 +31,8 @@ provides a pinned SHA via `RC_<REPO_SLUG>_REVISION` (uppercase, non-alpha
 | `S2_PORT` | `8765` | Sidecar bind port |
 | `S2_URL` | `http://127.0.0.1:$S2_PORT` | Override hook target; non-loopback rejected unless `S2_ALLOW_REMOTE=1` |
 | `S2_ALLOW_REMOTE` | _unset_ | `1` permits a non-loopback `S2_URL` (off by default — blocks SSRF-style source exfil via `.envrc`/`.mcp.json` injection) |
-| `S2_TIMEOUT` | `60` | Hook `/score` timeout (seconds) |
-| `S2_FAIL_CLOSED` | `1` | `1` blocks edits when sidecar unreachable |
+| `S2_TIMEOUT` | `30` | Hook `/score` timeout (seconds) |
+| `S2_FAIL_CLOSED` | `0` | `1` blocks edits when sidecar unreachable; `0` (default in code) fails open |
 | `S2_HEALTH_TIMEOUT` | `120` | Sidecar boot wait for `model_loaded:true` (seconds) |
 | `S2_LOG_LEVEL` | `INFO` | Sidecar log level |
 | `S2_LOG_FILE` | `/tmp/reasoning-core-sidecar.log` | When `BACKGROUND=1`, redirect sidecar logs here |

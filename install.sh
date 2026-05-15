@@ -7,8 +7,9 @@
 # Mistral Vibe CLI) plus a direnv `.envrc`.
 #
 # Idempotent: files that already exist are skipped (the script will tell
-# you which ones). A manifest of created paths is written to
-# `.reasoning-core/install.manifest` so `uninstall.sh` knows what to remove.
+# you which ones). A manifest of created paths is APPENDED to
+# `.reasoning-core/install.manifest` so re-runs accumulate state and
+# `uninstall.sh` knows what to remove.
 #
 # Defaults are conservative (shadow mode ON, fail-open). Promote later by
 # editing `.envrc.local` per `docs/USAGE.md`.
@@ -19,6 +20,11 @@ RC_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_REPO="$(pwd)"
 MANIFEST_DIR=".reasoning-core"
 MANIFEST="$MANIFEST_DIR/install.manifest"
+
+# Venv interpreter inside the reasoning-core checkout. The hooks import
+# tree_sitter, transformers, fastapi, PyYAML, etc. — bare `python3` from
+# system PATH almost never has those. Using the venv path is load-bearing.
+RC_PYTHON="$RC_REPO/.venv/bin/python"
 
 ok()    { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 skip()  { printf '  \033[33m·\033[0m %s\n' "$*"; }
@@ -35,32 +41,70 @@ if [[ ! -d .git ]] && [[ ! -f .git ]]; then
 fi
 
 mkdir -p "$MANIFEST_DIR"
-: > "$MANIFEST"
-record() { printf '%s\n' "$1" >> "$MANIFEST"; }
+# Append, don't truncate: a re-run after a partial install must still be
+# able to clean up paths recorded on a previous run.
+touch "$MANIFEST"
+
+# record <path> — append exactly once.
+record() {
+  local p="$1"
+  if ! grep -qxF "$p" "$MANIFEST" 2>/dev/null; then
+    printf '%s\n' "$p" >> "$MANIFEST"
+  fi
+}
+
+# render_template <template> <target> — substitute <RC_REPO> AND replace
+# the bare `python3` interpreter at the start of hook commands with the
+# venv interpreter. Uses Python (not sed) so paths containing `&`, `\`, or
+# `|` don't corrupt the output.
+render_template() {
+  local src="$1" dst="$2"
+  RC_REPO="$RC_REPO" RC_PYTHON="$RC_PYTHON" SRC="$src" DST="$dst" python3 <<'PYEOF'
+import os, re
+src, dst = os.environ["SRC"], os.environ["DST"]
+rc_repo, rc_python = os.environ["RC_REPO"], os.environ["RC_PYTHON"]
+with open(src) as fh:
+    text = fh.read()
+text = text.replace("<RC_REPO>", rc_repo)
+# Swap any `python3 <abs path>/src/hooks/...` style hook command for the
+# venv interpreter. Conservative: only the bare leading `python3` token.
+text = re.sub(r'(?m)(^|"\s*command":\s*")python3(\s)', r'\1' + rc_python + r'\2', text)
+text = re.sub(r'(\["?)python3("?,)', r'\1' + rc_python + r'\2', text)
+with open(dst, "w") as fh:
+    fh.write(text)
+PYEOF
+}
 
 # ---------------------------------------------------------------------------
 # 1. direnv
 # ---------------------------------------------------------------------------
+_have() { command -v "$1" >/dev/null 2>&1; }
+_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]]; }
+_sudo() { _have sudo && ! _root; }
+
 ensure_direnv() {
-  if command -v direnv >/dev/null 2>&1; then
+  if _have direnv; then
     ok "direnv already installed ($(direnv version 2>/dev/null | head -1))"
     return
   fi
   warn "direnv missing — attempting install"
-  if command -v brew >/dev/null 2>&1; then
+  if _have brew; then
     brew install direnv && ok "installed direnv via brew" && return
   fi
-  if command -v apt-get >/dev/null 2>&1 && [[ "${EUID:-$(id -u)}" -eq 0 || -n "${SUDO_USER:-}" ]]; then
-    apt-get update -qq && apt-get install -y direnv && ok "installed direnv via apt" && return
+  if _have apt-get; then
+    if _root;     then apt-get update -qq && apt-get install -y direnv && ok "installed direnv via apt"        && return
+    elif _sudo;   then sudo apt-get update -qq && sudo apt-get install -y direnv && ok "installed direnv via sudo apt" && return
+    fi
   fi
-  if command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -qq && sudo apt-get install -y direnv && ok "installed direnv via sudo apt" && return
+  if _have dnf; then
+    if _root;   then dnf install -y direnv && ok "installed direnv via dnf"        && return
+    elif _sudo; then sudo dnf install -y direnv && ok "installed direnv via sudo dnf" && return
+    fi
   fi
-  if command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y direnv && ok "installed direnv via dnf" && return
-  fi
-  if command -v pacman >/dev/null 2>&1; then
-    sudo pacman -S --noconfirm direnv && ok "installed direnv via pacman" && return
+  if _have pacman; then
+    if _root;   then pacman -S --noconfirm direnv && ok "installed direnv via pacman"        && return
+    elif _sudo; then sudo pacman -S --noconfirm direnv && ok "installed direnv via sudo pacman" && return
+    fi
   fi
   warn "could not auto-install direnv. See https://direnv.net/docs/installation.html"
   warn "the script will continue; the generated .envrc just won't auto-load until direnv is on PATH"
@@ -84,9 +128,20 @@ if [[ ! -f "\$RC_REPO/src/hooks/pre_edit_guard.py" ]]; then
   echo "[direnv] WARN: RC_REPO=\$RC_REPO is not a valid reasoning-core checkout"
 fi
 
+# Put the reasoning-core venv on PATH for this shell. The hook commands
+# also reference \$RC_REPO/.venv/bin/python explicitly so they don't rely
+# on this — but having the venv on PATH means ad-hoc \`python3 -c "import
+# src.s2_core"\` works without activating the venv by hand.
+if [[ -d "\$RC_REPO/.venv/bin" ]]; then
+  PATH_add "\$RC_REPO/.venv/bin"
+else
+  echo "[direnv] WARN: \$RC_REPO/.venv missing — run 'python3 -m venv .venv && pip install -r requirements.txt' from \$RC_REPO"
+fi
+
 # Sidecar tuning. Override per-machine in .envrc.local (gitignored).
 export S2_DEVICE="\${S2_DEVICE:-cpu}"
 export S2_PORT="\${S2_PORT:-8765}"
+export S2_TIMEOUT="\${S2_TIMEOUT:-30}"
 export S2_FAIL_CLOSED="\${S2_FAIL_CLOSED:-0}"
 export HF_HOME="\${HF_HOME:-\$HOME/.cache/huggingface}"
 
@@ -128,43 +183,48 @@ install_claude() {
     return
   fi
   mkdir -p .claude
+  # Note: the JSON is emitted with literal ${RC_REPO} / ${RC_PYTHON}
+  # placeholders. We could pre-expand them, but Claude Code's hook runner
+  # evaluates POSIX parameter expansion on the command string, so leaving
+  # them in keeps the file portable across machines that share an
+  # $HOME/.envrc.
   cat > "$target" <<'EOF'
 {
-  "_note": "reasoning-core hooks. Hook commands resolve via $RC_REPO so this file is portable across machines.",
+  "_note": "reasoning-core hooks. ${RC_REPO} and ${RC_PYTHON} (=$RC_REPO/.venv/bin/python) resolve via .envrc so this file is portable across machines.",
   "hooks": {
     "PreToolUse": [
       { "matcher": "Write",
-        "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/pre_plan_guard.py", "timeout": 15000 }] },
+        "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/pre_plan_guard.py", "timeout": 15000 }] },
       { "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/pre_edit_guard.py", "timeout": 60000 }] },
+        "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/pre_edit_guard.py", "timeout": 60000 }] },
       { "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/pre_bash_guard.py", "timeout": 5000 }] },
+        "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/pre_bash_guard.py", "timeout": 5000 }] },
       { "matcher": "Task",
-        "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/pre_task_guard.py", "timeout": 5000 }] }
+        "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/pre_task_guard.py", "timeout": 5000 }] }
     ],
     "PostToolUse": [
       { "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/post_bash_revive.py", "timeout": 5000 }] },
+        "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/post_bash_revive.py", "timeout": 5000 }] },
       { "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/post_batch_lang_audit.py", "timeout": 5000 }] }
+        "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/post_batch_lang_audit.py", "timeout": 5000 }] }
     ],
     "SessionStart": [
       { "hooks": [
-          { "type": "command", "command": "python3 ${RC_REPO}/src/hooks/session_start_manifest.py", "timeout": 30000 },
-          { "type": "command", "command": "python3 ${RC_REPO}/src/hooks/session_resume_inject.py", "timeout": 5000 }
+          { "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/session_start_manifest.py", "timeout": 30000 },
+          { "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/session_resume_inject.py", "timeout": 5000 }
       ]}
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/session_resume_inject.py", "timeout": 5000 }] }
+      { "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/session_resume_inject.py", "timeout": 5000 }] }
     ],
     "PreCompact": [
-      { "hooks": [{ "type": "command", "command": "python3 ${RC_REPO}/src/hooks/pre_compact_guard.py", "timeout": 5000 }] }
+      { "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/pre_compact_guard.py", "timeout": 5000 }] }
     ]
   },
   "mcpServers": {
     "hybrid-reasoner": {
       "type": "stdio",
-      "command": "python3",
+      "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python}",
       "args": ["-m", "src.mcp_reasoner"],
       "cwd": "${RC_REPO}"
     }
@@ -190,8 +250,8 @@ install_gemini() {
     return
   fi
   mkdir -p .gemini
-  sed "s|<RC_REPO>|$RC_REPO|g" "$template" > "$target"
-  if ! python3 -c "import json,sys; json.load(open('$target'))" 2>/dev/null; then
+  render_template "$template" "$target"
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$target" 2>/dev/null; then
     fail "generated $target is not valid JSON"
     rm -f "$target"
     return
@@ -238,18 +298,20 @@ install_copilot() {
   if command -v flock >/dev/null 2>&1; then
     flock -x 9
   fi
-  python3 - "$target" "$RC_REPO" <<'PYEOF'
-import json, os, sys
-target, rc_repo = sys.argv[1], sys.argv[2]
+  TARGET="$target" RC_REPO="$RC_REPO" RC_PYTHON="$RC_PYTHON" python3 <<'PYEOF'
+import json, os
+target = os.environ["TARGET"]
+rc_repo, rc_python = os.environ["RC_REPO"], os.environ["RC_PYTHON"]
 data = {}
 if os.path.exists(target):
     try:
-        data = json.load(open(target))
+        with open(target) as fh:
+            data = json.load(fh)
     except Exception:
         data = {}
 servers = data.setdefault("mcpServers", {})
 servers["hybrid-reasoner"] = {
-    "command": "python3",
+    "command": rc_python,
     "args": ["-m", "src.mcp_reasoner"],
     "cwd": rc_repo,
     "env": {},
@@ -259,6 +321,8 @@ with open(tmp, "w") as fh:
     json.dump(data, fh, indent=2, sort_keys=True)
 os.rename(tmp, target)
 PYEOF
+  # Release the flock before returning.
+  exec 9>&-
   ok "merged hybrid-reasoner into $target"
 }
 
@@ -274,7 +338,7 @@ install_vibe() {
   mkdir -p .vibe/skills/reasoning
   local target=".vibe/config.toml"
   if [[ ! -e "$target" ]]; then
-    sed "s|<RC_REPO>|$RC_REPO|g" "$template" > "$target"
+    render_template "$template" "$target"
     ok "wrote $target"
     record "$target"
   else
@@ -291,22 +355,49 @@ install_vibe() {
     record ".vibe/skills/reasoning/SKILL.md"
   fi
 
-  # Trusted-folder registration (exact-line match — don't false-positive on /foo/bar-baz)
+  # Trusted-folder registration with proper TOML quoting. printf %q emits
+  # shell escapes (not TOML), which can produce an unparseable file for
+  # paths containing single quotes, backslashes, or other specials.
   local trusted="$HOME/.vibe/trusted_folders.toml"
   mkdir -p "$HOME/.vibe"
-  local pwd_line
-  pwd_line=$(printf 'path = %q' "$TARGET_REPO")
-  if ! grep -qxF "$pwd_line" "$trusted" 2>/dev/null; then
-    printf '\n[[trusted]]\npath = %q\n' "$TARGET_REPO" >> "$trusted"
-    ok "added $TARGET_REPO to $trusted"
-  fi
+  TRUSTED="$trusted" HERE="$TARGET_REPO" python3 <<'PYEOF'
+import os, re
+trusted, here = os.environ["TRUSTED"], os.environ["HERE"]
+# TOML basic-string escapes: \ " and control chars. Path strings in
+# practice contain none of those, but encode defensively.
+def toml_quote(s: str) -> str:
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+quoted = toml_quote(here)
+new_block = f"\n[[trusted]]\npath = {quoted}\n"
+existing = ""
+if os.path.exists(trusted):
+    with open(trusted) as fh:
+        existing = fh.read()
+# Exact-match the path line under a [[trusted]] header — defend against
+# false positives on /foo/bar vs /foo/bar-baz.
+pattern = re.compile(
+    r'\[\[trusted\]\]\s*\npath\s*=\s*' + re.escape(quoted) + r'\s*(?:\n|$)',
+    re.MULTILINE,
+)
+if pattern.search(existing):
+    print(f"  \033[33m·\033[0m {here} already trusted in {trusted}")
+else:
+    with open(trusted, "a") as fh:
+        fh.write(new_block)
+    print(f"  \033[32m✓\033[0m added {here} to {trusted}")
+PYEOF
 }
 
 # ---------------------------------------------------------------------------
 # 7. .gitignore
 # ---------------------------------------------------------------------------
 update_gitignore() {
-  [[ ! -f .gitignore ]] && return
+  local created=0
+  if [[ ! -f .gitignore ]]; then
+    warn ".gitignore missing — creating one so reasoning-core's generated files don't accidentally get committed"
+    : > .gitignore
+    created=1
+  fi
   if grep -qxF '# >>> reasoning-core >>>' .gitignore; then
     skip ".gitignore already has reasoning-core block"
     return
@@ -321,7 +412,12 @@ update_gitignore() {
 .reasoning-core/
 # <<< reasoning-core <<<
 EOF
-  ok "updated .gitignore"
+  if [[ "$created" -eq 1 ]]; then
+    ok "created .gitignore with reasoning-core block"
+    record ".gitignore"   # we created it — uninstall removes it
+  else
+    ok "updated .gitignore"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -340,6 +436,10 @@ printf '\nreasoning-core install\n'
 printf '  RC_REPO     = %s\n' "$RC_REPO"
 printf '  TARGET_REPO = %s\n\n' "$TARGET_REPO"
 
+if [[ ! -x "$RC_PYTHON" ]]; then
+  warn "no venv at $RC_PYTHON yet — finish step 'Next' below before launching claude/gemini/copilot/vibe"
+fi
+
 ensure_direnv
 install_envrc
 install_claude
@@ -353,12 +453,14 @@ cat <<EOF
 
 done. manifest: $MANIFEST
 
-next:
+next (one-time bootstrap of the framework itself):
   cd "$RC_REPO" && python3 -m venv .venv && source .venv/bin/activate
   pip install -r requirements.txt
   huggingface-cli download state-spaces/mamba-130m-hf
   bash scripts/start-sidecar.sh       # or scripts/install-supervisor-launchagent.sh on macOS
-  cd "$TARGET_REPO" && claude         # hooks now active
 
-to revert:  bash "$RC_REPO/uninstall.sh"
+then, from this repo ($TARGET_REPO):
+  claude                              # hooks now active
+
+to revert:  cd "$TARGET_REPO" && bash "$RC_REPO/uninstall.sh"
 EOF

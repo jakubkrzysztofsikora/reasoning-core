@@ -2,7 +2,8 @@
 # reasoning-core — revert install in the current repo.
 #
 # Reads `.reasoning-core/install.manifest` (written by install.sh) and removes
-# exactly the per-repo paths that were created. Also strips `hybrid-reasoner`
+# exactly the per-repo paths that were created — refusing to delete anything
+# that resolves outside the current target repo. Also strips `hybrid-reasoner`
 # from `~/.copilot/mcp-config.json`, drops this repo's entry from
 # `~/.vibe/trusted_folders.toml`, and removes the reasoning-core block from
 # `.gitignore` (between the sentinel comments install.sh added).
@@ -30,16 +31,41 @@ printf '\nreasoning-core uninstall\n  TARGET_REPO = %s\n\n' "$TARGET_REPO"
 
 # ---------------------------------------------------------------------------
 # 1. Per-repo files listed in the manifest
+#    Refuses anything that resolves outside TARGET_REPO — defends against
+#    a tampered/corrupt manifest.
 # ---------------------------------------------------------------------------
-while IFS= read -r path; do
-  [[ -z "$path" ]] && continue
-  if [[ -e "$path" ]]; then
-    rm -rf "$path"
-    ok "removed $path"
-  else
-    skip "$path already gone"
-  fi
-done < "$MANIFEST"
+TARGET_REPO="$TARGET_REPO" MANIFEST="$MANIFEST" python3 <<'PYEOF'
+import os, shutil, sys
+target = os.path.realpath(os.environ["TARGET_REPO"])
+manifest = os.environ["MANIFEST"]
+with open(manifest) as fh:
+    entries = [line.strip() for line in fh if line.strip()]
+
+GREEN = "\033[32m"; YELLOW = "\033[33m"; RED = "\033[31m"; RESET = "\033[0m"
+
+for entry in entries:
+    abs_path = os.path.realpath(os.path.join(target, entry))
+    # Anchor under TARGET_REPO. commonpath rejects absolute-elsewhere AND
+    # any `..` escape.
+    try:
+        common = os.path.commonpath([abs_path, target])
+    except ValueError:
+        common = ""
+    if common != target:
+        print(f"  {RED}✗{RESET} refusing to remove out-of-tree path: {entry!r} -> {abs_path}")
+        continue
+    if abs_path == target:
+        print(f"  {RED}✗{RESET} refusing to remove the repo root itself ({entry!r})")
+        continue
+    if not os.path.lexists(abs_path):
+        print(f"  {YELLOW}·{RESET} {entry} already gone")
+        continue
+    if os.path.isdir(abs_path) and not os.path.islink(abs_path):
+        shutil.rmtree(abs_path)
+    else:
+        os.unlink(abs_path)
+    print(f"  {GREEN}✓{RESET} removed {entry}")
+PYEOF
 
 # Tidy empty parent dirs (.claude, .gemini, .copilot, .vibe). `find -depth`
 # processes children before parents so an empty tree collapses bottom-up.
@@ -48,15 +74,16 @@ for root in .claude .gemini .copilot .vibe; do
 done
 
 # ---------------------------------------------------------------------------
-# 2. ~/.copilot/mcp-config.json — drop hybrid-reasoner
+# 2. ~/.copilot/mcp-config.json — drop hybrid-reasoner + the lockfile
 # ---------------------------------------------------------------------------
 copilot_cfg="$HOME/.copilot/mcp-config.json"
 if [[ -f "$copilot_cfg" ]]; then
-  python3 - "$copilot_cfg" <<'PYEOF'
+  COPILOT_CFG="$copilot_cfg" python3 <<'PYEOF'
 import json, os, sys
-p = sys.argv[1]
+p = os.environ["COPILOT_CFG"]
 try:
-    data = json.load(open(p))
+    with open(p) as fh:
+        data = json.load(fh)
 except Exception:
     sys.exit(0)
 servers = data.get("mcpServers", {})
@@ -71,20 +98,26 @@ else:
     print(f"  \033[33m·\033[0m hybrid-reasoner already absent from {p}")
 PYEOF
 fi
+# install.sh creates a sibling .lock file via flock — clean it up too.
+if [[ -f "$copilot_cfg.lock" ]]; then
+  rm -f "$copilot_cfg.lock"
+  ok "removed $copilot_cfg.lock"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. ~/.vibe/trusted_folders.toml — drop this repo's entry
 # ---------------------------------------------------------------------------
 vibe_trusted="$HOME/.vibe/trusted_folders.toml"
 if [[ -f "$vibe_trusted" ]]; then
-  python3 - "$vibe_trusted" "$TARGET_REPO" <<'PYEOF'
-import os, re, sys
-p, here = sys.argv[1], sys.argv[2]
+  VIBE_TRUSTED="$vibe_trusted" HERE="$TARGET_REPO" python3 <<'PYEOF'
+import os, re
+p, here = os.environ["VIBE_TRUSTED"], os.environ["HERE"]
 with open(p) as fh:
     text = fh.read()
-# Match an entire [[trusted]] block whose path = "<here>" (any quote style).
+# Match an entire [[trusted]] block whose path = "<here>" (any quote style,
+# tolerant of the legacy `%q`-escaped install.sh output).
 pattern = re.compile(
-    r'\n?\[\[trusted\]\]\s*\npath\s*=\s*["\']?' + re.escape(here) + r'["\']?\s*\n?',
+    r'\n?\[\[trusted\]\]\s*\npath\s*=\s*["\']?' + re.escape(here) + r'["\']?\s*(?:\n|$)',
     re.MULTILINE,
 )
 new = pattern.sub('\n', text).lstrip('\n')
@@ -103,9 +136,9 @@ fi
 # 4. .gitignore — drop the reasoning-core sentinel block
 # ---------------------------------------------------------------------------
 if [[ -f .gitignore ]] && grep -qxF '# >>> reasoning-core >>>' .gitignore; then
-  python3 - .gitignore <<'PYEOF'
-import os, re, sys
-p = sys.argv[1]
+  python3 <<'PYEOF'
+import os, re
+p = ".gitignore"
 with open(p) as fh:
     text = fh.read()
 new = re.sub(
