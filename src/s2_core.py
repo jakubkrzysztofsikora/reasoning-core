@@ -63,7 +63,11 @@ RISK_LABELS: tuple[str, ...] = (
     "coupling",
     "cohesion",
     "novelty",
+    "session_centroid_drift",
+    "project_fan_in",
+    "project_coupling",
 )
+RISK_LABELS_VERSION: int = 2
 
 
 @dataclass
@@ -82,10 +86,15 @@ class ImpactReport:
     regression_detected: bool
     human_summary: str
     risk_labels: list[str] = field(default_factory=lambda: list(RISK_LABELS))
+    risk_labels_version: int = RISK_LABELS_VERSION
     cumulative_drift: Optional[float] = None
+    session_centroid_drift: Optional[float] = None
     cold_start: bool = False
     file_kind: Optional[str] = None
     cd_threshold: Optional[float] = None
+    fired_conditions: list[str] = field(default_factory=list)
+    fired_dims: list[str] = field(default_factory=list)
+    fired_margins: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -93,12 +102,18 @@ class ImpactReport:
             "coherence_delta": float(self.coherence_delta),
             "risk_vector": [float(x) for x in self.risk_vector],
             "risk_labels": list(self.risk_labels),
+            "risk_labels_version": int(self.risk_labels_version),
             "regression_detected": bool(self.regression_detected),
             "human_summary": str(self.human_summary),
             "cold_start": bool(self.cold_start),
+            "fired_conditions": list(self.fired_conditions),
+            "fired_dims": list(self.fired_dims),
+            "fired_margins": dict(self.fired_margins),
         }
         if self.cumulative_drift is not None:
             out["cumulative_drift"] = float(self.cumulative_drift)
+        if self.session_centroid_drift is not None:
+            out["session_centroid_drift"] = float(self.session_centroid_drift)
         if self.file_kind is not None:
             out["file_kind"] = str(self.file_kind)
         if self.cd_threshold is not None:
@@ -110,9 +125,10 @@ class ImpactReport:
 # Per-session baseline registry + /metrics ring buffer
 # ---------------------------------------------------------------------------
 
-# Session id -> mean-pooled torch tensor (CPU). We keep the type loose to avoid
+# Session id -> {path: tensor, "__corpus__": tensor, "__drift_p95__": float}.
+# Per-file baselines with empirical drift threshold. Kept loose to avoid
 # importing torch at module load time.
-_BASELINES: dict[str, Any] = {}
+_BASELINES: dict[str, dict[str, Any]] = {}
 _BASELINES_LOCK = Lock()
 
 # Ring buffer of recent /score latencies in milliseconds. Bounded at 1000.
@@ -160,20 +176,102 @@ def _metrics_snapshot() -> dict[str, Any]:
     }
 
 
-def _set_session_baseline(session_id: str, vec: Any) -> None:
+def _set_session_baseline(session_id: str, baselines: dict[str, Any]) -> None:
     with _BASELINES_LOCK:
-        _BASELINES[session_id] = vec
+        _BASELINES[session_id] = baselines
 
 
-def _get_session_baseline(session_id: str) -> Any:
+def _get_session_baseline(session_id: str) -> Optional[dict[str, Any]]:
     with _BASELINES_LOCK:
         return _BASELINES.get(session_id)
+
+
+def _get_session_baseline_for_path(session_id: str, path: str) -> tuple[Any, float]:
+    """Return (baseline_vec, drift_p95) for a path, falling back to __corpus__.
+
+    Returns (None, 0.0) if no baseline exists for the session.
+    """
+    with _BASELINES_LOCK:
+        baselines = _BASELINES.get(session_id)
+        if baselines is None:
+            return None, 0.0
+        vec = baselines.get(path)
+        if vec is None:
+            vec = baselines.get("__corpus__")
+        drift_p95 = baselines.get("__drift_p95__", 0.0)
+        return vec, float(drift_p95)
 
 
 def _clear_session_baselines() -> None:
     """Test helper — wipe registry between tests."""
     with _BASELINES_LOCK:
         _BASELINES.clear()
+
+
+# ---------------------------------------------------------------------------
+# Project index integration
+# ---------------------------------------------------------------------------
+
+def _get_or_build_project_index(session_id: str) -> Any:
+    """Return a ProjectIndex for the session, or None."""
+    try:
+        from src.project_index import get_or_build_index
+        repo_root = os.environ.get("RC_PROJECT_ROOT")
+        if repo_root is None:
+            return None
+        return get_or_build_index(session_id, repo_root)
+    except Exception:
+        return None
+
+
+def _compute_project_dims(
+    path: str,
+    parse_after: ParseResult,
+    graph_after: dict[str, set[str]],
+    pidx: Any,
+) -> tuple[float, float]:
+    """Compute (project_fan_in, project_coupling) from project index.
+
+    project_fan_in: incoming dependency count. How many *other* files in the
+    project import the module being edited. This is a structural-importance
+    proxy -- editing a high-fan-in file ripples wider.
+
+    project_coupling: outgoing dependency count over per-file budget, plus a
+    same-directory cross-module signal.
+    """
+    if pidx is None:
+        return 0.0, 0.0
+
+    # Treat the edited file as a module name and ask the index which files
+    # import it. The legacy implementation counted symbol-name collisions
+    # (definitions in other files sharing a local function name), which is
+    # not fan-in -- it's shadowing.
+    rel_no_ext, _ = os.path.splitext(path)
+    candidate_modules = {
+        rel_no_ext.replace(os.sep, "."),
+        os.path.basename(rel_no_ext),
+    }
+    importing_files: set[str] = set()
+    for module in candidate_modules:
+        if not module:
+            continue
+        importing_files.update(pidx.files_importing(module))
+    importing_files.discard(path)
+    fan_in_count = len(importing_files)
+    project_fan_in = min(1.0, fan_in_count / 20.0)
+
+    this_imports = pidx.file_imports(path)
+    coupling_count = len(this_imports)
+    dir_module = os.path.dirname(path).replace("/", ".")
+    for rel_path, imports in pidx.import_index.items():
+        if rel_path != path:
+            for mod in imports:
+                if mod.startswith(dir_module) or mod in this_imports:
+                    coupling_count += 1
+                    break
+
+    project_coupling = min(1.0, coupling_count / 40.0)
+    return float(project_fan_in), float(project_coupling)
 
 
 # ---------------------------------------------------------------------------
@@ -671,9 +769,21 @@ def _env_float(name: str, default: float) -> float:
 # Thresholds are env-overridable so the operator can tune without a code edit.
 # Defaults match the calibrated values; see .envrc § "Sidecar tuning".
 _REGRESSION_AIS_THRESHOLD = _env_float("S2_AIS_THRESHOLD", 0.4)
-# Threshold applied to the *normalized* coherence_delta (raw L2 / sqrt(hidden_size)).
-# Value is checkpoint-portable: average per-dimension embedding drift in standard units.
-COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 1.5)
+# Threshold applied to coherence_delta, which is the chord distance between
+# L2-normalized before/after embeddings (in [0, 2], dimension-invariant).
+# Default is intentionally conservative; tune via S2_COHERENCE_THRESHOLD.
+# Warn when the env override is set above the metric's bound -- a legacy
+# value tuned against the previous raw-L2/sqrt(D) scale (e.g. the old 1.5
+# default) would silently make the gate unreachable.
+COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 0.5)
+if COHERENCE_DELTA_THRESHOLD > 2.0:
+    logger.warning(
+        "S2_COHERENCE_THRESHOLD=%s exceeds the metric upper bound (2.0) -- "
+        "the coherence_delta gate will never trigger. The metric changed from "
+        "raw L2 / sqrt(D) to chord distance in this release; pick a value in "
+        "[0, 2] (default 0.5).",
+        COHERENCE_DELTA_THRESHOLD,
+    )
 _REGRESSION_COHERENCE_THRESHOLD = COHERENCE_DELTA_THRESHOLD
 _REGRESSION_RISK_DIM_THRESHOLD = _env_float("S2_RISK_DIM_THRESHOLD", 0.9)
 
@@ -702,10 +812,10 @@ def _file_kind(path: str) -> str:
 # distribution doesn't match the calibrated source-code baseline.
 _KIND_THRESHOLDS: dict[str, dict[str, float]] = {
     "source_code": {"cd": COHERENCE_DELTA_THRESHOLD, "ais": _REGRESSION_AIS_THRESHOLD, "dim": _REGRESSION_RISK_DIM_THRESHOLD},
-    "test_code":   {"cd": 2.0, "ais": 0.3, "dim": 0.95},
-    "plan_md":     {"cd": 3.0, "ais": 0.3, "dim": 1.0},
-    "doc_md":      {"cd": 3.0, "ais": 0.3, "dim": 1.0},
-    "config":      {"cd": 1.2, "ais": 0.5, "dim": 0.9},
+    "test_code":   {"cd": 0.7, "ais": 0.3, "dim": 0.95},
+    "plan_md":     {"cd": 1.0, "ais": 0.3, "dim": 1.0},
+    "doc_md":      {"cd": 1.0, "ais": 0.3, "dim": 1.0},
+    "config":      {"cd": 0.4, "ais": 0.5, "dim": 0.9},
 }
 
 
@@ -723,11 +833,30 @@ def _cosine_similarity(a, b) -> float:
 
 
 def _l2_distance(a, b) -> float:
+    """Chord distance on the unit sphere: ``||a/||a|| - b/||b||||``, in ``[0, 2]``.
+
+    Raw L2 over un-normalized embeddings is not portable across backbones --
+    a mean-pooled SSM and a CLS-pooled transformer produce different magnitude
+    scales for the same semantic content, and even within one backbone the
+    magnitude depends on token count for some pooling strategies. Normalizing
+    before the difference removes both effects and leaves the metric
+    dimension-invariant (no ``sqrt(D)`` divisor needed downstream).
+    """
     import torch
 
     if a is None or b is None:
         return 0.0
-    return float(torch.linalg.norm(a - b))
+    na = torch.linalg.norm(a)
+    nb = torch.linalg.norm(b)
+    # Symmetric zero (both embeddings degenerate) is identity. Asymmetric zero
+    # -- one side a zero vector, the other non-zero -- means the two states
+    # are maximally apart on the unit sphere; returning 0.0 here would let a
+    # "delete all code" edit pass the coherence gate as if nothing changed.
+    if float(na) == 0.0 and float(nb) == 0.0:
+        return 0.0
+    if float(na) == 0.0 or float(nb) == 0.0:
+        return 2.0
+    return float(torch.linalg.norm(a / na - b / nb))
 
 
 def _backbone_hidden_size(fallback_vec: Any = None) -> int:
@@ -816,24 +945,24 @@ def score_change(
     # AIS in [0, 1]: 1.0 == identical embeddings. Map cos in [-1,1] -> [0,1].
     ais = max(0.0, min(1.0, (cos + 1.0) / 2.0))
 
-    # Normalize coherence_delta by sqrt(hidden_size) so the threshold is
-    # checkpoint-portable: a raw L2 over a 768-D vector dwarfs the same drift
-    # over a 256-D vector for the same edit. Dividing by sqrt(D) recasts the
-    # value as average per-dimension drift in standard units (see VERIFICATION.md).
+    # coherence_delta is the chord distance returned by _l2_distance: it
+    # operates on L2-normalized embeddings, so the value is in [0, 2] and is
+    # invariant to embedding magnitude, pooling strategy (mean vs CLS), and
+    # hidden_size. No sqrt(D) divisor needed (see VERIFICATION.md).
     # Cold-start: an empty/near-empty before_src has no meaningful baseline to
-    # compare against, so the L2-magnitude proxy degenerates. Skip cd entirely
-    # for these cases — the 8-dim risk_vector still flags churn/cyclomatic on bad content.
+    # compare against. Skip cd entirely for these cases -- the 8-dim risk_vector
+    # still flags churn/cyclomatic on bad content.
     hidden_size = _backbone_hidden_size(emb_after)
     cold_start = (not before_src.strip()) or (len(before_src) < 32)
     if cold_start:
         coherence_delta = 0.0
     else:
-        coherence_delta = float(raw_l2) / math.sqrt(max(hidden_size, 1))
+        coherence_delta = float(raw_l2)
 
     # novelty in [0, 1]: 1 - max(cos, 0).
     novelty = max(0.0, min(1.0, 1.0 - max(cos, 0.0)))
 
-    risk_vector = _compute_risk_vector(
+    risk_vector_8 = _compute_risk_vector(
         parse_before,
         parse_after,
         graph_before,
@@ -846,36 +975,95 @@ def score_change(
     # Cold-start: with empty before_src, every structural delta (cyclomatic,
     # fan_in, fan_out, depth, churn, coupling, cohesion) reduces to the
     # absolute after-state — the metric loses its delta meaning. Zero them
-    # for cold-start writes; novelty (cosine of pooled embeddings) and the
-    # AIS / coherence_delta paths still reason about content quality.
-    if cold_start and len(risk_vector) >= 7:
-        risk_vector = list(risk_vector)
+    # for cold-start writes; novelty and the AIS / coherence_delta paths
+    # still reason about content quality.
+    if cold_start and len(risk_vector_8) >= 7:
+        risk_vector_8 = list(risk_vector_8)
         for i in range(7):
-            risk_vector[i] = 0.0
+            risk_vector_8[i] = 0.0
+
+    # ---- New dimensions (Phase 2) -----------------------------------------
+
+    # session_centroid_drift: per-file baseline drift, normalised against
+    # the empirical 95th percentile computed during /baseline ingestion.
+    session_centroid_drift: float = 0.0
+    if session_id:
+        baseline_vec, drift_p95 = _get_session_baseline_for_path(session_id, path)
+        if baseline_vec is not None:
+            try:
+                raw_drift = float(_l2_distance(emb_after, baseline_vec))
+                # Normalise to [0, 1]: 0 == no drift, 1 == at-or-beyond p95.
+                # Clamping keeps risk_vector co-domain consistent with the
+                # other dimensions; the raw ratio is exposed separately via
+                # cumulative_drift for operators who need the over-budget tail.
+                if drift_p95 > 0:
+                    ratio = raw_drift / drift_p95
+                else:
+                    ratio = raw_drift
+                session_centroid_drift = max(0.0, min(1.0, ratio))
+            except Exception:
+                session_centroid_drift = 0.0
+
+    # project_fan_in / project_coupling: project-wide structural awareness.
+    project_fan_in: float = 0.0
+    project_coupling: float = 0.0
+    if session_id and os.environ.get("RC_PROJECT_INDEX") == "1":
+        try:
+            pidx = _get_or_build_project_index(session_id)
+            if pidx is not None:
+                pfi, pc = _compute_project_dims(path, parse_after, graph_after, pidx)
+                project_fan_in = pfi
+                project_coupling = pc
+        except Exception:
+            logger.debug("Project index lookup failed for %s", path, exc_info=True)
+
+    risk_vector = risk_vector_8 + [
+        float(session_centroid_drift),
+        float(project_fan_in),
+        float(project_coupling),
+    ]
+
+    # ---- Honest fired-conditions attribution --------------------------------
 
     kind = _file_kind(path)
     t = _KIND_THRESHOLDS.get(kind, _KIND_THRESHOLDS["source_code"])
     dim_ceiling = t.get("dim", _REGRESSION_RISK_DIM_THRESHOLD)
-    regression = (
-        ais < t["ais"]
-        or coherence_delta > t["cd"]
-        or any(dim > dim_ceiling for dim in risk_vector)
-    )
+
+    fired_conditions: list[str] = []
+    fired_dims: list[str] = []
+    fired_margins: dict[str, float] = {}
+
+    if ais < t["ais"]:
+        fired_conditions.append("ais_below_threshold")
+        fired_margins["ais_below_threshold"] = float(t["ais"] - ais)
+
+    if coherence_delta > t["cd"]:
+        fired_conditions.append("coherence_delta_above_threshold")
+        fired_margins["coherence_delta_above_threshold"] = float(coherence_delta - t["cd"])
+
+    dim_breaches = [
+        (RISK_LABELS[i], float(dim - dim_ceiling))
+        for i, dim in enumerate(risk_vector)
+        if dim > dim_ceiling and i < len(RISK_LABELS)
+    ]
+    if dim_breaches:
+        fired_conditions.append("dim_ceiling_breached")
+        fired_dims = [name for name, _ in dim_breaches]
+        for name, margin in dim_breaches:
+            fired_margins[f"dim_{name}"] = margin
+
+    regression = len(fired_conditions) > 0
 
     public_lang = PUBLIC_LANGUAGE.get(lang_id, lang_id)
     summary = _summarize(ais, coherence_delta, risk_vector, regression, public_lang)
 
     cumulative_drift: Optional[float] = None
     if session_id:
-        baseline_vec = _get_session_baseline(session_id)
+        baseline_vec, _ = _get_session_baseline_for_path(session_id, path)
         if baseline_vec is not None:
             try:
-                # Same normalization as coherence_delta — keep both metrics on
-                # the same scale so the threshold semantics are consistent.
-                cumulative_drift = float(_l2_distance(emb_after, baseline_vec)) / math.sqrt(
-                    max(hidden_size, 1)
-                )
-            except Exception:  # noqa: BLE001
+                cumulative_drift = float(_l2_distance(emb_after, baseline_vec))
+            except Exception:
                 cumulative_drift = None
 
     return ImpactReport(
@@ -884,10 +1072,15 @@ def score_change(
         risk_vector=risk_vector,
         regression_detected=bool(regression),
         human_summary=summary,
+        risk_labels_version=RISK_LABELS_VERSION,
         cumulative_drift=cumulative_drift,
+        session_centroid_drift=float(session_centroid_drift) if session_id else None,
         cold_start=bool(cold_start),
         file_kind=kind,
         cd_threshold=float(t["cd"]),
+        fired_conditions=fired_conditions,
+        fired_dims=fired_dims,
+        fired_margins=fired_margins,
     )
 
 
@@ -930,6 +1123,9 @@ def create_app():
                 "model_loaded": bool(is_loaded()),
                 "languages": list(SUPPORTED_LANGUAGES),
                 "backbone": dict(BACKBONE_INFO),
+                "backbone_model": BACKBONE_INFO.get("checkpoint"),
+                "hidden_size": BACKBONE_INFO.get("hidden_size"),
+                "embedder_role": BACKBONE_INFO.get("embedder_role", "feature_extractor"),
             }
         )
 
@@ -1033,6 +1229,7 @@ def create_app():
         try:
             import torch
 
+            file_baselines: dict[str, Any] = {}
             vecs = []
             for f in files:
                 if not isinstance(f, dict):
@@ -1050,13 +1247,27 @@ def create_app():
                 except Exception:  # noqa: BLE001
                     tokens = src
                 vec = embed(tokens)
+                file_baselines[fpath] = vec
                 vecs.append(vec)
             if not vecs:
                 return JSONResponse(
                     status_code=400,
                     content={"error": "bad_request", "detail": "no embeddable files"},
                 )
-            mean = torch.stack(vecs).mean(dim=0)
+            stacked = torch.stack(vecs)
+            corpus = stacked.mean(dim=0)
+
+            # Compute pairwise drift distribution for percentile calibration.
+            # _l2_distance returns chord distance (already dimension-invariant).
+            drifts: list[float] = []
+            for v in vecs:
+                d = float(_l2_distance(v, corpus))
+                drifts.append(d)
+            drifts_sorted = sorted(drifts)
+            drift_p95 = _percentile(drifts_sorted, 95.0)
+
+            file_baselines["__corpus__"] = corpus
+            file_baselines["__drift_p95__"] = float(drift_p95)
         except BackboneUnavailableError as exc:
             return JSONResponse(
                 status_code=503,
@@ -1068,14 +1279,15 @@ def create_app():
                 status_code=500,
                 content={"error": "internal_error", "detail": str(exc)},
             )
-        _set_session_baseline(session_id, mean)
+        _set_session_baseline(session_id, file_baselines)
         return JSONResponse(
             status_code=200,
             content={
                 "status": "ok",
                 "session_id": session_id,
                 "n_files": len(vecs),
-                "hidden_size": int(mean.shape[0]) if hasattr(mean, "shape") else 0,
+                "hidden_size": int(corpus.shape[0]) if hasattr(corpus, "shape") else 0,
+                "drift_p95": float(drift_p95),
             },
         )
 

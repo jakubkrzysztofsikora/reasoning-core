@@ -480,6 +480,170 @@ def gate_calibration(*, report: Dict[str, Any]) -> GateOutcome:
     return GateOutcome(action="mutate_report", report=new_report)
 
 
+def gate_rule_engine(
+    *,
+    file_path: str,
+    before_src: str,
+    after_src: str,
+    report: Dict[str, Any],
+) -> GateOutcome:
+    """Architectural rule engine gate (RC_RULE_ENGINE=1).
+
+    Evaluates the edit against rules in .reasoning-core/rules.yaml.
+    Returns exit_block on deny hits, stderr_only on warn hits,
+    continue_pair on shadow hits, pass when clean or disabled.
+    """
+    if os.environ.get("RC_RULE_ENGINE") != "1":
+        return GateOutcome(action="pass")
+
+    try:
+        from src.hooks import _rule_engine
+    except ImportError as exc:
+        # The gate is explicitly enabled (RC_RULE_ENGINE=1). A packaging or
+        # sys.path regression must not silently disable a security control.
+        # Fail closed; ``RC_RULE_ENGINE_LENIENT=1`` is the documented escape
+        # hatch for operators who want a soft-degrade during incident response.
+        if os.environ.get("RC_RULE_ENGINE_LENIENT") == "1":
+            return GateOutcome(
+                action="stderr_only",
+                stderr=f"[rule_engine] lenient mode: import failed: {exc}\n",
+                signal_source="rule_engine_lenient",
+            )
+        return GateOutcome(
+            action="exit_block",
+            code=2,
+            stderr=(
+                f"[rule_engine] BLOCKED: rule engine import failed ({exc}). "
+                f"RC_RULE_ENGINE=1 is set; refusing to evaluate edits without "
+                f"the gate. Set RC_RULE_ENGINE_LENIENT=1 to soft-degrade or "
+                f"unset RC_RULE_ENGINE to disable the gate.\n"
+            ),
+            decision="rule_engine_unavailable",
+            reason="rule_engine_import_error",
+            signal_source="rule_engine",
+        )
+
+    # Detect language from file extension
+    lang = _detect_language(file_path)
+
+    # Find project root
+    project_root = os.environ.get("RC_PROJECT_DIR") or os.getcwd()
+
+    try:
+        rules = _rule_engine.load_rules(project_root)
+    except _rule_engine.RuleEngineError as exc:
+        if os.environ.get("RC_RULE_ENGINE_LENIENT") == "1":
+            return GateOutcome(
+                action="stderr_only",
+                stderr=f"[rule_engine] lenient mode: {exc}\n",
+                signal_source="rule_engine_lenient",
+            )
+        return GateOutcome(
+            action="exit_block",
+            decision="rule_engine_error",
+            reason=f"rule_engine_schema_error:{exc}",
+            signal_source="rule_engine",
+        )
+
+    if not rules:
+        return GateOutcome(action="pass")
+
+    # The rule engine matches ``scope`` globs against both absolute and
+    # repo-relative forms, but it relies on ``CLAUDE_PROJECT_DIR`` to derive
+    # the relative form. Pass ``project_root`` via the env var so harnesses
+    # that set ``RC_PROJECT_DIR`` instead still get correct scope matching.
+    prior = os.environ.get("CLAUDE_PROJECT_DIR")
+    os.environ["CLAUDE_PROJECT_DIR"] = project_root
+    try:
+        hits = _rule_engine.evaluate_edit(
+            file_path, before_src or "", after_src or "", lang, rules,
+        )
+    finally:
+        if prior is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = prior
+
+    if not hits:
+        return GateOutcome(action="pass")
+
+    # Serialize hits to report
+    new_report = dict(report)
+    new_report["rule_hits"] = [h.to_dict() for h in hits]
+
+    # Check for deny hits
+    deny_hits = [h for h in hits if h.severity == "deny"]
+    if deny_hits:
+        fired = new_report.get("fired_conditions", [])
+        if isinstance(fired, list):
+            fired = list(fired)
+            if "rule_engine" not in fired:
+                fired.append("rule_engine")
+            new_report["fired_conditions"] = fired
+        new_report["regression_detected"] = True
+
+        try:
+            import _shadow_mode  # type: ignore
+        except ImportError:
+            _shadow_mode = None  # type: ignore
+        if _shadow_mode is not None and _shadow_mode.is_active():
+            return GateOutcome(
+                action="continue_pair",
+                report=new_report,
+                decision="shadow_blocked",
+                reason=f"rule_engine:{len(deny_hits)} deny hits",
+                signal_source="rule_engine",
+            )
+        return GateOutcome(
+            action="exit_block",
+            report=new_report,
+            decision="rule_engine",
+            reason=f"rule_engine:{deny_hits[0].rule_id}:{deny_hits[0].message}",
+            signal_source="rule_engine",
+        )
+
+    # Warn hits
+    warn_hits = [h for h in hits if h.severity == "warn"]
+    if warn_hits:
+        msg = _rule_engine.format_hits(warn_hits)
+        return GateOutcome(
+            action="stderr_only",
+            report=new_report,
+            stderr=f"[rule_engine] {msg}\n",
+        )
+
+    # Shadow hits
+    shadow_hits = [h for h in hits if h.severity == "shadow"]
+    if shadow_hits:
+        return GateOutcome(
+            action="continue_pair",
+            report=new_report,
+            decision="shadow_advisory",
+            reason=f"rule_engine:{len(shadow_hits)} shadow hits",
+            signal_source="rule_engine",
+        )
+
+    return GateOutcome(action="pass", report=new_report)
+
+
+def _detect_language(file_path: str) -> str:
+    """Detect programming language from file extension."""
+    ext = os.path.splitext(file_path)[1].lower()
+    mapping = {
+        ".py": "python",
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".tsx": "tsx",
+        ".java": "java",
+        ".go": "go",
+        ".rs": "rust",
+        ".cpp": "cpp",
+        ".c": "c",
+        ".h": "c",
+    }
+    return mapping.get(ext, "unknown")
+
+
 def gate_regression(*, report: Dict[str, Any]) -> GateOutcome:
     """Final SSM regression gate.
 

@@ -1,0 +1,27 @@
+corpus_version: v1
+schema:
+  rule_types:
+    forbid_import:
+      description: Forbid specific import patterns
+      fields:
+        - id: string
+        - type: "forbid_import"
+        - severity: enum[deny, warn, shadow]
+        - language: enum[python, javascript, typescript, tsx]
+        - target: string
+        - scope: string
+        - message: string
+    forbid_pattern:
+      description: Forbid regex patterns in source
+      fields:
+        - id: string
+        - type: "forbid_pattern"
+        - severity: enum[deny, warn, shadow]
+        - language: enum[python, javascript, typescript, tsx]
+        - pattern: string
+        - scope: string
+        - message: string
+  metadata:
+    required_corpus_version: "v1"
+    max_rules: 50
+    max_eval_ms_per_rule: 5

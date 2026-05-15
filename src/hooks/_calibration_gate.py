@@ -188,12 +188,22 @@ def evaluate(
     except (TypeError, ValueError):
         return None
 
-    # Dimension mismatch — model was fit on different vector width. Skip.
+    # Dimension mismatch -- the model was fit on a narrower risk_vector and
+    # cannot score the current one. Drop the cached entry so a future
+    # supervisor refit can replace it, and return None to disable the gate
+    # for this call (fail-open). No projection/dim-growth recovery is
+    # attempted here: that requires knowing which label widened, which the
+    # cached model doesn't carry. Re-fit is the operator's responsibility.
     if x.shape[0] != len(model.mean):
         _warn_once(
             f"dim:{path}:{x.shape[0]}vs{len(model.mean)}",
-            f"risk_vector dim {x.shape[0]} != model dim {len(model.mean)}",
+            f"risk_vector dim {x.shape[0]} != model dim {len(model.mean)} -- "
+            f"invalidating stale calibration model "
+            f"(signal_source=calibration_refit_v2)",
         )
+        for stale in list(_MODEL_CACHE):
+            if stale[0] == str(path):
+                _MODEL_CACHE.pop(stale, None)
         return None
 
     try:

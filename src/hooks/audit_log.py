@@ -59,7 +59,13 @@ except Exception:  # noqa: BLE001 - fallback to no-op lock if not installed
         "Run `pip install portalocker>=2.7`.\n"
     )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+# gate_id values for ablation attribution (Phase 1)
+GATE_IDS = frozenset({
+    "scorer", "plan_grounding", "rules", "calibration",
+    "lang_lock", "mock_detector", "drift_gate",
+})
 
 # Audit log lives under XDG state per v2 plan; falls back to /tmp on legacy
 # operators. Override via RC_AUDIT_ROOT for tests.
@@ -186,6 +192,7 @@ def new_event(
     tool_name: str,
     decision: str,
     file_path: Optional[str] = None,
+    gate_id: Optional[str] = None,
     **fields: Any,
 ) -> Dict[str, Any]:
     """Build a baseline event dict with ts/session_id/project_dir filled in.
@@ -205,6 +212,8 @@ def new_event(
     }
     if file_path is not None:
         base["file_path"] = file_path
+    if gate_id is not None and gate_id in GATE_IDS:
+        base["gate_id"] = gate_id
     base.update(fields)
     return base
 
