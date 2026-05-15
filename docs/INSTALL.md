@@ -20,11 +20,29 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Mamba checkpoint (~250 MB, one-time)
+### 2. Embedder checkpoint (one-time)
+
+The default backend is `mamba-130m` (~250 MB). To use a different
+embedder, set `RC_EMBEDDER` AND a SHA pin override (mutable refs are
+rejected — supply-chain hardening).
 
 ```bash
+# Default
 huggingface-cli download state-spaces/mamba-130m-hf
+
+# Or: Codestral-Mamba 7B (code-pretrained, hidden=4096, ~14 GB)
+# huggingface-cli download mistralai/Mamba-Codestral-7B-v0.1
+# export RC_EMBEDDER=codestral-mamba
+# export RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char hex SHA>
 ```
+
+Slug rule: uppercase the HuggingFace repo id, replace non-alphanumeric
+with `_`, prefix `RC_`, suffix `_REVISION`. Branch names like `main`
+are explicitly rejected.
+
+Supported backends: `mamba-130m` (default), `codestral-mamba`,
+`bge-code`, `unixcoder-base`, `random-mamba` (in-process control for
+falsifiability tests). See [`CONFIGURATION.md#embedder-backend`](CONFIGURATION.md#embedder-backend).
 
 ### 3. Boot the sidecar
 
@@ -296,7 +314,18 @@ find-certificate` block is macOS-only.
   `[hybrid-reasoner] BLOCKED: sidecar unreachable`. Fix: `rc status`,
   restart the daemon.
 - **venv missing deps:** every hook ImportErrors. Symptom:
-  `ModuleNotFoundError: No module named 'tree_sitter'`. Fix:
-  `cd $RC_REPO && .venv/bin/pip install -r requirements.txt`.
-- **First-run sidecar slow:** downloads Mamba weights (~250 MB). Subsequent
-  boots ~30s on CPU. Watch `tail -f /tmp/reasoning-core-sidecar.log`.
+  `ModuleNotFoundError: No module named 'tree_sitter'` / `'yaml'`. Fix:
+  `cd $RC_REPO && .venv/bin/pip install -r requirements.txt` (PyYAML is
+  required for the rule engine; the in-tree fallback is opt-in only).
+- **First-run sidecar slow:** downloads embedder weights. `mamba-130m`:
+  ~250 MB, ~30s on CPU. `codestral-mamba`: ~14 GB. Watch
+  `tail -f /tmp/reasoning-core-sidecar.log`.
+- **`BackboneUnavailableError: No pinned revision for ...`**: a
+  non-default `RC_EMBEDDER` backend needs `RC_<REPO_SLUG>_REVISION=<40-char
+  SHA>`. Branch names are explicitly rejected.
+- **`S2_URL points outside loopback`**: set `S2_ALLOW_REMOTE=1` to opt into
+  remote sidecar. Off by default; blocks SSRF-style source exfil via
+  `.envrc`/`.mcp.json` injection.
+- **Hosted critic refuses to send `Authorization`**: add the host to
+  `RC_GEN_ALLOWED_HOSTS=api.scaleway.ai,...` (CSV). Bearer auth is scoped
+  to loopback or allowed hosts; cross-origin 30x redirects refused.

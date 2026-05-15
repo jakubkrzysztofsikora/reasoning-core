@@ -51,6 +51,28 @@ Source of truth: [`PLAN.md`](PLAN.md) +
   (`c452cb4`/`c0118a4`/`4997ec7`/`dcd3598`/`1738b57`/`1bc2718`).
 - **Unified `install.sh` / `uninstall.sh`** — one command to enable all
   supported CLIs in a target repo; one to revert.
+- **Architectural rule engine** (`.reasoning-core/rules.yaml` +
+  `_rule_engine.py`) — `forbid_import` / `forbid_pattern` rules co-emitted
+  with the neural risk vector through the same exit-2 pipe; fail-closed by
+  default, ≤50 rules, ≤5 ms per rule, `corpus_version` schema check.
+  Per-call `# rc:skip-rule:<id>` bypass.
+- **Multi-backend embedder** (`RC_EMBEDDER`) — `mamba-130m` (default),
+  `codestral-mamba` (7B code-pretrained), `bge-code`, `unixcoder-base`,
+  `random-mamba` (in-process control). New backends require
+  `RC_<REPO_SLUG>_REVISION` SHA pin; mutable refs rejected.
+- **Project index** (`RC_PROJECT_INDEX=1`) — per-session symbol/import
+  index fills `project_fan_in` (true incoming-dependency count via
+  `pidx.files_importing(module)`) and `project_coupling` (cross-file edge
+  delta) risk-vector dims. LRU-bounded by `RC_PROJECT_INDEX_MAX`.
+- **Chord-distance `coherence_delta`** — `||a/||a|| − b/||b||||` on the
+  unit sphere, in `[0, 2]`. Backbone- and pooling-invariant; replaces the
+  earlier raw `L2/sqrt(D)` form (`risk_labels_version=2`).
+- **Unified-diff recovery affordances** — `validate_unified_diff` MCP tool
+  + `RC_DIFF_AUDIT=1` Stop hook + `RECOVERY` guidance in retry-block
+  stderr. Closes 2/10 swebench-iter1 D2 Setup-B malformed-patch failures.
+- **Supply-chain hardening** — loopback-only sidecar (`S2_ALLOW_REMOTE=1`
+  to opt out), allowlisted Bearer-auth hosts (`RC_GEN_ALLOWED_HOSTS`),
+  path-allowlisted fallback log, SHA-pinned HF revisions.
 
 ---
 
@@ -61,10 +83,6 @@ Source of truth: [`PLAN.md`](PLAN.md) +
   on block, auto-call the generative critic, re-score with sidecar, emit
   validated repair as stderr hint. Iteration is server-side; agent never
   sees the loop.
-- **Hybrid symbolic gating (ADR injection)** — Phase 2 of the same plan:
-  `.reasoning-core/rules.yaml` + `_rule_engine.py` for layered-import /
-  forbidden-pattern / metric-threshold rules co-emitted with the neural
-  risk vector through the same exit-2 pipe.
 - **TTFV (<15 min) + drift visualization** — Phase 1: `rc audit-history`
   (last N commits, what would have been blocked) + `rc viz` Mermaid
   sparkline + `npx reasoning-core init` one-line installer.

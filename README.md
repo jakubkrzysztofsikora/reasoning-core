@@ -36,10 +36,24 @@
 
 ## What it does
 
-Claude (or Gemini / Copilot / Vibe) proposes an Edit → a local SSM scorer
-reads the diff, checks it against your repo's structural fingerprint, and
-**blocks the edit before it lands** if it drifts off-plan, invents helpers
-you already have, or violates a coupling/coherence threshold.
+Claude (or Gemini / Copilot / Vibe) proposes an Edit → a local scorer reads
+the diff, checks it against your repo's structural fingerprint, and **blocks
+the edit before it lands** if it drifts off-plan, invents helpers you already
+have, or violates a coupling/coherence threshold.
+
+Two layers, one local pipe:
+
+- **Neural gate.** A code-embedder (`mamba-130m` default; `codestral-mamba`,
+  `bge-code`, `unixcoder-base` selectable via `RC_EMBEDDER`) scores an
+  11-dim risk vector per edit (cyclomatic / fan-in / fan-out / depth / churn
+  / coupling / cohesion / novelty / session_centroid_drift / project_fan_in
+  / project_coupling) plus a chord-distance coherence delta on [0, 2].
+- **Symbolic gate.** Optional `.reasoning-core/rules.yaml` with
+  `forbid_import` / `forbid_pattern` rules — fail-closed by default, evaluated
+  alongside the neural risk vector.
+
+Both decisions surface through the same exit-2 pipe with top-3 risk
+contributors and a `validate_unified_diff` repair tool for blocked agents.
 
 Everything runs on your machine. Nothing extra leaves it.
 
@@ -50,7 +64,7 @@ On an 8-task eval with 3 runs each, blind-graded by 3 cross-vendor judges:
 - **−8.2% tokens averaged across tasks** — best single-task saving **−29%** on PR review.
 - **Plan quality 3.62 → 3.94** (1–5 BARS scale) — structured, sound plans on the first run.
 - **Stays inside promised files +0.23, uses your repo's existing patterns +0.43** — fewer "no, use the existing util" loops.
-- **100% local** — 130M-param Mamba SSM, ~200MB RAM, sits next to `claude`. No telemetry, no cloud relay.
+- **100% local** — default 130M-param Mamba SSM, ~200MB RAM, sits next to `claude`. No telemetry, no cloud relay.
 - **Repo-scoped** via direnv — leaves every other folder on your machine untouched.
 
 Costs: **+98s wall-clock per run** (the gate plans before editing), and code legibility was a tie.
@@ -114,9 +128,14 @@ Same sidecar, four hosts:
 | GitHub Copilot CLI (≥1.0.29) | MCP tool `gate_edit` + post-turn audit | Tier 2 |
 | Mistral Vibe CLI (≥2.9.4) | MCP tool + `post-agent-turn` hook | Tier 2 |
 
-Tier-2 means the gate runs at the model layer (the LLM is instructed to call
-`gate_edit` before every write). Under context pressure it sometimes skips
-the call — for mission-critical work prefer Claude or Gemini. Detail:
+The MCP server (`hybrid-reasoner`) exposes two tools across all hosts:
+`gate_edit` (the synthetic PreToolUse gate for Tier-2 hosts) and
+`validate_unified_diff` (structural patch validator + best-effort repair for
+agents emitting malformed diffs).
+
+Tier-2 means the gate runs at the model layer — the LLM is instructed to
+call `gate_edit` before every write. Under context pressure it sometimes
+skips the call; for mission-critical work prefer Claude or Gemini. Detail:
 [`docs/CLI_PARITY.md`](docs/CLI_PARITY.md).
 
 ---
@@ -129,6 +148,10 @@ The generated `.envrc` exposes the knobs you'll touch first:
 export RC_SHADOW_MODE=1     # 0 = enforce, 1 = log-only (default)
 export S2_FAIL_CLOSED=0     # 1 = block if sidecar down, 0 = fail open (default)
 export RC_PLAN_BLOCK=0      # 1 = plan-guard warnings escalate to hard block
+# export RC_EMBEDDER=mamba-130m       # mamba-130m | codestral-mamba | bge-code | unixcoder-base
+# export RC_RULE_ENGINE=1             # enable .reasoning-core/rules.yaml symbolic gate
+# export RC_PROJECT_INDEX=1           # enable project_fan_in / project_coupling dims
+# export RC_DIFF_AUDIT=1              # post-turn unified-diff structural audit
 ```
 
 Per-machine overrides → `.envrc.local` (gitignored). Full env-var table:
@@ -147,10 +170,10 @@ rc bypass-next              # arm one bypass for the next Edit/Write
 
 ## Documentation
 
-- [**docs/INSTALL.md**](docs/INSTALL.md) — manual install, global-everywhere setup, Scaleway-hosted critic, Cato VPN, supervisor/launchd, troubleshooting
-- [**docs/USAGE.md**](docs/USAGE.md) — `rc` CLI, hook layers, shadow mode, bypass/kill switches, FAQ
+- [**docs/INSTALL.md**](docs/INSTALL.md) — manual install, global-everywhere setup, Scaleway-hosted critic, Cato VPN, supervisor/launchd, embedder backends, troubleshooting
+- [**docs/USAGE.md**](docs/USAGE.md) — `rc` CLI, hook layers, rule engine, diff audit, shadow mode, bypass/kill switches, FAQ
 - [**docs/CONFIGURATION.md**](docs/CONFIGURATION.md) — every `RC_*` and `S2_*` env var
-- [**docs/HOW_IT_WORKS.md**](docs/HOW_IT_WORKS.md) — System 1 + System 2 architecture, scoring math, MCP wiring
+- [**docs/HOW_IT_WORKS.md**](docs/HOW_IT_WORKS.md) — System 1 + System 2 architecture, 11-dim risk vector, chord-distance scoring, rule engine wiring
 - [**docs/BENCHMARKS.md**](docs/BENCHMARKS.md) — full eval numbers, per-task verdicts, caveats
 - [**docs/ROADMAP.md**](docs/ROADMAP.md) — what's shipped, what's open
 - [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) — deep technical dive
@@ -184,13 +207,14 @@ Yes please. Spec first (update [`docs/PLAN.md`](docs/PLAN.md)), add a kanban
 entry, self-verify (`pytest -m "not live"` green, `bash -n scripts/*.sh`
 clean, `python3 -c "import json; json.load(open('.claude/settings.json'))"`
 passes). Don't break the public contracts: HTTP `/score`, `ImpactReport` JSON,
-MCP tool signature.
+MCP tool signatures.
 
 ---
 
 ## Acknowledgements + License
 
 - [Mamba](https://huggingface.co/state-spaces/mamba-130m-hf) — Albert Gu & Tri Dao.
+- [Mamba-Codestral](https://huggingface.co/mistralai/Mamba-Codestral-7B-v0.1) — Mistral AI.
 - [Tree-sitter](https://tree-sitter.github.io/) — Max Brunsfeld.
 - [Model Context Protocol](https://modelcontextprotocol.io/) — Anthropic.
 - [FastMCP](https://github.com/jlowin/fastmcp) — Jeremiah Lowin.

@@ -96,6 +96,21 @@ export HF_HOME="\${HF_HOME:-\$HOME/.cache/huggingface}"
 export RC_SHADOW_MODE="\${RC_SHADOW_MODE:-1}"
 export RC_PLAN_BLOCK="\${RC_PLAN_BLOCK:-0}"
 
+# Opt-in features (all default off):
+#   RC_EMBEDDER         — embedder backend; default mamba-130m (130M, ~200MB).
+#                         Alternatives: codestral-mamba (7B, code-pretrained,
+#                         needs SHA pin via RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION),
+#                         bge-code, unixcoder-base, random-mamba.
+#   RC_RULE_ENGINE      — enable .reasoning-core/rules.yaml symbolic gate.
+#                         Fail-closed by default; RC_RULE_ENGINE_LENIENT=1 to soft-degrade.
+#   RC_PROJECT_INDEX    — fill project_fan_in / project_coupling risk dims by
+#                         indexing the whole repo once per session.
+#   RC_DIFF_AUDIT       — Stop-hook scans last assistant diff with validate_unified_diff.
+# export RC_EMBEDDER=mamba-130m
+# export RC_RULE_ENGINE=1
+# export RC_PROJECT_INDEX=1
+# export RC_DIFF_AUDIT=1
+
 # Personal toggles / secrets → .envrc.local (gitignored, sourced last).
 [[ -f .envrc.local ]] && source_env .envrc.local
 EOF
