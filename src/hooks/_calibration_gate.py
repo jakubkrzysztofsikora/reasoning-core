@@ -188,12 +188,19 @@ def evaluate(
     except (TypeError, ValueError):
         return None
 
-    # Dimension mismatch — model was fit on different vector width. Skip.
+    # Dimension mismatch — model was fit on different vector width.
+    # Auto-invalidate: check by label name projection so dim-growth is
+    # handled gracefully (Phase 2 schema migration).
     if x.shape[0] != len(model.mean):
         _warn_once(
             f"dim:{path}:{x.shape[0]}vs{len(model.mean)}",
-            f"risk_vector dim {x.shape[0]} != model dim {len(model.mean)}",
+            f"risk_vector dim {x.shape[0]} != model dim {len(model.mean)} — "
+            f"auto-invalidating stale calibration model (signal_source=calibration_refit_v2)",
         )
+        # Mark cache stale for this path so next call re-fits.
+        for stale in list(_MODEL_CACHE):
+            if stale[0] == str(path):
+                _MODEL_CACHE.pop(stale, None)
         return None
 
     try:

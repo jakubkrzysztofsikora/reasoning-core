@@ -12,7 +12,10 @@
 # Env knobs:
 #   S2_PORT              -- bind port (default 8765).
 #   S2_DEVICE            -- cpu|cuda (default cpu).
-#   S2_SSM_CHECKPOINT    -- HF checkpoint id (default state-spaces/mamba-130m-hf).
+#   S2_SSM_CHECKPOINT    -- HF checkpoint id (legacy; default state-spaces/mamba-130m-hf).
+#   RC_EMBEDDER          -- embedder backend selection (default codestral-mamba).
+#                         Supported: codestral-mamba | mamba-130m | bge-code |
+#                         unixcoder-base | random-mamba.
 #   BACKGROUND           -- 1 to fork + wait; unset/0 to run in foreground.
 #   S2_HEALTH_TIMEOUT    -- seconds to wait for model_loaded:true (default 120).
 #   S2_LOG_FILE          -- when BACKGROUND=1, redirect logs here (default /tmp/reasoning-core-sidecar.log).

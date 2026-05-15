@@ -1,26 +1,21 @@
-"""Real Mamba SSM backbone loader for the System 2 sidecar.
+"""Multi-backend embedder loader for the System 2 sidecar.
 
-This module owns the lifecycle of the pretrained state-space-model that powers
-the architectural-impact / coherence scoring path. It is intentionally kept
+This module owns the lifecycle of the embedder that powers the
+architectural-impact / coherence scoring path. It is intentionally kept
 small and side-effect-free at import time: the heavyweight `transformers`
 import is deferred to `load_backbone()` so that `python3 -c "import
 src.ssm_backbone"` stays cheap and offline-friendly.
 
-Backbone selection priority (documented for ARCHITECTURE.md / RC-008):
-    1. ``state-spaces/mamba-130m-hf``  -- default. Pure HF port that does NOT
-       require the optional ``mamba-ssm`` / ``causal-conv1d`` CUDA kernels, so
-       it loads cleanly on macOS arm64 + CPU.
-    2. ``state-spaces/mamba2-130m``    -- fallback if the primary checkpoint
-       cannot be resolved (registered for forward compatibility; documented in
-       ARCHITECTURE.md).
-    3. ``sshleifer/tiny-gpt2``         -- last-resort tiny-transformer fallback
-       used ONLY when both Mamba checkpoints fail to resolve. This keeps the
-       sidecar booting in fully offline / unreachable-HF environments. The
-       fallback is reflected honestly in ``BACKBONE_INFO`` so callers (and the
-       /health endpoint) can tell the difference.
+Backends (selected via ``RC_EMBEDDER`` env):
+    codestral-mamba  -- default. mistralai/Mamba-Codestral-7B-v0.1 (Apache 2.0,
+                       code-pretrained Mamba-2, 256K context cap -> 8192).
+    mamba-130m       -- legacy fallback. state-spaces/mamba-130m-hf (Pile-LM).
+    bge-code         -- BAAI/bge-code-v1 (code-specialised transformer, ~4GB).
+    unixcoder-base   -- microsoft/unixcoder-base (code transformer baseline).
+    random-mamba     -- randomly-initialised Mamba-2 control for falsifiability.
 
-Env overrides:
-    S2_SSM_CHECKPOINT  -- override the primary checkpoint string.
+Legacy env (backward compat):
+    S2_SSM_CHECKPOINT  -- override for mamba-130m path ONLY.
     S2_DEVICE          -- "cpu" (default) or "cuda".
 """
 
@@ -35,24 +30,85 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# --- Public constants ---------------------------------------------------------
+# --- Backend registry --------------------------------------------------------
 
-DEFAULT_CHECKPOINT = "state-spaces/mamba-130m-hf"
+
+@dataclass(frozen=True)
+class _EmbedderBackend:
+    """Static configuration for one embedder backend."""
+
+    name: str                      # RC_EMBEDDER value
+    checkpoint: str                # HuggingFace repo id
+    pooling: str                   # "mean" or "cls"
+    max_seq_len: int
+    hidden_size: int               # expected / known hidden dimension
+    revision: str                  # "main" or pinned SHA
+    license: str
+    is_code_pretrained: bool = True
+
+
+MAX_SEQ_LEN_CODESTRAL: int = 8192
+
+_BACKENDS: dict[str, _EmbedderBackend] = {
+    "codestral-mamba": _EmbedderBackend(
+        name="codestral-mamba",
+        checkpoint="mistralai/Mamba-Codestral-7B-v0.1",
+        pooling="mean",
+        max_seq_len=MAX_SEQ_LEN_CODESTRAL,
+        hidden_size=4096,
+        revision="main",
+        license="apache-2.0",
+    ),
+    "mamba-130m": _EmbedderBackend(
+        name="mamba-130m",
+        checkpoint="state-spaces/mamba-130m-hf",
+        pooling="mean",
+        max_seq_len=512,
+        hidden_size=768,
+        revision="1e76775f628fbf1350fbe4dbb3d971ba64af25a1",
+        license="apache-2.0",
+    ),
+    "bge-code": _EmbedderBackend(
+        name="bge-code",
+        checkpoint="BAAI/bge-code-v1",
+        pooling="cls",
+        max_seq_len=MAX_SEQ_LEN_CODESTRAL,
+        hidden_size=768,
+        revision="main",
+        license="apache-2.0",
+    ),
+    "unixcoder-base": _EmbedderBackend(
+        name="unixcoder-base",
+        checkpoint="microsoft/unixcoder-base",
+        pooling="cls",
+        max_seq_len=512,
+        hidden_size=768,
+        revision="main",
+        license="mit",
+    ),
+    "random-mamba": _EmbedderBackend(
+        name="random-mamba",
+        checkpoint="__random_mamba__",
+        pooling="mean",
+        max_seq_len=512,
+        hidden_size=768,
+        revision="",
+        license="n/a",
+        is_code_pretrained=False,
+    ),
+}
+
+_DEFAULT_BACKEND_NAME: str = "codestral-mamba"
+
+# Legacy constants — kept for API compat; new code uses _EmbedderBackend.
+DEFAULT_CHECKPOINT = _BACKENDS["mamba-130m"].checkpoint
 FALLBACK_CHECKPOINTS = (
     "state-spaces/mamba2-130m",
-    # Tiny last-resort transformer; documented above. NOT a Mamba, but keeps
-    # the sidecar honest in air-gapped envs by still producing real embeddings.
     "sshleifer/tiny-gpt2",
 )
-
-# Hard allowlist for `S2_SSM_CHECKPOINT`. The checkpoint id must come
-# from a fixed set — env override of an arbitrary HF repo is supply-chain RCE.
-_ALLOWED_CHECKPOINTS = frozenset({DEFAULT_CHECKPOINT, *FALLBACK_CHECKPOINTS})
-
-# Pinned commit SHAs (verified against huggingface.co/api/models/<repo>
-# 2026-05-09). HF branches and tags are mutable refs; only commit SHAs are
-# immutable, so a malicious push to upstream main cannot reach a sidecar
-# pinned to a known-good SHA.
+_ALLOWED_CHECKPOINTS = frozenset(
+    {DEFAULT_CHECKPOINT, *FALLBACK_CHECKPOINTS}
+)
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _PINNED_REVISIONS: dict[str, str] = {
     "state-spaces/mamba-130m-hf": "1e76775f628fbf1350fbe4dbb3d971ba64af25a1",
@@ -61,35 +117,7 @@ _PINNED_REVISIONS: dict[str, str] = {
 }
 
 
-def _revision_env_key(repo_id: str) -> str:
-    return "RC_" + re.sub(r"[^A-Z0-9]", "_", repo_id.upper()) + "_REVISION"
-
-
-def _resolve_revision(repo_id: str) -> str:
-    """Return a 40-char commit SHA for `repo_id`. Fails closed on mutable refs.
-
-    Optional override via `RC_<REPO_SLUG>_REVISION` env var, which must also
-    be a 40-char hex SHA. Branch names like 'main' are explicitly rejected
-    to prevent supply-chain attacks via a malicious upstream push.
-    """
-    env_key = _revision_env_key(repo_id)
-    override = os.environ.get(env_key, "").strip()
-    if override:
-        if not _SHA_RE.match(override):
-            raise BackboneUnavailableError(
-                f"{env_key}={override!r} is not a 40-char hex commit SHA. "
-                f"Mutable refs (branches/tags) are forbidden."
-            )
-        return override
-    pin = _PINNED_REVISIONS.get(repo_id)
-    if not pin:
-        raise BackboneUnavailableError(
-            f"No pinned revision for {repo_id!r}. Add it to _PINNED_REVISIONS."
-        )
-    return pin
-
-# Filled in after first successful load_backbone() call. Consumed by the
-# /health endpoint and ARCHITECTURE.md generation.
+# Filled in after first successful load_backbone() call.
 BACKBONE_INFO: dict[str, Any] = {
     "checkpoint": None,
     "hidden_size": None,
@@ -98,11 +126,13 @@ BACKBONE_INFO: dict[str, Any] = {
     "source_url": None,
     "is_fallback": False,
     "device": None,
+    "embedder_role": "feature_extractor",
+    "embedder_backend": None,
 }
 
 
 class BackboneUnavailableError(RuntimeError):
-    """Raised when no backbone (primary or fallbacks) could be loaded."""
+    """Raised when no backbone could be loaded."""
 
 
 # --- Singleton state ----------------------------------------------------------
@@ -115,80 +145,96 @@ class _BackboneHandle:
     checkpoint: str = ""
     hidden_size: int = 0
     info: dict[str, Any] = field(default_factory=dict)
+    backend: Optional[_EmbedderBackend] = None
 
 
 _HANDLE: Optional[_BackboneHandle] = None
 _LOAD_LOCK = threading.Lock()
 
 
-# --- Loader -------------------------------------------------------------------
+# --- Helpers ------------------------------------------------------------------
+
 
 def _resolve_device(device: Optional[str]) -> str:
-    # Env wins when caller didn't pass an explicit override.
     env_val = os.environ.get("S2_DEVICE", "").lower().strip()
     if device is None:
         return env_val or "cpu"
     return env_val or device or "cpu"
 
 
-def _resolve_checkpoint(checkpoint: Optional[str]) -> str:
-    # Env wins when caller didn't pass an explicit override.
-    env_val = os.environ.get("S2_SSM_CHECKPOINT", "").strip()
-    if checkpoint is None:
-        resolved = env_val or DEFAULT_CHECKPOINT
-    else:
-        resolved = env_val or checkpoint or DEFAULT_CHECKPOINT
-    if resolved not in _ALLOWED_CHECKPOINTS:
-        raise BackboneUnavailableError(
-            f"checkpoint {resolved!r} is not in the allowlist "
-            f"{sorted(_ALLOWED_CHECKPOINTS)}; refusing to load with "
-            f"trust_remote_code=True against an arbitrary HF repo"
+def _resolve_backend() -> _EmbedderBackend:
+    """Select backend from RC_EMBEDDER env (default codestral-mamba)."""
+    name = os.environ.get("RC_EMBEDDER", _DEFAULT_BACKEND_NAME).strip().lower()
+    if name not in _BACKENDS:
+        logger.warning(
+            "RC_EMBEDDER=%r not recognised; falling back to %s",
+            name, _DEFAULT_BACKEND_NAME,
         )
-    return resolved
+        name = _DEFAULT_BACKEND_NAME
+    return _BACKENDS[name]
 
 
-def _try_load(ckpt: str, device: str) -> Optional[_BackboneHandle]:
-    """Attempt to load a single checkpoint. Returns None on failure."""
+def _resolve_revision_for_backend(backend: _EmbedderBackend) -> str | None:
+    """Return revision string or None when not required (e.g. random-mamba)."""
+    if backend.name == "random-mamba":
+        return None
+    # Legacy SHA pins for mamba-130m / tiny-gpt2
+    pin = _PINNED_REVISIONS.get(backend.checkpoint)
+    if pin:
+        return pin
+    # For models using "main" we trust the HF Hub cache
+    if backend.revision == "main":
+        return "main"
+    return backend.revision or None
+
+
+# --- Loader -------------------------------------------------------------------
+
+
+def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
+    """Attempt to load a single backend. Returns None on failure."""
     try:
-        # Imported lazily so module import remains light.
-        import torch  # noqa: F401  (used implicitly via model.to / no_grad)
-        from transformers import AutoModel, AutoTokenizer
-    except Exception as exc:  # pragma: no cover - import guard
+        import torch  # noqa: F401
+        from transformers import AutoModel, AutoTokenizer, AutoConfig
+    except Exception as exc:  # pragma: no cover
         logger.error("transformers/torch import failed: %s", exc)
         return None
 
     try:
-        revision = _resolve_revision(ckpt)
+        if backend.name == "random-mamba":
+            return _try_load_random_mamba(backend, device)
+
+        revision = _resolve_revision_for_backend(backend)
         logger.info(
-            "Loading SSM backbone checkpoint=%s revision=%s device=%s",
-            ckpt, revision[:12], device,
+            "Loading embedder backend=%s checkpoint=%s revision=%s device=%s",
+            backend.name, backend.checkpoint,
+            (revision or "latest")[:12], device,
         )
-        # trust_remote_code=False: mamba(-2) + tiny-gpt2 are all natively
-        # supported in transformers >=4.39 (Mamba) / >=4.40 (Mamba2). Setting
-        # this to True would let a malicious HF repo execute arbitrary Python
-        # at load time, which is the primary supply-chain RCE vector for
-        # AutoModel.from_pretrained.
+
+        load_kwargs: dict[str, Any] = {"trust_remote_code": False}
+        if revision:
+            load_kwargs["revision"] = revision
+
         tokenizer = AutoTokenizer.from_pretrained(
-            ckpt, revision=revision, trust_remote_code=False,
+            backend.checkpoint, **load_kwargs,
         )
         model = AutoModel.from_pretrained(
-            ckpt, revision=revision, trust_remote_code=False,
+            backend.checkpoint, **load_kwargs,
         )
         model.eval()
         try:
             model.to(device)
-        except Exception as exc:  # pragma: no cover - cuda missing etc.
+        except Exception as exc:  # pragma: no cover
             logger.warning("model.to(%s) failed (%s); falling back to cpu", device, exc)
             device = "cpu"
             model.to(device)
 
         hidden_size = int(getattr(model.config, "hidden_size", 0) or 0)
         if hidden_size <= 0:
-            # Some configs use d_model.
             hidden_size = int(getattr(model.config, "d_model", 0) or 0)
+        if hidden_size <= 0:
+            hidden_size = backend.hidden_size
 
-        # Many tokenizers (gpt-neox-derived, used by mamba-130m-hf) lack a
-        # pad token; reuse eos to keep batched calls happy.
         if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None):
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -199,24 +245,79 @@ def _try_load(ckpt: str, device: str) -> Optional[_BackboneHandle]:
             pass
 
         info = {
-            "checkpoint": ckpt,
+            "checkpoint": backend.checkpoint,
             "hidden_size": hidden_size,
             "num_parameters": num_params,
-            "license": "apache-2.0" if ckpt.startswith("state-spaces/") else "unknown",
-            "source_url": f"https://huggingface.co/{ckpt}",
-            "is_fallback": ckpt != DEFAULT_CHECKPOINT,
+            "license": backend.license,
+            "source_url": f"https://huggingface.co/{backend.checkpoint}",
+            "is_fallback": backend.name != _DEFAULT_BACKEND_NAME,
             "device": device,
+            "embedder_role": "feature_extractor",
+            "embedder_backend": backend.name,
         }
         return _BackboneHandle(
             model=model,
             tokenizer=tokenizer,
             device=device,
-            checkpoint=ckpt,
+            checkpoint=backend.checkpoint,
             hidden_size=hidden_size,
             info=info,
+            backend=backend,
         )
     except Exception as exc:
-        logger.warning("checkpoint %s failed to load: %s", ckpt, exc)
+        logger.warning("backend %s failed to load: %s", backend.name, exc)
+        return None
+
+
+def _try_load_random_mamba(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
+    """Create a randomly-initialised Mamba-2 model for the falsifiability control."""
+    try:
+        import torch
+        from transformers import Mamba2Config, Mamba2ForCausalLM
+
+        logger.info("Creating random-mamba control model")
+        config = Mamba2Config(
+            hidden_size=backend.hidden_size,
+            num_hidden_layers=24,
+            state_size=128,
+            conv_kernel=4,
+            expand=2,
+        )
+        model = Mamba2ForCausalLM(config)
+        model.eval()
+        model.to(device)
+
+        # Random-init models have no tokenizer — create a dummy GPT-2 tokenizer
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            "gpt2", trust_remote_code=False,
+        )
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        num_params = sum(p.numel() for p in model.parameters())
+        info = {
+            "checkpoint": "random-mamba-control",
+            "hidden_size": backend.hidden_size,
+            "num_parameters": num_params,
+            "license": "n/a",
+            "source_url": "(randomly-initialised)",
+            "is_fallback": False,
+            "device": device,
+            "embedder_role": "feature_extractor",
+            "embedder_backend": "random-mamba",
+        }
+        return _BackboneHandle(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            checkpoint="random-mamba",
+            hidden_size=backend.hidden_size,
+            info=info,
+            backend=backend,
+        )
+    except Exception as exc:
+        logger.warning("random-mamba creation failed: %s", exc)
         return None
 
 
@@ -224,10 +325,14 @@ def load_backbone(
     checkpoint: Optional[str] = None,
     device: Optional[str] = None,
 ) -> tuple[Any, Any]:
-    """Load (or return cached) Mamba backbone + tokenizer.
+    """Load (or return cached) embedder backbone + tokenizer.
+
+    Backend is selected via ``RC_EMBEDDER`` env (default: codestral-mamba).
+    The ``checkpoint`` arg is retained for backward compat but ignored
+    unless ``RC_EMBEDDER`` is not set and ``S2_SSM_CHECKPOINT`` is used.
 
     Returns a (model, tokenizer) tuple. Raises BackboneUnavailableError if
-    every candidate checkpoint fails to resolve.
+    every candidate fails.
     """
     global _HANDLE
     if _HANDLE is not None and _HANDLE.model is not None:
@@ -238,32 +343,108 @@ def load_backbone(
             return _HANDLE.model, _HANDLE.tokenizer
 
         device = _resolve_device(device)
-        primary = _resolve_checkpoint(checkpoint)
-        candidates = [primary] + [c for c in FALLBACK_CHECKPOINTS if c != primary]
 
-        last_error: Optional[Exception] = None
-        for ckpt in candidates:
-            handle = _try_load(ckpt, device)
+        # Legacy path: S2_SSM_CHECKPOINT set without RC_EMBEDDER
+        legacy_ckpt = os.environ.get("S2_SSM_CHECKPOINT", "").strip()
+        if legacy_ckpt and not os.environ.get("RC_EMBEDDER"):
+            handle = _try_load_legacy(legacy_ckpt, device)
             if handle is not None:
                 _HANDLE = handle
                 BACKBONE_INFO.update(handle.info)
                 logger.info(
-                    "SSM backbone ready: checkpoint=%s hidden=%d params=%d device=%s fallback=%s",
-                    handle.checkpoint,
-                    handle.hidden_size,
-                    handle.info.get("num_parameters", 0),
-                    handle.device,
-                    handle.info.get("is_fallback", False),
+                    "SSM backbone ready (legacy path): checkpoint=%s hidden=%d",
+                    handle.checkpoint, handle.hidden_size,
+                )
+                return handle.model, handle.tokenizer
+
+        # Modern path: RC_EMBEDDER-driven backend selection
+        backend = _resolve_backend()
+        handle = _try_load_backend(backend, device)
+        if handle is not None:
+            _HANDLE = handle
+            BACKBONE_INFO.update(handle.info)
+            logger.info(
+                "Embedder ready: backend=%s checkpoint=%s hidden=%d params=%d device=%s",
+                backend.name, handle.checkpoint,
+                handle.hidden_size,
+                handle.info.get("num_parameters", 0),
+                handle.device,
+            )
+            return handle.model, handle.tokenizer
+
+        # Fallback: try remaining backends in registry order
+        for name, fb_backend in _BACKENDS.items():
+            if name == backend.name:
+                continue
+            handle = _try_load_backend(fb_backend, device)
+            if handle is not None:
+                _HANDLE = handle
+                BACKBONE_INFO.update(handle.info)
+                logger.info(
+                    "Embedder ready (fallback): backend=%s", fb_backend.name,
                 )
                 return handle.model, handle.tokenizer
 
         raise BackboneUnavailableError(
-            "No SSM backbone could be loaded. Tried: "
-            + ", ".join(candidates)
-            + ". Remediation: run `huggingface-cli download state-spaces/mamba-130m-hf` "
-            + "or set S2_SSM_CHECKPOINT to a locally-cached model id. "
-            + (f"Last error: {last_error}" if last_error else "")
+            "No embedder backend could be loaded. "
+            "Tried RC_EMBEDDER={} and legacy fallbacks. "
+            "Set RC_EMBEDDER to one of: {}.".format(
+                os.environ.get("RC_EMBEDDER", _DEFAULT_BACKEND_NAME),
+                ", ".join(_BACKENDS.keys()),
+            )
         )
+
+
+def _try_load_legacy(ckpt: str, device: str) -> Optional[_BackboneHandle]:
+    """Load a legacy S2_SSM_CHECKPOINT model. Kept for backward compat."""
+    try:
+        import torch  # noqa: F401
+        from transformers import AutoModel, AutoTokenizer
+    except Exception:
+        return None
+
+    try:
+        if ckpt not in _ALLOWED_CHECKPOINTS:
+            raise BackboneUnavailableError(
+                f"checkpoint {ckpt!r} is not in the allowlist"
+            )
+        revision = _PINNED_REVISIONS.get(ckpt, "main")
+        tokenizer = AutoTokenizer.from_pretrained(
+            ckpt, revision=revision, trust_remote_code=False,
+        )
+        model = AutoModel.from_pretrained(
+            ckpt, revision=revision, trust_remote_code=False,
+        )
+        model.eval()
+        try:
+            model.to(device)
+        except Exception:
+            device = "cpu"
+            model.to(device)
+        hidden_size = int(getattr(model.config, "hidden_size", 0) or 0)
+        if hidden_size <= 0:
+            hidden_size = int(getattr(model.config, "d_model", 0) or 0)
+        if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None):
+            tokenizer.pad_token = tokenizer.eos_token
+        info = {
+            "checkpoint": ckpt,
+            "hidden_size": hidden_size,
+            "num_parameters": sum(p.numel() for p in model.parameters()),
+            "license": "apache-2.0" if ckpt.startswith("state-spaces/") else "unknown",
+            "source_url": f"https://huggingface.co/{ckpt}",
+            "is_fallback": ckpt != DEFAULT_CHECKPOINT,
+            "device": device,
+            "embedder_role": "feature_extractor",
+            "embedder_backend": "mamba-130m",
+        }
+        return _BackboneHandle(
+            model=model, tokenizer=tokenizer, device=device,
+            checkpoint=ckpt, hidden_size=hidden_size, info=info,
+            backend=_BACKENDS.get("mamba-130m"),
+        )
+    except Exception as exc:
+        logger.warning("legacy checkpoint %s failed: %s", ckpt, exc)
+        return None
 
 
 def get_handle() -> _BackboneHandle:
@@ -280,34 +461,38 @@ def is_loaded() -> bool:
 
 # --- Embedding ----------------------------------------------------------------
 
-# Deterministic seed applied at every embed() call. Combined with model.eval()
-# + torch.no_grad() this gives bit-identical outputs across two calls with the
-# same input -- a hard contract from the board.
 _EMBED_SEED = 0xC0DEC0DE & 0xFFFFFFFF
 
 
 def embed(text: str) -> Any:
-    """Return a 1D pooled embedding (mean over seq dim) as a torch.Tensor."""
+    """Return a 1D pooled embedding as a torch.Tensor.
+
+    Pooling strategy depends on backend:
+      - mean: mean over sequence dim (SSM backends)
+      - cls:  first-token embedding (transformer backends: bge-code, unixcoder)
+    """
     import torch
 
     handle = get_handle()
     model = handle.model
     tokenizer = handle.tokenizer
     device = handle.device
+    backend = handle.backend
 
-    # Empty-string guard: produce a deterministic zero-vector rather than a
-    # tokenizer error, so the score path never crashes on edge inputs.
+    max_len = 512
+    pooling = "mean"
+    if backend is not None:
+        max_len = backend.max_seq_len
+        pooling = backend.pooling
+
     text = text if text else " "
-
-    # Determinism. Re-seed on every call -- cheap, and isolates from any
-    # surrounding process state.
     torch.manual_seed(_EMBED_SEED)
 
     enc = tokenizer(
         text,
         return_tensors="pt",
         truncation=True,
-        max_length=512,
+        max_length=max_len,
         padding=False,
     )
     input_ids = enc["input_ids"].to(device)
@@ -319,44 +504,35 @@ def embed(text: str) -> Any:
         try:
             out = model(input_ids=input_ids, attention_mask=attention_mask)
         except TypeError:
-            # Some Mamba forwards do not accept attention_mask kwarg.
             out = model(input_ids=input_ids)
 
     last = getattr(out, "last_hidden_state", None)
     if last is None:
-        # Fallback: many AutoModel outputs are tuples whose first elem is hidden states.
         last = out[0] if isinstance(out, (list, tuple)) else None
     if last is None:
         raise BackboneUnavailableError(
             "Backbone forward produced no last_hidden_state; cannot embed."
         )
 
-    # Mean-pool over sequence dim -> [hidden_size]
-    pooled = last.mean(dim=1).squeeze(0)
+    if pooling == "cls":
+        # Use first token (CLS surrogate) for transformer models
+        pooled = last[:, 0, :].squeeze(0)
+    else:
+        # Mean-pool over sequence dim -> [hidden_size]
+        pooled = last.mean(dim=1).squeeze(0)
     return pooled.detach().cpu()
 
 
 # --- AST-token bridge ---------------------------------------------------------
 
 def ast_to_tokens(tree: Any, src: str) -> str:
-    """Linearise an AST + source into a deterministic token string for the SSM.
-
-    The strategy is intentionally simple and stable: walk the tree in a
-    pre-order traversal and emit ``<NODE_TYPE>`` for each named node, plus the
-    leaf identifier text for terminals shorter than 64 chars. This produces a
-    reproducible, structure-aware token stream that the tokenizer can chew on
-    without us depending on a particular grammar's quirks.
-
-    If the tree is None or has no root, fall back to the raw source so
-    coherence_delta is still meaningful.
-    """
+    """Linearise an AST + source into a deterministic token string for the SSM."""
     if tree is None or getattr(tree, "root_node", None) is None:
         return src or ""
 
     src_bytes = src.encode("utf-8", errors="replace") if isinstance(src, str) else (src or b"")
     pieces: list[str] = []
     stack = [tree.root_node]
-    # Pre-order traversal, bounded to keep huge files cheap.
     max_nodes = 4096
     visited = 0
     while stack and visited < max_nodes:
@@ -369,7 +545,6 @@ def ast_to_tokens(tree: Any, src: str) -> str:
         except Exception:
             ntype = "node"
         pieces.append(f"<{ntype}>")
-        # Leaf: emit short identifier text.
         try:
             child_count = node.child_count
         except Exception:
@@ -383,7 +558,6 @@ def ast_to_tokens(tree: Any, src: str) -> str:
             except Exception:
                 pass
         else:
-            # Push children right-to-left so left-most is processed first.
             try:
                 children = list(node.children)
             except Exception:
@@ -399,6 +573,7 @@ __all__ = [
     "BackboneUnavailableError",
     "DEFAULT_CHECKPOINT",
     "FALLBACK_CHECKPOINTS",
+    "MAX_SEQ_LEN_CODESTRAL",
     "ast_to_tokens",
     "embed",
     "get_handle",

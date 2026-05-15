@@ -236,7 +236,7 @@ def test_score_change_identical_inputs(s2_core_module, loaded_backbone):
     assert report.regression_detected is False
     # 8-dim risk vector with declared labels.
     assert isinstance(report.risk_vector, list)
-    assert len(report.risk_vector) == 8
+    assert len(report.risk_vector) == len(s2_core_module.RISK_LABELS)
     for v in report.risk_vector:
         assert 0.0 <= float(v) <= 1.0
 
@@ -247,7 +247,7 @@ def test_score_change_regression_detected(s2_core_module, loaded_backbone):
     # The bad refactor drops the guard clause and adds unbounded recursion;
     # that should trip at least one of the regression conditions.
     assert isinstance(report.risk_vector, list)
-    assert len(report.risk_vector) == 8
+    assert len(report.risk_vector) == len(s2_core_module.RISK_LABELS)
     # We do not pin the exact dim that trips, but we expect a regression.
     assert report.regression_detected is True
     assert isinstance(report.human_summary, str)
@@ -278,8 +278,15 @@ def test_impact_report_to_dict_shape(s2_core_module, loaded_backbone):
         "human_summary",
     ):
         assert key in d
-    assert len(d["risk_vector"]) == 8
-    assert len(d["risk_labels"]) == 8
+    assert len(d["risk_vector"]) == len(s2_core_module.RISK_LABELS)
+    assert len(d["risk_labels"]) == len(s2_core_module.RISK_LABELS)
+    # Phase 2 schema migration: exact ordered tuple must not drift.
+    assert s2_core_module.RISK_LABELS == (
+        "cyclomatic", "fan_in", "fan_out", "depth",
+        "churn", "coupling", "cohesion", "novelty",
+        "session_centroid_drift", "project_fan_in", "project_coupling",
+    )
+    assert d.get("risk_labels_version") == 2
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +382,7 @@ def test_http_score_happy_path(http_client):
         "human_summary",
     ):
         assert key in body
-    assert len(body["risk_vector"]) == 8
+    assert len(body["risk_vector"]) == len(s2_core_module.RISK_LABELS)
 
 
 def test_http_score_unsupported_language(http_client):
