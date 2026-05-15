@@ -174,6 +174,102 @@ def _resolve_backend() -> _EmbedderBackend:
     return _BACKENDS[name]
 
 
+def _revision_env_key(repo_id: str) -> str:
+    return "RC_" + re.sub(r"[^A-Z0-9]", "_", repo_id.upper()) + "_REVISION"
+
+
+def _resolve_revision(repo_id: str) -> str:
+    """Return a 40-char commit SHA for ``repo_id``. Fails closed on mutable refs.
+
+    Optional override via ``RC_<REPO_SLUG>_REVISION`` env var, which must also
+    be a 40-char hex SHA. Branch names like ``main`` are explicitly rejected
+    to prevent supply-chain attacks via a malicious upstream push.
+
+    Only applies to checkpoints listed in ``_PINNED_REVISIONS``. Newer
+    backbones in the ``_BACKENDS`` registry that carry ``revision="main"``
+    bypass this helper via ``_resolve_revision_for_backend`` -- track those
+    separately if/when they're added to the allowlist.
+    """
+    env_key = _revision_env_key(repo_id)
+    override = os.environ.get(env_key, "").strip()
+    if override:
+        if not _SHA_RE.match(override):
+            raise BackboneUnavailableError(
+                f"{env_key}={override!r} is not a 40-char hex commit SHA. "
+                f"Mutable refs (branches/tags) are forbidden."
+            )
+        return override
+    pin = _PINNED_REVISIONS.get(repo_id)
+    if not pin:
+        raise BackboneUnavailableError(
+            f"No pinned revision for {repo_id!r}. Add it to _PINNED_REVISIONS."
+        )
+    return pin
+
+
+def _resolve_checkpoint(checkpoint: Optional[str]) -> str:
+    """Return an allowlisted checkpoint id for the legacy checkpoint-based path.
+
+    Env wins when caller didn't pass an explicit override. Raises
+    ``BackboneUnavailableError`` if the resolved id isn't in
+    ``_ALLOWED_CHECKPOINTS`` -- this protects the legacy load path from
+    arbitrary HF repos.
+    """
+    env_val = os.environ.get("S2_SSM_CHECKPOINT", "").strip()
+    if checkpoint is None:
+        resolved = env_val or DEFAULT_CHECKPOINT
+    else:
+        resolved = env_val or checkpoint or DEFAULT_CHECKPOINT
+    if resolved not in _ALLOWED_CHECKPOINTS:
+        raise BackboneUnavailableError(
+            f"checkpoint {resolved!r} is not in the allowlist "
+            f"{sorted(_ALLOWED_CHECKPOINTS)}; refusing to load with "
+            f"trust_remote_code=True against an arbitrary HF repo"
+        )
+    return resolved
+
+
+def _try_load(ckpt: str, device: str) -> Optional["_BackboneHandle"]:
+    """Legacy single-checkpoint loader. Kept for the security test surface
+    and for callers that bypass the ``RC_EMBEDDER`` registry. Returns ``None``
+    on failure rather than raising.
+    """
+    try:
+        import torch  # noqa: F401
+        from transformers import AutoModel, AutoTokenizer
+    except Exception as exc:  # pragma: no cover
+        logger.error("transformers/torch import failed: %s", exc)
+        return None
+    try:
+        revision = _resolve_revision(ckpt)
+        logger.info(
+            "Loading SSM backbone checkpoint=%s revision=%s device=%s",
+            ckpt, revision[:12], device,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(
+            ckpt, revision=revision, trust_remote_code=False,
+        )
+        model = AutoModel.from_pretrained(
+            ckpt, revision=revision, trust_remote_code=False,
+        )
+        model.eval()
+        model.to(device)
+        hidden_size = int(getattr(model.config, "hidden_size", 0)) or int(
+            getattr(model.config, "d_model", 0)
+        )
+        return _BackboneHandle(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            checkpoint=ckpt,
+            hidden_size=hidden_size,
+            info={"checkpoint": ckpt, "revision": revision},
+        )
+    except Exception as exc:
+        logger.warning("checkpoint %s failed to load: %s", ckpt, exc)
+        return None
+
+
 def _resolve_revision_for_backend(backend: _EmbedderBackend) -> str | None:
     """Return revision string or None when not required (e.g. random-mamba)."""
     if backend.name == "random-mamba":
@@ -273,7 +369,11 @@ def _try_load_random_mamba(backend: _EmbedderBackend, device: str) -> Optional[_
     """Create a randomly-initialised Mamba-2 model for the falsifiability control."""
     try:
         import torch
-        from transformers import Mamba2Config, Mamba2ForCausalLM
+        # Use the base Mamba2Model rather than the CausalLM variant: embed()
+        # pulls ``last_hidden_state`` off the forward output, and the CausalLM
+        # head replaces that with ``logits``, which would make this backend
+        # raise on every call.
+        from transformers import Mamba2Config, Mamba2Model
 
         logger.info("Creating random-mamba control model")
         config = Mamba2Config(
@@ -283,7 +383,7 @@ def _try_load_random_mamba(backend: _EmbedderBackend, device: str) -> Optional[_
             conv_kernel=4,
             expand=2,
         )
-        model = Mamba2ForCausalLM(config)
+        model = Mamba2Model(config)
         model.eval()
         model.to(device)
 

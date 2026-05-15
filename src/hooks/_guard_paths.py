@@ -51,7 +51,9 @@ _EXPLICIT_ALLOWLIST: Tuple[str, ...] = (
     "/src/mcp_reasoner.py",
     # Operator CLI
     "/src/rc_cli.py",
-    # Rule engine configuration (RC_ALLOW_RULES_EDIT=1 override available)
+    # Rule engine configuration. Edits to these files are guarded under the
+    # same operator override (``RC_ALLOW_GUARD_EDIT=1``) as the rest of the
+    # allowlist -- there is no separate ``RC_ALLOW_RULES_EDIT`` knob.
     "/.reasoning-core/rules.yaml",
     "/.reasoning-core/rules.schema.yaml",
 )

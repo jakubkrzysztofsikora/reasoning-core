@@ -230,17 +230,34 @@ def _compute_project_dims(
     graph_after: dict[str, set[str]],
     pidx: Any,
 ) -> tuple[float, float]:
-    """Compute (project_fan_in, project_coupling) from project index."""
+    """Compute (project_fan_in, project_coupling) from project index.
+
+    project_fan_in: incoming dependency count. How many *other* files in the
+    project import the module being edited. This is a structural-importance
+    proxy -- editing a high-fan-in file ripples wider.
+
+    project_coupling: outgoing dependency count over per-file budget, plus a
+    same-directory cross-module signal.
+    """
     if pidx is None:
         return 0.0, 0.0
 
-    fan_in_count = 0
-    for symbol in graph_after:
-        locs = pidx.symbol_locations(symbol)
-        for loc_path, _ in locs:
-            if loc_path != path:
-                fan_in_count += 1
-
+    # Treat the edited file as a module name and ask the index which files
+    # import it. The legacy implementation counted symbol-name collisions
+    # (definitions in other files sharing a local function name), which is
+    # not fan-in -- it's shadowing.
+    rel_no_ext, _ = os.path.splitext(path)
+    candidate_modules = {
+        rel_no_ext.replace(os.sep, "."),
+        os.path.basename(rel_no_ext),
+    }
+    importing_files: set[str] = set()
+    for module in candidate_modules:
+        if not module:
+            continue
+        importing_files.update(pidx.files_importing(module))
+    importing_files.discard(path)
+    fan_in_count = len(importing_files)
     project_fan_in = min(1.0, fan_in_count / 20.0)
 
     this_imports = pidx.file_imports(path)
@@ -820,8 +837,14 @@ def _l2_distance(a, b) -> float:
         return 0.0
     na = torch.linalg.norm(a)
     nb = torch.linalg.norm(b)
-    if float(na) == 0.0 or float(nb) == 0.0:
+    # Symmetric zero (both embeddings degenerate) is identity. Asymmetric zero
+    # -- one side a zero vector, the other non-zero -- means the two states
+    # are maximally apart on the unit sphere; returning 0.0 here would let a
+    # "delete all code" edit pass the coherence gate as if nothing changed.
+    if float(na) == 0.0 and float(nb) == 0.0:
         return 0.0
+    if float(na) == 0.0 or float(nb) == 0.0:
+        return 2.0
     return float(torch.linalg.norm(a / na - b / nb))
 
 
@@ -958,11 +981,15 @@ def score_change(
         if baseline_vec is not None:
             try:
                 raw_drift = float(_l2_distance(emb_after, baseline_vec))
-                # Normalise: 0 == no drift, 1 == at p95, >1 == beyond
+                # Normalise to [0, 1]: 0 == no drift, 1 == at-or-beyond p95.
+                # Clamping keeps risk_vector co-domain consistent with the
+                # other dimensions; the raw ratio is exposed separately via
+                # cumulative_drift for operators who need the over-budget tail.
                 if drift_p95 > 0:
-                    session_centroid_drift = raw_drift / drift_p95
+                    ratio = raw_drift / drift_p95
                 else:
-                    session_centroid_drift = raw_drift
+                    ratio = raw_drift
+                session_centroid_drift = max(0.0, min(1.0, ratio))
             except Exception:
                 session_centroid_drift = 0.0
 

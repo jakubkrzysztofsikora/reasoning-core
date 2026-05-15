@@ -114,21 +114,28 @@ def _parse_yaml(path: Path) -> dict:
 
 
 def _basic_yaml_parse(src: str) -> dict:
-    """Parse a minimal YAML subset sufficient for rules.yaml.
+    """Parse a minimal YAML subset sufficient for rules.yaml and rules.schema.yaml.
 
-    Supports:
-      - top-level key: value
-      - lists with - items
-      - nested dicts under list items
+    Handles arbitrary indent-based nesting via an explicit context stack:
+    top-level scalars, nested dicts of any depth, lists of scalars, and lists
+    of dicts whose items themselves contain nested structures. The previous
+    flat implementation dropped nested keys (e.g. ``schema.metadata`` and
+    ``schema.rule_types.forbid_import.fields``).
+
+    Not supported (intentional): flow style (``{}``/``[]``), anchors and
+    aliases, block scalars (``|``/``>``), merge keys. Use PyYAML when those
+    features are needed -- this parser is only the fallback for environments
+    where PyYAML is missing.
     """
-    result: dict[str, Any] = {}
     lines = src.splitlines()
-    i = 0
-    current_list: list[Any] | None = None
-    current_list_key: str | None = None
-    current_item: dict[str, Any] | None = None
-    indent_stack: list[tuple[int, Any, str | None]] = []
+    root: dict[str, Any] = {}
+    # Stack frames are (parent_indent, container, kind). The root frame uses
+    # parent_indent = -1 so any indent-0 line is treated as a child.
+    stack: list[tuple[int, Any, str]] = [(-1, root, "dict")]
+    pending_key: str | None = None
+    pending_indent: int = -1
 
+    i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.lstrip()
@@ -138,58 +145,72 @@ def _basic_yaml_parse(src: str) -> dict:
             i += 1
             continue
 
-        if stripped.startswith("- ") and current_list is not None:
-            # Finish previous item
-            if current_item is not None:
-                current_list.append(current_item)
-            item_text = stripped[2:].strip()
+        # Resolve a `key:` left dangling by the previous line: the child's
+        # indent and shape decide whether key maps to a nested dict or list.
+        if pending_key is not None:
+            if indent > pending_indent:
+                if stripped.startswith("- "):
+                    new_list: list[Any] = []
+                    stack[-1][1][pending_key] = new_list
+                    stack.append((pending_indent, new_list, "list"))
+                else:
+                    new_dict: dict[str, Any] = {}
+                    stack[-1][1][pending_key] = new_dict
+                    stack.append((pending_indent, new_dict, "dict"))
+            else:
+                stack[-1][1][pending_key] = {}
+            pending_key = None
+
+        # Drop frames whose parent_indent is at or beyond the current indent
+        # -- we've exited their scope.
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if not stack:
+            stack.append((-1, root, "dict"))
+
+        _top_indent, top_container, top_kind = stack[-1]
+
+        if stripped.startswith("- "):
+            if top_kind != "list":
+                i += 1
+                continue
+            item_text = stripped[2:].rstrip()
             if ":" in item_text:
                 key, val = item_text.split(":", 1)
-                current_item = {key.strip(): _yaml_val(val.strip())}
+                key = key.strip()
+                val = val.strip()
+                new_item: dict[str, Any] = {}
+                top_container.append(new_item)
+                stack.append((indent, new_item, "dict"))
+                if val == "":
+                    pending_key = key
+                    pending_indent = indent
+                else:
+                    new_item[key] = _yaml_val(val)
             else:
-                current_item = {}
+                top_container.append(_yaml_val(item_text))
             i += 1
             continue
 
-        if ":" in stripped and not stripped.startswith("-"):
+        if ":" in stripped:
             key, val = stripped.split(":", 1)
             key = key.strip()
             val = val.strip()
-
+            if top_kind != "dict":
+                i += 1
+                continue
             if val == "":
-                # Could be a nested structure starting next line
-                if i + 1 < len(lines):
-                    next_line = lines[i + 1].lstrip()
-                    if next_line.startswith("- "):
-                        current_list = []
-                        current_list_key = key
-                        result[key] = current_list
-                        i += 1
-                        continue
-                    elif next_line and not next_line.startswith("#"):
-                        # Nested dict
-                        nested: dict[str, Any] = {}
-                        result[key] = nested
-                        indent_stack.append((indent, nested, None))
-                        i += 1
-                        continue
-                result[key] = {}
+                pending_key = key
+                pending_indent = indent
             else:
-                if current_item is not None and indent > 0:
-                    current_item[key] = _yaml_val(val)
-                elif current_list_key and indent > 0:
-                    pass
-                else:
-                    result[key] = _yaml_val(val)
-            i += 1
-            continue
+                top_container[key] = _yaml_val(val)
 
         i += 1
 
-    if current_item is not None and current_list is not None:
-        current_list.append(current_item)
+    if pending_key is not None and stack:
+        stack[-1][1][pending_key] = {}
 
-    return result
+    return root
 
 
 def _yaml_val(val: str) -> Any:
@@ -324,7 +345,20 @@ def evaluate_edit(
             if hit is not None:
                 hits.append(hit)
         except Exception as exc:
-            logger.debug("Rule %s evaluation failed: %s", rule.get("id", "?"), exc)
+            # Fail-closed: an evaluator that crashes on a malformed source or
+            # an unexpected language construct must not silently let the edit
+            # through. Synthesize a deny hit so the dispatcher sees an
+            # explicit violation and the caller can decide policy.
+            logger.warning("Rule %s evaluation failed: %s", rule.get("id", "?"), exc)
+            hits.append(RuleHit(
+                rule_id=rule.get("id", "?"),
+                rule_type=rule.get("type", "unknown"),
+                severity="deny",
+                message=f"Rule evaluator raised {type(exc).__name__}: {exc}",
+                line=0,
+                column=0,
+                matched_text="",
+            ))
 
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         if elapsed_ms > _MAX_MS_PER_RULE:
@@ -337,10 +371,15 @@ def evaluate_edit(
 
 
 def _extract_bypass_comments(src: str) -> set[str]:
-    """Extract # rc:skip-rule:<id> comments from source."""
+    """Extract ``# rc:skip-rule:<id>`` or ``// rc:skip-rule:<id>`` markers.
+
+    Both Python (``#``) and C-family/JS/TS (``//``) line-comment forms are
+    accepted so the rule engine's bypass UX works in every language it can
+    evaluate.
+    """
     bypassed: set[str] = set()
     for line in src.splitlines():
-        m = re.search(r'#\s*rc:skip-rule:([A-Za-z0-9_-]+)', line)
+        m = re.search(r'(?:#|//)\s*rc:skip-rule:([A-Za-z0-9_-]+)', line)
         if m:
             bypassed.add(m.group(1))
     return bypassed
@@ -365,9 +404,17 @@ def _eval_rule(
     if not _language_matches(lang, rule_lang):
         return None
 
-    # Check scope match
-    if scope and not fnmatch.fnmatch(file_path, scope):
-        return None
+    # Check scope match. Hook payloads typically carry absolute paths while
+    # ``scope`` globs in rules.yaml are repo-relative (e.g. ``src/hooks/**``).
+    # Match against both forms so the rule lands either way.
+    if scope:
+        normalized = file_path.replace(os.sep, "/")
+        repo_root = os.environ.get("CLAUDE_PROJECT_DIR", "").replace(os.sep, "/")
+        rel_form = normalized
+        if repo_root and normalized.startswith(repo_root.rstrip("/") + "/"):
+            rel_form = normalized[len(repo_root.rstrip("/")) + 1:]
+        if not (fnmatch.fnmatch(normalized, scope) or fnmatch.fnmatch(rel_form, scope)):
+            return None
 
     # Check bypass
     if rule_id in bypass_rules:
@@ -529,18 +576,24 @@ def _eval_ts_js_import(
                     column=m.start() - after_src.rfind("\n", 0, m.start()),
                     matched_text=imported,
                 )
-            # Relative import check
-            if target.startswith("../") and imported.endswith(target.lstrip("./").lstrip("../")):
-                line = after_src[:m.start()].count("\n") + 1
-                return RuleHit(
-                    rule_id=rule.get("id", ""),
-                    rule_type="forbid_import",
-                    severity=rule.get("severity", "deny"),
-                    message=rule.get("message", f"Import of {target} forbidden"),
-                    line=line,
-                    column=m.start() - after_src.rfind("\n", 0, m.start()),
-                    matched_text=imported,
-                )
+            # Relative import check. ``lstrip("./")`` strips characters, not
+            # the prefix, so a naive ``imported.endswith(stripped)`` would
+            # match ``custom_supervisor`` for target ``../supervisor``. Anchor
+            # the match at a ``/`` boundary so module-name suffix collisions
+            # don't false-positive.
+            if target.startswith("."):
+                tail = target.lstrip("./")
+                if imported == target or imported.endswith("/" + tail):
+                    line = after_src[:m.start()].count("\n") + 1
+                    return RuleHit(
+                        rule_id=rule.get("id", ""),
+                        rule_type="forbid_import",
+                        severity=rule.get("severity", "deny"),
+                        message=rule.get("message", f"Import of {target} forbidden"),
+                        line=line,
+                        column=m.start() - after_src.rfind("\n", 0, m.start()),
+                        matched_text=imported,
+                    )
     return None
 
 

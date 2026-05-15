@@ -367,7 +367,7 @@ def test_http_health_ok(http_client):
         assert required in langs
 
 
-def test_http_score_happy_path(http_client):
+def test_http_score_happy_path(http_client, s2_core_module):
     _require_grammar("python")
     payload = {"path": "/tmp/h.py", "before_src": PY_GOOD, "after_src": PY_GOOD}
     resp = http_client.post("/score", json=payload)

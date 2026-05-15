@@ -12,7 +12,9 @@ refresh is O(touched_files).
 from __future__ import annotations
 
 import logging
+import fnmatch
 import os
+from collections import OrderedDict
 import re
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -55,13 +57,28 @@ class ProjectIndex:
 # ---------------------------------------------------------------------------
 
 
+# Exact directory names to prune. Hidden directories (``.``-prefixed) are
+# pruned separately so we don't need to enumerate every dotfile cache here.
 _SKIP_DIRS = frozenset({
-    ".git", ".hg", "__pycache__", ".pytest_cache", ".mypy_cache",
+    "__pycache__", ".pytest_cache", ".mypy_cache",
     ".venv", "venv", "node_modules", ".tox", "build", "dist",
-    ".eggs", "*.egg-info",
+    ".eggs",
 })
 
+# Glob patterns for directory pruning. Matched with ``fnmatch`` so wildcards
+# behave as intended -- a flat ``in _SKIP_DIRS`` check would never match
+# ``foo.egg-info`` against the pattern ``*.egg-info``.
+_SKIP_DIR_PATTERNS = ("*.egg-info",)
+
 _SRC_EXTS = frozenset({".py", ".js", ".ts", ".tsx"})
+
+
+def _is_skip_dir(name: str) -> bool:
+    if name.startswith("."):
+        return True
+    if name in _SKIP_DIRS:
+        return True
+    return any(fnmatch.fnmatch(name, pat) for pat in _SKIP_DIR_PATTERNS)
 
 
 def _iter_repo_files(repo_root: str) -> list[str]:
@@ -71,11 +88,8 @@ def _iter_repo_files(repo_root: str) -> list[str]:
     if not root.is_dir():
         return found
     for dirpath, dirnames, filenames in os.walk(str(root)):
-        # Prune skip-dirs in-place (like _mock_detector)
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in _SKIP_DIRS and not d.startswith(".")
-        ]
+        # Prune skip-dirs in-place (exact names + glob patterns + dotdirs).
+        dirnames[:] = [d for d in dirnames if not _is_skip_dir(d)]
         reldir = Path(dirpath).relative_to(root)
         for fn in filenames:
             if any(fn.endswith(ext) for ext in _SRC_EXTS):
@@ -160,8 +174,12 @@ def _extract_ts_js_imports(src: str) -> set[str]:
 # Singleflight build
 # ---------------------------------------------------------------------------
 
-_PROJECT_INDEX_FUTURES: dict[str, Future] = {}
+_PROJECT_INDEX_FUTURES: "OrderedDict[str, Future]" = OrderedDict()
 _PROJECT_INDEX_LOCK = threading.Lock()
+# Hard cap on cached session indices. Hook-driven harnesses can create a new
+# ``session_id`` per Claude session; without an upper bound the futures map
+# would grow without limit. Eviction is LRU on insertion order.
+_PROJECT_INDEX_MAX_SESSIONS: int = int(os.environ.get("RC_PROJECT_INDEX_MAX", "64"))
 
 
 def _build_index(repo_root: str, session_id: str) -> ProjectIndex:
@@ -206,6 +224,9 @@ def get_or_build_index(session_id: str, repo_root: str | None = None) -> Project
     with _PROJECT_INDEX_LOCK:
         fut = _PROJECT_INDEX_FUTURES.get(session_id)
         if fut is not None:
+            # LRU touch -- recently-used sessions move to the tail so cold
+            # entries fall out first when we hit the cap.
+            _PROJECT_INDEX_FUTURES.move_to_end(session_id)
             if fut.done():
                 try:
                     return fut.result()
@@ -219,6 +240,9 @@ def get_or_build_index(session_id: str, repo_root: str | None = None) -> Project
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="projidx")
         fut = executor.submit(_build_index, repo_root, session_id)
         _PROJECT_INDEX_FUTURES[session_id] = fut
+        # Evict oldest entries when over budget.
+        while len(_PROJECT_INDEX_FUTURES) > _PROJECT_INDEX_MAX_SESSIONS:
+            _PROJECT_INDEX_FUTURES.popitem(last=False)
         executor.shutdown(wait=False)
 
     # Wait for our own build

@@ -526,9 +526,21 @@ def gate_rule_engine(
     if not rules:
         return GateOutcome(action="pass")
 
-    hits = _rule_engine.evaluate_edit(
-        file_path, before_src or "", after_src or "", lang, rules,
-    )
+    # The rule engine matches ``scope`` globs against both absolute and
+    # repo-relative forms, but it relies on ``CLAUDE_PROJECT_DIR`` to derive
+    # the relative form. Pass ``project_root`` via the env var so harnesses
+    # that set ``RC_PROJECT_DIR`` instead still get correct scope matching.
+    prior = os.environ.get("CLAUDE_PROJECT_DIR")
+    os.environ["CLAUDE_PROJECT_DIR"] = project_root
+    try:
+        hits = _rule_engine.evaluate_edit(
+            file_path, before_src or "", after_src or "", lang, rules,
+        )
+    finally:
+        if prior is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = prior
 
     if not hits:
         return GateOutcome(action="pass")
