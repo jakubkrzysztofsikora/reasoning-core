@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
-"""Idempotent migration: tag untagged audit-log rows as schema_version=1.
+"""Idempotent backfill: tag legacy untagged audit-log rows as ``schema_version=1``.
 
-Untagged rows (absent ``schema_version`` field) are assumed to be v1,
-predating the Phase 2 schema migration. This script adds
-``"schema_version": 1`` in-place without rewriting undamaged lines.
+Audit rows written before versioning shipped have no ``schema_version`` field.
+This script reads each ``.jsonl`` / ``.jsonl.gz`` file under the audit root,
+adds ``"schema_version": 1`` to any row missing the field, and rewrites the
+file atomically. Rows that already carry ``schema_version`` (any value) are
+left untouched, so the operation is safely re-runnable.
+
+This is a one-way backfill, not a schema migration. The live writer in
+``src/hooks/audit_log.py`` emits ``SCHEMA_VERSION = 3`` (the current schema);
+this script does not rewrite v1 rows into v3 shape -- it only records that
+they were authored under the pre-versioning schema.
 
 Usage:
-    python3 scripts/migrate_audit_log_v1_to_v2.py --dry-run
-    python3 scripts/migrate_audit_log_v1_to_v2.py --apply
+    python3 scripts/backfill_audit_log_schema_version.py --dry-run
+    python3 scripts/backfill_audit_log_schema_version.py --apply
 """
 from __future__ import annotations
 
@@ -77,7 +84,9 @@ def _migrate_file(path: Path, apply: bool) -> tuple[int, int]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Migrate audit log v1 -> v2")
+    parser = argparse.ArgumentParser(
+        description="Backfill schema_version=1 on legacy untagged audit-log rows"
+    )
     parser.add_argument("--base", default="/tmp/rc-events",
                         help="Base directory for audit log files")
     parser.add_argument("--apply", action="store_true",

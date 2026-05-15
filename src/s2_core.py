@@ -92,7 +92,6 @@ class ImpactReport:
     cold_start: bool = False
     file_kind: Optional[str] = None
     cd_threshold: Optional[float] = None
-    consensus_score: Optional[float] = None
     fired_conditions: list[str] = field(default_factory=list)
     fired_dims: list[str] = field(default_factory=list)
     fired_margins: dict[str, float] = field(default_factory=dict)
@@ -115,8 +114,6 @@ class ImpactReport:
             out["cumulative_drift"] = float(self.cumulative_drift)
         if self.session_centroid_drift is not None:
             out["session_centroid_drift"] = float(self.session_centroid_drift)
-        if self.consensus_score is not None:
-            out["consensus_score"] = float(self.consensus_score)
         if self.file_kind is not None:
             out["file_kind"] = str(self.file_kind)
         if self.cd_threshold is not None:
@@ -755,9 +752,10 @@ def _env_float(name: str, default: float) -> float:
 # Thresholds are env-overridable so the operator can tune without a code edit.
 # Defaults match the calibrated values; see .envrc § "Sidecar tuning".
 _REGRESSION_AIS_THRESHOLD = _env_float("S2_AIS_THRESHOLD", 0.4)
-# Threshold applied to the *normalized* coherence_delta (raw L2 / sqrt(hidden_size)).
-# Value is checkpoint-portable: average per-dimension embedding drift in standard units.
-COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 1.5)
+# Threshold applied to coherence_delta, which is the chord distance between
+# L2-normalized before/after embeddings (in [0, 2], dimension-invariant).
+# Default is intentionally conservative; tune via S2_COHERENCE_THRESHOLD.
+COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 0.5)
 _REGRESSION_COHERENCE_THRESHOLD = COHERENCE_DELTA_THRESHOLD
 _REGRESSION_RISK_DIM_THRESHOLD = _env_float("S2_RISK_DIM_THRESHOLD", 0.9)
 
@@ -786,10 +784,10 @@ def _file_kind(path: str) -> str:
 # distribution doesn't match the calibrated source-code baseline.
 _KIND_THRESHOLDS: dict[str, dict[str, float]] = {
     "source_code": {"cd": COHERENCE_DELTA_THRESHOLD, "ais": _REGRESSION_AIS_THRESHOLD, "dim": _REGRESSION_RISK_DIM_THRESHOLD},
-    "test_code":   {"cd": 2.0, "ais": 0.3, "dim": 0.95},
-    "plan_md":     {"cd": 3.0, "ais": 0.3, "dim": 1.0},
-    "doc_md":      {"cd": 3.0, "ais": 0.3, "dim": 1.0},
-    "config":      {"cd": 1.2, "ais": 0.5, "dim": 0.9},
+    "test_code":   {"cd": 0.7, "ais": 0.3, "dim": 0.95},
+    "plan_md":     {"cd": 1.0, "ais": 0.3, "dim": 1.0},
+    "doc_md":      {"cd": 1.0, "ais": 0.3, "dim": 1.0},
+    "config":      {"cd": 0.4, "ais": 0.5, "dim": 0.9},
 }
 
 
@@ -807,11 +805,24 @@ def _cosine_similarity(a, b) -> float:
 
 
 def _l2_distance(a, b) -> float:
+    """Chord distance on the unit sphere: ``||a/||a|| - b/||b||||``, in ``[0, 2]``.
+
+    Raw L2 over un-normalized embeddings is not portable across backbones --
+    a mean-pooled SSM and a CLS-pooled transformer produce different magnitude
+    scales for the same semantic content, and even within one backbone the
+    magnitude depends on token count for some pooling strategies. Normalizing
+    before the difference removes both effects and leaves the metric
+    dimension-invariant (no ``sqrt(D)`` divisor needed downstream).
+    """
     import torch
 
     if a is None or b is None:
         return 0.0
-    return float(torch.linalg.norm(a - b))
+    na = torch.linalg.norm(a)
+    nb = torch.linalg.norm(b)
+    if float(na) == 0.0 or float(nb) == 0.0:
+        return 0.0
+    return float(torch.linalg.norm(a / na - b / nb))
 
 
 def _backbone_hidden_size(fallback_vec: Any = None) -> int:
@@ -900,19 +911,19 @@ def score_change(
     # AIS in [0, 1]: 1.0 == identical embeddings. Map cos in [-1,1] -> [0,1].
     ais = max(0.0, min(1.0, (cos + 1.0) / 2.0))
 
-    # Normalize coherence_delta by sqrt(hidden_size) so the threshold is
-    # checkpoint-portable: a raw L2 over a 768-D vector dwarfs the same drift
-    # over a 256-D vector for the same edit. Dividing by sqrt(D) recasts the
-    # value as average per-dimension drift in standard units (see VERIFICATION.md).
+    # coherence_delta is the chord distance returned by _l2_distance: it
+    # operates on L2-normalized embeddings, so the value is in [0, 2] and is
+    # invariant to embedding magnitude, pooling strategy (mean vs CLS), and
+    # hidden_size. No sqrt(D) divisor needed (see VERIFICATION.md).
     # Cold-start: an empty/near-empty before_src has no meaningful baseline to
-    # compare against, so the L2-magnitude proxy degenerates. Skip cd entirely
-    # for these cases — the 8-dim risk_vector still flags churn/cyclomatic on bad content.
+    # compare against. Skip cd entirely for these cases -- the 8-dim risk_vector
+    # still flags churn/cyclomatic on bad content.
     hidden_size = _backbone_hidden_size(emb_after)
     cold_start = (not before_src.strip()) or (len(before_src) < 32)
     if cold_start:
         coherence_delta = 0.0
     else:
-        coherence_delta = float(raw_l2) / math.sqrt(max(hidden_size, 1))
+        coherence_delta = float(raw_l2)
 
     # novelty in [0, 1]: 1 - max(cos, 0).
     novelty = max(0.0, min(1.0, 1.0 - max(cos, 0.0)))
@@ -946,9 +957,7 @@ def score_change(
         baseline_vec, drift_p95 = _get_session_baseline_for_path(session_id, path)
         if baseline_vec is not None:
             try:
-                raw_drift = float(_l2_distance(emb_after, baseline_vec)) / math.sqrt(
-                    max(hidden_size, 1)
-                )
+                raw_drift = float(_l2_distance(emb_after, baseline_vec))
                 # Normalise: 0 == no drift, 1 == at p95, >1 == beyond
                 if drift_p95 > 0:
                     session_centroid_drift = raw_drift / drift_p95
@@ -1015,9 +1024,7 @@ def score_change(
         baseline_vec, _ = _get_session_baseline_for_path(session_id, path)
         if baseline_vec is not None:
             try:
-                cumulative_drift = float(_l2_distance(emb_after, baseline_vec)) / math.sqrt(
-                    max(hidden_size, 1)
-                )
+                cumulative_drift = float(_l2_distance(emb_after, baseline_vec))
             except Exception:
                 cumulative_drift = None
 
@@ -1213,10 +1220,10 @@ def create_app():
             corpus = stacked.mean(dim=0)
 
             # Compute pairwise drift distribution for percentile calibration.
-            hidden_size = int(corpus.shape[0]) if hasattr(corpus, "shape") else 0
+            # _l2_distance returns chord distance (already dimension-invariant).
             drifts: list[float] = []
             for v in vecs:
-                d = float(_l2_distance(v, corpus)) / math.sqrt(max(hidden_size, 1))
+                d = float(_l2_distance(v, corpus))
                 drifts.append(d)
             drifts_sorted = sorted(drifts)
             drift_p95 = _percentile(drifts_sorted, 95.0)
