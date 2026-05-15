@@ -98,7 +98,12 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
     ),
 }
 
-_DEFAULT_BACKEND_NAME: str = "codestral-mamba"
+# Default to a backend with a real SHA pin so a fresh install works without
+# operator-supplied revision overrides. ``codestral-mamba`` / ``bge-code`` /
+# ``unixcoder-base`` carry ``revision="main"`` in the registry and are
+# fail-closed under ``_resolve_revision_for_backend`` until an operator pins
+# them (see _PINNED_REVISIONS or RC_<REPO_SLUG>_REVISION).
+_DEFAULT_BACKEND_NAME: str = "mamba-130m"
 
 # Legacy constants — kept for API compat; new code uses _EmbedderBackend.
 DEFAULT_CHECKPOINT = _BACKENDS["mamba-130m"].checkpoint
@@ -335,7 +340,7 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
     """Attempt to load a single backend. Returns None on failure."""
     try:
         import torch  # noqa: F401
-        from transformers import AutoModel, AutoTokenizer, AutoConfig
+        from transformers import AutoModel, AutoTokenizer
     except Exception as exc:  # pragma: no cover
         logger.error("transformers/torch import failed: %s", exc)
         return None
@@ -549,7 +554,15 @@ def load_backbone(
 
 
 def _try_load_legacy(ckpt: str, device: str) -> Optional[_BackboneHandle]:
-    """Load a legacy S2_SSM_CHECKPOINT model. Kept for backward compat."""
+    """Load a legacy ``S2_SSM_CHECKPOINT`` model. Kept for the
+    pre-``RC_EMBEDDER`` path and for ``test_security_hardening``.
+
+    Resolution is strict: ``_resolve_revision`` raises if there is no SHA pin
+    in ``_PINNED_REVISIONS`` (and rejects mutable refs via env override).
+    Metadata reflects the actual checkpoint loaded -- the previous version
+    hard-coded ``embedder_backend="mamba-130m"`` regardless of ``ckpt``, which
+    made ``/health`` and audit rows lie about which model was running.
+    """
     try:
         import torch  # noqa: F401
         from transformers import AutoModel, AutoTokenizer
@@ -561,7 +574,8 @@ def _try_load_legacy(ckpt: str, device: str) -> Optional[_BackboneHandle]:
             raise BackboneUnavailableError(
                 f"checkpoint {ckpt!r} is not in the allowlist"
             )
-        revision = _PINNED_REVISIONS.get(ckpt, "main")
+        # Strict SHA pin -- fails closed on missing/mutable refs.
+        revision = _resolve_revision(ckpt)
         tokenizer = AutoTokenizer.from_pretrained(
             ckpt, revision=revision, trust_remote_code=False,
         )
@@ -579,21 +593,32 @@ def _try_load_legacy(ckpt: str, device: str) -> Optional[_BackboneHandle]:
             hidden_size = int(getattr(model.config, "d_model", 0) or 0)
         if getattr(tokenizer, "pad_token", None) is None and getattr(tokenizer, "eos_token", None):
             tokenizer.pad_token = tokenizer.eos_token
+        # Match the loaded checkpoint to a registry entry when possible so
+        # /health metadata is accurate; otherwise tag the checkpoint name
+        # itself rather than lying about the backend.
+        backend_match = next(
+            (b for b in _BACKENDS.values() if b.checkpoint == ckpt),
+            None,
+        )
+        embedder_backend = backend_match.name if backend_match else ckpt
         info = {
             "checkpoint": ckpt,
             "hidden_size": hidden_size,
             "num_parameters": sum(p.numel() for p in model.parameters()),
-            "license": "apache-2.0" if ckpt.startswith("state-spaces/") else "unknown",
+            "license": (
+                backend_match.license if backend_match
+                else ("apache-2.0" if ckpt.startswith("state-spaces/") else "unknown")
+            ),
             "source_url": f"https://huggingface.co/{ckpt}",
             "is_fallback": ckpt != DEFAULT_CHECKPOINT,
             "device": device,
             "embedder_role": "feature_extractor",
-            "embedder_backend": "mamba-130m",
+            "embedder_backend": embedder_backend,
         }
         return _BackboneHandle(
             model=model, tokenizer=tokenizer, device=device,
             checkpoint=ckpt, hidden_size=hidden_size, info=info,
-            backend=_BACKENDS.get("mamba-130m"),
+            backend=backend_match,
         )
     except Exception as exc:
         logger.warning("legacy checkpoint %s failed: %s", ckpt, exc)

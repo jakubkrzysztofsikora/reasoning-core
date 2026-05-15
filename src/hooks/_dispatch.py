@@ -498,8 +498,30 @@ def gate_rule_engine(
 
     try:
         from src.hooks import _rule_engine
-    except ImportError:
-        return GateOutcome(action="pass")
+    except ImportError as exc:
+        # The gate is explicitly enabled (RC_RULE_ENGINE=1). A packaging or
+        # sys.path regression must not silently disable a security control.
+        # Fail closed; ``RC_RULE_ENGINE_LENIENT=1`` is the documented escape
+        # hatch for operators who want a soft-degrade during incident response.
+        if os.environ.get("RC_RULE_ENGINE_LENIENT") == "1":
+            return GateOutcome(
+                action="stderr_only",
+                stderr=f"[rule_engine] lenient mode: import failed: {exc}\n",
+                signal_source="rule_engine_lenient",
+            )
+        return GateOutcome(
+            action="exit_block",
+            code=2,
+            stderr=(
+                f"[rule_engine] BLOCKED: rule engine import failed ({exc}). "
+                f"RC_RULE_ENGINE=1 is set; refusing to evaluate edits without "
+                f"the gate. Set RC_RULE_ENGINE_LENIENT=1 to soft-degrade or "
+                f"unset RC_RULE_ENGINE to disable the gate.\n"
+            ),
+            decision="rule_engine_unavailable",
+            reason="rule_engine_import_error",
+            signal_source="rule_engine",
+        )
 
     # Detect language from file extension
     lang = _detect_language(file_path)

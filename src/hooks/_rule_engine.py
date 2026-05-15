@@ -20,15 +20,14 @@ from __future__ import annotations
 import ast
 import fnmatch
 import logging
-import math
 import os
 import re
 import signal
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -414,13 +413,16 @@ def _eval_rule(
     rule: dict,
     bypass_rules: set[str],
 ) -> RuleHit | None:
-    """Evaluate a single rule. Returns RuleHit if violated, None if clean."""
+    """Evaluate a single rule. Returns RuleHit if violated, None if clean.
+
+    ``severity`` and ``message`` are pulled by the individual type evaluators
+    (``_eval_forbid_import`` / ``_eval_forbid_pattern``); this top-level
+    dispatch only needs the routing fields.
+    """
     rule_id = rule.get("id", "")
     rule_type = rule.get("type", "")
-    severity = rule.get("severity", "deny")
     rule_lang = rule.get("language", "")
     scope = rule.get("scope", "")
-    message = rule.get("message", f"Rule {rule_id} violated")
 
     # Check language match
     if not _language_matches(lang, rule_lang):
@@ -459,14 +461,22 @@ def _eval_rule(
 def _language_matches(file_lang: str, rule_lang: str) -> bool:
     """Check if a file's language matches the rule's language scope.
 
-    javascript rules also apply to typescript and tsx files (JS superset).
+    Coverage:
+      - ``javascript`` rules apply to ``.js``, ``.ts``, and ``.tsx`` files
+        (JS-superset semantics).
+      - ``typescript`` rules apply to ``.ts`` *and* ``.tsx`` files -- ``.tsx``
+        is TypeScript with JSX syntax, not a separate language for the
+        purposes of import / pattern rules. The dispatch language detector
+        emits ``"tsx"`` for ``.tsx`` files, so without this fan-out a
+        ``language: typescript`` rule silently skips every TSX file.
     """
     file_lang = file_lang.lower().strip()
     rule_lang = rule_lang.lower().strip()
     if file_lang == rule_lang:
         return True
-    # javascript rules cover ts and tsx
     if rule_lang == "javascript" and file_lang in ("typescript", "tsx"):
+        return True
+    if rule_lang == "typescript" and file_lang == "tsx":
         return True
     return False
 
@@ -502,11 +512,17 @@ def _eval_python_import(
     rule: dict,
     target: str,
 ) -> RuleHit | None:
-    """Check if Python source imports the forbidden target."""
+    """Check if Python source imports the forbidden target.
+
+    On ``SyntaxError`` (the file doesn't parse as Python), fall back to a
+    conservative regex scan rather than silently passing. Otherwise an agent
+    could bypass an import rule by deliberately introducing a parse error
+    alongside the forbidden import.
+    """
     try:
         tree = ast.parse(after_src)
     except SyntaxError:
-        return None
+        return _eval_python_import_regex_fallback(file_path, after_src, rule, target)
 
     target_parts = target.split(".")
 
@@ -525,7 +541,6 @@ def _eval_python_import(
                     )
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            module_parts = module.split(".")
             # Check if the module itself matches
             if _import_matches(module, target_parts):
                 return RuleHit(
@@ -551,6 +566,42 @@ def _eval_python_import(
                         matched_text=full_name,
                     )
     return None
+
+
+def _eval_python_import_regex_fallback(
+    file_path: str,
+    after_src: str,
+    rule: dict,
+    target: str,
+) -> RuleHit | None:
+    """Conservative regex-only import scan, used when AST parsing fails.
+
+    Matches both ``import X[.Y...]`` and ``from X[.Y...] import ...`` for the
+    full target prefix. False positives (commented-out imports, strings) are
+    acceptable in a fail-closed fallback: an agent that crashes the parser to
+    bypass the rule still gets blocked.
+    """
+    escaped = re.escape(target)
+    pat = re.compile(
+        rf"^\s*(?:import\s+{escaped}(?:\.\w+)*|from\s+{escaped}(?:\.\w+)*\s+import)\b",
+        re.MULTILINE,
+    )
+    m = pat.search(after_src)
+    if m is None:
+        return None
+    line = after_src[:m.start()].count("\n") + 1
+    return RuleHit(
+        rule_id=rule.get("id", ""),
+        rule_type="forbid_import",
+        severity=rule.get("severity", "deny"),
+        message=rule.get(
+            "message",
+            f"Import of {target} forbidden (regex fallback; file did not parse)",
+        ),
+        line=line,
+        column=0,
+        matched_text=m.group(0).strip(),
+    )
 
 
 def _import_matches(import_name: str, target_parts: list[str]) -> bool:
@@ -595,7 +646,7 @@ def _eval_ts_js_import(
                     severity=rule.get("severity", "deny"),
                     message=rule.get("message", f"Import of {target} forbidden"),
                     line=line,
-                    column=m.start() - after_src.rfind("\n", 0, m.start()),
+                    column=m.start() - (after_src.rfind("\n", 0, m.start()) + 1),
                     matched_text=imported,
                 )
             # Relative import check. ``lstrip("./")`` strips characters, not
@@ -613,7 +664,7 @@ def _eval_ts_js_import(
                         severity=rule.get("severity", "deny"),
                         message=rule.get("message", f"Import of {target} forbidden"),
                         line=line,
-                        column=m.start() - after_src.rfind("\n", 0, m.start()),
+                        column=m.start() - (after_src.rfind("\n", 0, m.start()) + 1),
                         matched_text=imported,
                     )
     return None
@@ -708,7 +759,7 @@ def _eval_forbid_pattern(
         if m is None:
             return None
         line = bounded_src[:m.start()].count("\n") + 1
-        col = m.start() - bounded_src.rfind("\n", 0, m.start())
+        col = m.start() - (bounded_src.rfind("\n", 0, m.start()) + 1)
         return RuleHit(
             rule_id=rule.get("id", ""),
             rule_type="forbid_pattern",

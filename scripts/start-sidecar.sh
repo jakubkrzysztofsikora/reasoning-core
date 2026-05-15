@@ -13,9 +13,12 @@
 #   S2_PORT              -- bind port (default 8765).
 #   S2_DEVICE            -- cpu|cuda (default cpu).
 #   S2_SSM_CHECKPOINT    -- HF checkpoint id (legacy; default state-spaces/mamba-130m-hf).
-#   RC_EMBEDDER          -- embedder backend selection (default codestral-mamba).
+#   RC_EMBEDDER          -- embedder backend selection (default mamba-130m).
 #                         Supported: codestral-mamba | mamba-130m | bge-code |
 #                         unixcoder-base | random-mamba.
+#                         codestral-mamba, bge-code, unixcoder-base require a
+#                         SHA pin via RC_<REPO_SLUG>_REVISION before they will
+#                         load (supply-chain hardening; see ssm_backbone.py).
 #   BACKGROUND           -- 1 to fork + wait; unset/0 to run in foreground.
 #   S2_HEALTH_TIMEOUT    -- seconds to wait for model_loaded:true (default 120).
 #   S2_LOG_FILE          -- when BACKGROUND=1, redirect logs here (default /tmp/reasoning-core-sidecar.log).

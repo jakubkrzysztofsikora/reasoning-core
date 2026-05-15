@@ -131,15 +131,18 @@ def _extract_python_imports(src: str) -> set[str]:
         tree = ast.parse(src)
     except Exception:
         return imports
+    # Record module/package names only, not imported symbols. The previous
+    # version added ``alias.name`` from ``from x import y``, which inflated
+    # the import graph: ``from typing import Any`` would record ``Any`` as a
+    # dependency, skewing fan-in / coupling.
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.add(alias.name.split(".")[0])
         elif isinstance(node, ast.ImportFrom):
             mod = node.module or ""
-            imports.add(mod.split(".")[0])
-            for alias in node.names:
-                imports.add(alias.name)
+            if mod:
+                imports.add(mod.split(".")[0])
     return imports
 
 
@@ -216,8 +219,20 @@ def _build_index(repo_root: str, session_id: str) -> ProjectIndex:
 def get_or_build_index(session_id: str, repo_root: str | None = None) -> ProjectIndex | None:
     """Lazy-build the project index with singleflight deduplication.
 
-    If another thread is already building for this session, wait for it.
-    Returns None if repo_root is not provided and no cached index exists.
+    Returns:
+      - The ``ProjectIndex`` when a previous build for this ``session_id``
+        has completed successfully.
+      - ``None`` when no index exists and ``repo_root`` is missing, when a
+        prior build raised, or when a build is currently in progress (the
+        caller is expected to fall back to intra-file scoring until the
+        future resolves on a later call).
+
+    The build is *not* awaited inline: a real-world project index can take
+    seconds to build (file walk + AST parse per file), and the hook caller
+    runs on the critical path. The first call kicks off the executor and
+    returns ``None``; subsequent calls see the cached future and either
+    return the result or fall back, depending on whether the build has
+    completed.
     """
     global _PROJECT_INDEX_FUTURES
     # Fast path: check if already built
