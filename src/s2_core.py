@@ -772,7 +772,18 @@ _REGRESSION_AIS_THRESHOLD = _env_float("S2_AIS_THRESHOLD", 0.4)
 # Threshold applied to coherence_delta, which is the chord distance between
 # L2-normalized before/after embeddings (in [0, 2], dimension-invariant).
 # Default is intentionally conservative; tune via S2_COHERENCE_THRESHOLD.
+# Warn when the env override is set above the metric's bound -- a legacy
+# value tuned against the previous raw-L2/sqrt(D) scale (e.g. the old 1.5
+# default) would silently make the gate unreachable.
 COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 0.5)
+if COHERENCE_DELTA_THRESHOLD > 2.0:
+    logger.warning(
+        "S2_COHERENCE_THRESHOLD=%s exceeds the metric upper bound (2.0) -- "
+        "the coherence_delta gate will never trigger. The metric changed from "
+        "raw L2 / sqrt(D) to chord distance in this release; pick a value in "
+        "[0, 2] (default 0.5).",
+        COHERENCE_DELTA_THRESHOLD,
+    )
 _REGRESSION_COHERENCE_THRESHOLD = COHERENCE_DELTA_THRESHOLD
 _REGRESSION_RISK_DIM_THRESHOLD = _env_float("S2_RISK_DIM_THRESHOLD", 0.9)
 

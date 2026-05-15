@@ -106,9 +106,18 @@ FALLBACK_CHECKPOINTS = (
     "state-spaces/mamba2-130m",
     "sshleifer/tiny-gpt2",
 )
-_ALLOWED_CHECKPOINTS = frozenset(
-    {DEFAULT_CHECKPOINT, *FALLBACK_CHECKPOINTS}
-)
+# Allowlist of HF repos the loader is willing to instantiate. The new
+# ``RC_EMBEDDER`` backends widen this set explicitly -- ``_try_load_backend``
+# refuses to call ``AutoModel.from_pretrained`` on any checkpoint outside.
+# ``__random_mamba__`` is the in-process control (no remote artifact).
+_ALLOWED_CHECKPOINTS = frozenset({
+    DEFAULT_CHECKPOINT,
+    *FALLBACK_CHECKPOINTS,
+    "mistralai/Mamba-Codestral-7B-v0.1",
+    "BAAI/bge-code-v1",
+    "microsoft/unixcoder-base",
+    "__random_mamba__",
+})
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _PINNED_REVISIONS: dict[str, str] = {
     "state-spaces/mamba-130m-hf": "1e76775f628fbf1350fbe4dbb3d971ba64af25a1",
@@ -271,17 +280,52 @@ def _try_load(ckpt: str, device: str) -> Optional["_BackboneHandle"]:
 
 
 def _resolve_revision_for_backend(backend: _EmbedderBackend) -> str | None:
-    """Return revision string or None when not required (e.g. random-mamba)."""
+    """Return a 40-char commit SHA for ``backend``, or ``None`` when the
+    backend has no remote artifact (``random-mamba``).
+
+    Fail-closed on mutable refs (``"main"``, branch/tag names) and on backends
+    whose registry entry doesn't carry a pin. Operators can override per
+    repo via ``RC_<REPO_SLUG>_REVISION=<40-hex-SHA>``; the override itself
+    is also validated as a SHA. This mirrors ``_resolve_revision`` and
+    restores the supply-chain hardening shipped in ``bc536c1`` for the new
+    ``RC_EMBEDDER`` registry.
+
+    To enable a new backend that ships with ``revision="main"`` in the
+    registry, either edit the registry to a pinned SHA or export
+    ``RC_<REPO_SLUG>_REVISION=<sha>`` in the deploy environment.
+    """
     if backend.name == "random-mamba":
         return None
-    # Legacy SHA pins for mamba-130m / tiny-gpt2
+
+    env_key = _revision_env_key(backend.checkpoint)
+    override = os.environ.get(env_key, "").strip()
+    if override:
+        if not _SHA_RE.match(override):
+            raise BackboneUnavailableError(
+                f"{env_key}={override!r} is not a 40-char hex commit SHA. "
+                f"Mutable refs (branches/tags) are forbidden."
+            )
+        return override
+
+    # Prefer the centralized pin table; backends still listed there resolve
+    # without registry duplication.
     pin = _PINNED_REVISIONS.get(backend.checkpoint)
     if pin:
         return pin
-    # For models using "main" we trust the HF Hub cache
-    if backend.revision == "main":
-        return "main"
-    return backend.revision or None
+
+    # Registry-level pin -- only accepted if it's a real SHA. Mutable refs
+    # like ``"main"`` are explicitly rejected so a malicious upstream push
+    # cannot reach a fresh sidecar.
+    rev = (backend.revision or "").strip()
+    if _SHA_RE.match(rev):
+        return rev
+
+    raise BackboneUnavailableError(
+        f"backend {backend.name!r} (checkpoint={backend.checkpoint!r}) "
+        f"has no pinned revision. revision={rev!r} is not a 40-char hex SHA. "
+        f"Pin it in _PINNED_REVISIONS, or set "
+        f"{env_key}=<sha> to unblock at deploy time."
+    )
 
 
 # --- Loader -------------------------------------------------------------------
@@ -297,6 +341,15 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
         return None
 
     try:
+        # Defense-in-depth: refuse to instantiate any HF repo that isn't on
+        # the allowlist, even if it somehow landed in the backend registry.
+        # Closes the gap where adding a ``_BACKENDS`` entry would implicitly
+        # widen the trust boundary.
+        if backend.checkpoint not in _ALLOWED_CHECKPOINTS:
+            raise BackboneUnavailableError(
+                f"backend {backend.name!r} checkpoint {backend.checkpoint!r} "
+                f"is not in _ALLOWED_CHECKPOINTS; refusing to load."
+            )
         if backend.name == "random-mamba":
             return _try_load_random_mamba(backend, device)
 

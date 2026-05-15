@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import re
+import signal
 import sys
 import time
 from dataclasses import dataclass, field
@@ -81,7 +82,10 @@ class RuleHit:
 # Mtime-cached rule loader
 # ---------------------------------------------------------------------------
 
-_RULES_CACHE: dict[str, tuple[float, list[dict], str]] = {}
+# Cache key carries (mtime_ns, size, inode) rather than mtime alone. ext3,
+# FAT, and some NFS mounts only carry second-granularity mtimes; a same-second
+# rewrite of rules.yaml would share the cached mtime and serve stale rules.
+_RULES_CACHE: dict[str, tuple[tuple[int, int, int], list[dict], str]] = {}
 _WARNED_ONCE: set[str] = set()
 
 
@@ -101,16 +105,33 @@ def _find_rules_file(project_root: str) -> Path | None:
 
 
 def _parse_yaml(path: Path) -> dict:
-    """Parse rules.yaml; try PyYAML, fallback to basic parser."""
+    """Parse rules.yaml. Requires PyYAML in production.
+
+    The rule engine is a security gate; relying on the hand-rolled minimal
+    parser as a silent fallback creates a divergence surface (a rules file
+    that parses one way under PyYAML and another way under the fallback
+    could ship rules that *appear* enforced but never evaluate). Fail
+    closed when PyYAML is missing; operators can install it with
+    ``pip install PyYAML>=6.0`` or, for tests/dev only, opt into the
+    fallback via ``RC_RULE_ENGINE_ALLOW_BASIC_YAML=1``.
+    """
     src = path.read_text(encoding="utf-8")
-    # Try PyYAML first
     try:
         import yaml
-        return yaml.safe_load(src)
     except ImportError:
-        pass
-    # Fallback: a minimal YAML subset parser for our schema
-    return _basic_yaml_parse(src)
+        if os.environ.get("RC_RULE_ENGINE_ALLOW_BASIC_YAML") == "1":
+            logger.warning(
+                "PyYAML missing; falling back to _basic_yaml_parse because "
+                "RC_RULE_ENGINE_ALLOW_BASIC_YAML=1. Do not use in production."
+            )
+            return _basic_yaml_parse(src)
+        raise RuleEngineError(
+            "PyYAML is required to load rules.yaml. "
+            "Install with `pip install PyYAML>=6.0`, "
+            "or set RC_RULE_ENGINE_ALLOW_BASIC_YAML=1 to opt into the "
+            "limited fallback parser (tests/dev only)."
+        )
+    return yaml.safe_load(src)
 
 
 def _basic_yaml_parse(src: str) -> dict:
@@ -247,14 +268,15 @@ def load_rules(project_root: str) -> list[dict]:
 
     path_str = str(path)
     try:
-        mtime = path.stat().st_mtime
+        st = path.stat()
+        cache_key = (st.st_mtime_ns, st.st_size, st.st_ino)
     except OSError:
         return []
 
     cached = _RULES_CACHE.get(path_str)
     if cached is not None:
-        cached_mtime, rules, _ = cached
-        if cached_mtime == mtime:
+        cached_key, rules, _ = cached
+        if cached_key == cache_key:
             return rules
 
     try:
@@ -306,7 +328,7 @@ def load_rules(project_root: str) -> list[dict]:
             else:
                 raise RuleEngineError(msg)
 
-    _RULES_CACHE[path_str] = (mtime, rules, path_str)
+    _RULES_CACHE[path_str] = (cache_key, rules, path_str)
     logger.info("Loaded %d rules from %s", len(rules), path_str)
     return rules
 
@@ -602,25 +624,91 @@ def _eval_ts_js_import(
 # ---------------------------------------------------------------------------
 
 
+class _RuleTimeout(Exception):
+    """Raised by the SIGALRM watchdog when a regex match exceeds the budget."""
+
+
+def _alarm_handler(signum, frame):  # noqa: ARG001 -- signal API
+    raise _RuleTimeout()
+
+
+# Hard caps to keep a malicious or accidental rules.yaml entry from hanging
+# the gate. The 5ms-per-rule soft budget in evaluate_edit() is for the
+# happy path; this is the catastrophic-backtracking backstop.
+_MAX_PATTERN_LEN = 512
+_MAX_SOURCE_BYTES_FOR_REGEX = 2 * 1024 * 1024  # 2 MiB
+_REGEX_TIMEOUT_SECONDS = 0.25
+
+
 def _eval_forbid_pattern(
     file_path: str,
     after_src: str,
     rule: dict,
 ) -> RuleHit | None:
-    """Evaluate a forbid_pattern rule using regex."""
+    """Evaluate a ``forbid_pattern`` rule under ReDoS protection.
+
+    Rules in ``.reasoning-core/rules.yaml`` are operator-authored, but a
+    malicious or accidental catastrophic-backtracking regex (``(a+)+$``,
+    nested unbounded groups) can hang the gate process and stall every
+    subsequent edit. Three layers of defense:
+
+    1. ``len(pattern) <= _MAX_PATTERN_LEN`` -- bounded compilation cost.
+    2. ``len(after_src) <= _MAX_SOURCE_BYTES_FOR_REGEX`` -- truncate inputs
+       that would amplify worst-case match time.
+    3. ``signal.SIGALRM`` watchdog with ``_REGEX_TIMEOUT_SECONDS`` hard
+       cap. Unix-only; on platforms without SIGALRM the size limits alone
+       carry the protection.
+
+    A timeout is surfaced as a synthesized deny hit so the caller can act
+    on it -- silently swallowing the failure would let a malformed rule
+    become a permanent gate-disable.
+    """
     pattern = rule.get("pattern", "")
+    rule_id = rule.get("id", "?")
     if not pattern:
         return None
+    if len(pattern) > _MAX_PATTERN_LEN:
+        logger.warning(
+            "Rule %s pattern is %d chars (cap %d); refusing to compile",
+            rule_id, len(pattern), _MAX_PATTERN_LEN,
+        )
+        return RuleHit(
+            rule_id=rule_id,
+            rule_type="forbid_pattern",
+            severity="deny",
+            message=f"Pattern exceeds {_MAX_PATTERN_LEN} chars; rejected",
+            line=0,
+            column=0,
+            matched_text="",
+        )
 
     try:
         regex = re.compile(pattern)
     except re.error as exc:
-        logger.debug("Invalid regex in rule %s: %s", rule.get("id", "?"), exc)
+        logger.debug("Invalid regex in rule %s: %s", rule_id, exc)
         return None
 
-    for m in regex.finditer(after_src):
-        line = after_src[:m.start()].count("\n") + 1
-        col = m.start() - after_src.rfind("\n", 0, m.start())
+    bounded_src = after_src
+    if len(after_src) > _MAX_SOURCE_BYTES_FOR_REGEX:
+        bounded_src = after_src[:_MAX_SOURCE_BYTES_FOR_REGEX]
+
+    have_alarm = hasattr(signal, "SIGALRM") and hasattr(signal, "setitimer")
+    prev_handler = None
+    if have_alarm:
+        try:
+            prev_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+            signal.setitimer(signal.ITIMER_REAL, _REGEX_TIMEOUT_SECONDS)
+        except ValueError:
+            # signal.signal raises ValueError outside the main thread.
+            have_alarm = False
+            prev_handler = None
+
+    try:
+        m = regex.search(bounded_src)
+        if m is None:
+            return None
+        line = bounded_src[:m.start()].count("\n") + 1
+        col = m.start() - bounded_src.rfind("\n", 0, m.start())
         return RuleHit(
             rule_id=rule.get("id", ""),
             rule_type="forbid_pattern",
@@ -630,7 +718,28 @@ def _eval_forbid_pattern(
             column=col,
             matched_text=m.group(0),
         )
-    return None
+    except _RuleTimeout:
+        logger.warning(
+            "Rule %s exceeded %.0fms regex timeout (likely ReDoS); denying edit",
+            rule_id, _REGEX_TIMEOUT_SECONDS * 1000,
+        )
+        return RuleHit(
+            rule_id=rule_id,
+            rule_type="forbid_pattern",
+            severity="deny",
+            message=(
+                f"Pattern evaluation exceeded "
+                f"{int(_REGEX_TIMEOUT_SECONDS * 1000)}ms (likely ReDoS)"
+            ),
+            line=0,
+            column=0,
+            matched_text="",
+        )
+    finally:
+        if have_alarm:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if prev_handler is not None:
+                signal.signal(signal.SIGALRM, prev_handler)
 
 
 # ---------------------------------------------------------------------------

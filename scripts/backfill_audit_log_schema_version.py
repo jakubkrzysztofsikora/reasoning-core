@@ -36,14 +36,44 @@ def _iter_log_files(base: Path):
                 yield Path(root) / fn
 
 
+def _safe_open(path: Path, mode: str):
+    """Open ``path`` refusing to follow symlinks. Falls back to plain ``open``
+    on platforms without ``O_NOFOLLOW``. Returns a text-mode file object.
+
+    The script's default base is under ``/tmp``, which is world-writable.
+    Without ``O_NOFOLLOW`` a local attacker can symlink an arbitrary file
+    (``/etc/shadow``, another user's audit log) into the audit directory
+    between ``os.walk`` enumeration and the read and have the script read
+    or rewrite it. ``O_NOFOLLOW`` makes the open fail closed.
+    """
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if str(path).endswith(".gz"):
+        if no_follow:
+            fd = os.open(str(path), os.O_RDONLY | no_follow)
+            return gzip.open(fd, "rt", encoding="utf-8")
+        return gzip.open(str(path), "rt", encoding="utf-8")
+    if no_follow:
+        fd = os.open(str(path), os.O_RDONLY | no_follow)
+        return os.fdopen(fd, mode, encoding="utf-8")
+    return open(str(path), mode, encoding="utf-8")
+
+
 def _migrate_file(path: Path, apply: bool) -> tuple[int, int]:
     """Return (scanned, migrated) counts for a single file."""
-    opener = gzip.open if str(path).endswith(".gz") else open
+    # Refuse to process non-regular files (symlinks, devices, sockets) -- the
+    # walk happens-before the stat happens-before the open, so this is a
+    # best-effort TOCTOU narrowing, paired with O_NOFOLLOW on the actual open.
+    try:
+        if not path.is_file() or path.is_symlink():
+            return 0, 0
+    except OSError:
+        return 0, 0
+
     lines: list[str] = []
     scanned = 0
     migrated = 0
     try:
-        with opener(str(path), "rt", encoding="utf-8") as fh:
+        with _safe_open(path, "rt") as fh:
             for line in fh:
                 scanned += 1
                 line = line.rstrip("\n")
@@ -70,11 +100,18 @@ def _migrate_file(path: Path, apply: bool) -> tuple[int, int]:
 
     if migrated > 0 and apply:
         try:
-            # Atomic write: tmp -> rename
+            # Atomic write: tmp -> rename. New tmp file is created fresh, so
+            # gzip.open / open by path is safe; ``tmp.replace`` overwrites
+            # the symlink itself rather than the target on Linux.
             tmp = path.with_suffix(path.suffix + ".tmp")
-            with opener(str(tmp), "wt", encoding="utf-8") as fh:
-                for ln in lines:
-                    fh.write(ln + "\n")
+            if str(path).endswith(".gz"):
+                with gzip.open(str(tmp), "wt", encoding="utf-8") as fh:
+                    for ln in lines:
+                        fh.write(ln + "\n")
+            else:
+                with open(str(tmp), "wt", encoding="utf-8") as fh:
+                    for ln in lines:
+                        fh.write(ln + "\n")
             tmp.replace(path)
         except OSError as exc:
             print(f"  FAIL (write error): {path}: {exc}", file=sys.stderr)
@@ -87,8 +124,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Backfill schema_version=1 on legacy untagged audit-log rows"
     )
-    parser.add_argument("--base", default="/tmp/rc-events",
-                        help="Base directory for audit log files")
+    # Match the live writer's default in src/hooks/audit_log.py rather than
+    # /tmp/rc-events (world-writable, symlink-attack surface). Operators on
+    # legacy installs can pass --base explicitly.
+    default_base = os.environ.get(
+        "RC_AUDIT_ROOT",
+        os.path.expanduser("~/.local/share/reasoning-core/events"),
+    )
+    parser.add_argument("--base", default=default_base,
+                        help="Base directory for audit log files "
+                             "(default: $RC_AUDIT_ROOT or XDG state dir)")
     parser.add_argument("--apply", action="store_true",
                         help="Apply migration (default: dry-run)")
     args = parser.parse_args()
