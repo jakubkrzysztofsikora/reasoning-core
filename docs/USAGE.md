@@ -111,6 +111,7 @@ and are fail-closed until you supply a pinned SHA:
 
 ```bash
 # Use codestral-mamba (7B, code-pretrained, hidden=4096)
+# Defaults to fp16 (~14 GB RAM). Override with RC_EMBEDDER_DTYPE if needed.
 export RC_EMBEDDER=codestral-mamba
 export RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char hex SHA>
 
@@ -124,7 +125,9 @@ Slug rule: uppercase the HuggingFace repo id, replace non-alphanumeric with
 tags) are rejected — supply-chain hardening.
 
 The 7B Codestral-Mamba is meaningfully better at code-similarity but
-materially slower on CPU. Use it on machines with CUDA or MLX.
+materially slower on CPU. Loads at fp16 by default to stay inside ~14 GB
+RAM on a laptop (`RC_EMBEDDER_DTYPE=float32` to force fp32 at ~28 GB).
+Use it on machines with CUDA or MLX when you can.
 
 ---
 
@@ -228,9 +231,10 @@ macOS only today; Linux users add their root manually.
 
 **Q: Sidecar takes forever to start.**
 A: First run downloads embedder weights. For default `mamba-130m`: ~250 MB,
-~30s on CPU subsequently. `codestral-mamba` is ~14 GB and significantly
-slower; use it only when you have CUDA or MLX. Watch
-`tail -f /tmp/reasoning-core-sidecar.log`.
+~30s on CPU subsequently. `codestral-mamba` is ~14 GB at the default fp16
+load (~28 GB at fp32 — set `RC_EMBEDDER_DTYPE=float32` if you need it,
+but it will OOM most laptops). Use codestral on CUDA or MLX when you can.
+Watch `tail -f /tmp/reasoning-core-sidecar.log`.
 
 **Q: How do I temporarily turn it off?**
 A: `cd` out of the repo (direnv unloads, hooks vanish), or export

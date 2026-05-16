@@ -30,7 +30,9 @@ rejected — supply-chain hardening).
 # Default
 huggingface-cli download state-spaces/mamba-130m-hf
 
-# Or: Codestral-Mamba 7B (code-pretrained, hidden=4096, ~14 GB)
+# Or: Codestral-Mamba 7B (code-pretrained, hidden=4096)
+# Loads as fp16 by default → ~14 GB resident; fp32 would be ~28 GB and OOMs
+# most laptops. Override with RC_EMBEDDER_DTYPE=float32 / bfloat16 / auto.
 # huggingface-cli download mistralai/Mamba-Codestral-7B-v0.1
 # export RC_EMBEDDER=codestral-mamba
 # export RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char hex SHA>

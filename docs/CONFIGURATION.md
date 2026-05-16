@@ -13,7 +13,7 @@ works for the `mamba-130m` backend only.
 | Backend | Checkpoint | Params | Hidden | Pool | Notes |
 |---|---|---|---|---|---|
 | `mamba-130m` (default) | `state-spaces/mamba-130m-hf` | 130M | 768 | mean | SHA-pinned, ships out of the box |
-| `codestral-mamba` | `mistralai/Mamba-Codestral-7B-v0.1` | 7B | 4096 | mean | Apache 2.0, code-pretrained Mamba-2; **needs `RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char SHA>`** |
+| `codestral-mamba` | `mistralai/Mamba-Codestral-7B-v0.1` | 7B | 4096 | mean | Apache 2.0, code-pretrained Mamba-2; **defaults to fp16** (~14 GB RAM) — override with `RC_EMBEDDER_DTYPE`; **needs `RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char SHA>`** |
 | `bge-code` | `BAAI/bge-code-v1` | ~4GB | 768 | cls | Code-specialised transformer; **needs SHA pin** |
 | `unixcoder-base` | `microsoft/unixcoder-base` | small | 768 | cls | MIT-licensed baseline; **needs SHA pin** |
 | `random-mamba` | _in-process control_ | 130M | 768 | mean | Random-init Mamba-2 for falsifiability tests |
@@ -39,6 +39,7 @@ provides a pinned SHA via `RC_<REPO_SLUG>_REVISION` (uppercase, non-alpha
 | `S2_SSM_CHECKPOINT` | _unset_ | Legacy override; only honoured when `RC_EMBEDDER` is unset |
 | `HF_HOME` | `$HOME/.cache/huggingface` | HF cache (shared with sibling repos / eval worktrees) |
 | `RC_<REPO_SLUG>_REVISION` | _unset_ | 40-char hex SHA override for `RC_EMBEDDER` backends with `revision="main"` |
+| `RC_EMBEDDER_DTYPE` | _unset_ | `float32` \| `float16` \| `bfloat16` \| `auto`. When unset, `codestral-mamba` defaults to `float16` (memory-saver on the 7B model, ~14 GB vs ~28 GB at fp32); other backends use transformers' native dtype (fp32). Invalid values rejected at load time. `low_cpu_mem_usage=True` is always passed to `from_pretrained` |
 
 ## Source-code thresholds
 
