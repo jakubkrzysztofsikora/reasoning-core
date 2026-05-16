@@ -34,3 +34,8 @@ eval/datasets/*.judge.jsonl
 eval/calibrated/
 .gemini/settings.json
 .vibe/config.toml
+
+.claude/
+
+# Per-machine Cato VPN CA bundle, built by direnv on demand.
+ca-bundle.pem
