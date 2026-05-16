@@ -7,12 +7,20 @@ import is deferred to `load_backbone()` so that `python3 -c "import
 src.ssm_backbone"` stays cheap and offline-friendly.
 
 Backends (selected via ``RC_EMBEDDER`` env):
-    codestral-mamba  -- default. mistralai/Mamba-Codestral-7B-v0.1 (Apache 2.0,
-                       code-pretrained Mamba-2, 256K context cap -> 8192).
-    mamba-130m       -- legacy fallback. state-spaces/mamba-130m-hf (Pile-LM).
+    mamba-130m       -- default. state-spaces/mamba-130m-hf (Pile-LM, ~250 MB).
+    codestral-mamba  -- opt-in. mistralai/Mamba-Codestral-7B-v0.1 (Apache 2.0,
+                       code-pretrained Mamba-2, 256K context cap -> 8192,
+                       ~14 GB fp16 / ~28 GB fp32). fp16 by default; see
+                       ``RC_EMBEDDER_DTYPE``.
     bge-code         -- BAAI/bge-code-v1 (code-specialised transformer, ~4GB).
     unixcoder-base   -- microsoft/unixcoder-base (code transformer baseline).
     random-mamba     -- randomly-initialised Mamba-2 control for falsifiability.
+
+Dtype env (memory control):
+    RC_EMBEDDER_DTYPE  -- float32 | float16 | bfloat16 | auto. Unset →
+                          codestral-mamba defaults to float16 (memory saver
+                          on the 7B model); other backends default to
+                          transformers' native dtype (fp32).
 
 Legacy env (backward compat):
     S2_SSM_CHECKPOINT  -- override for mamba-130m path ONLY.
@@ -336,6 +344,43 @@ def _resolve_revision_for_backend(backend: _EmbedderBackend) -> str | None:
 # --- Loader -------------------------------------------------------------------
 
 
+_VALID_DTYPES = frozenset({"float32", "float16", "bfloat16", "auto"})
+
+
+def _resolve_dtype(backend: _EmbedderBackend) -> Any:
+    """Return the torch.dtype (or sentinel) to pass to ``from_pretrained``.
+
+    Resolution order:
+      1. ``RC_EMBEDDER_DTYPE`` env (validated against ``_VALID_DTYPES``).
+      2. Per-backend memory-saver default: ``codestral-mamba`` → ``float16``
+         (the 7B checkpoint is ~28 GB at fp32 and OOMs many laptops).
+      3. ``None`` → transformers' native dtype (fp32).
+
+    Returns ``"auto"`` (string) when the user explicitly asked for HF's
+    auto-resolution; otherwise a ``torch.dtype`` or ``None``.
+    """
+    import torch  # local; caller already imports torch upstream
+
+    raw = os.environ.get("RC_EMBEDDER_DTYPE", "").strip().lower()
+    if raw and raw not in _VALID_DTYPES:
+        raise BackboneUnavailableError(
+            f"RC_EMBEDDER_DTYPE={raw!r} invalid. "
+            f"Expected one of: {sorted(_VALID_DTYPES)}."
+        )
+    if raw == "float32":
+        return torch.float32
+    if raw == "float16":
+        return torch.float16
+    if raw == "bfloat16":
+        return torch.bfloat16
+    if raw == "auto":
+        return "auto"
+    # Unset → per-backend default.
+    if backend.name == "codestral-mamba":
+        return torch.float16
+    return None
+
+
 def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
     """Attempt to load a single backend. Returns None on failure."""
     try:
@@ -372,8 +417,17 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
         tokenizer = AutoTokenizer.from_pretrained(
             backend.checkpoint, **load_kwargs,
         )
+        dtype = _resolve_dtype(backend)
+        model_kwargs = dict(load_kwargs)
+        if dtype is not None:
+            model_kwargs["torch_dtype"] = dtype
+        model_kwargs["low_cpu_mem_usage"] = True
+        logger.info(
+            "Loading embedder weights dtype=%s low_cpu_mem_usage=True",
+            getattr(dtype, "__name__", None) or str(dtype) or "native",
+        )
         model = AutoModel.from_pretrained(
-            backend.checkpoint, **load_kwargs,
+            backend.checkpoint, **model_kwargs,
         )
         model.eval()
         try:
