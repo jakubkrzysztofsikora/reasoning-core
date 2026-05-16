@@ -104,6 +104,20 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
         license="n/a",
         is_code_pretrained=False,
     ),
+    # Quantized Codestral-Mamba via llama.cpp / GGUF. Keeps the code
+    # pretraining at a fraction of the RAM (~5.7 GB for Q6_K vs ~14 GB
+    # for the fp16 HF weights). Loaded via llama-cpp-python, not HF
+    # transformers — see `_try_load_gguf_backend` and the dispatch in
+    # `embed()`. Default file is Q6_K; override with `RC_CODESTRAL_GGUF_FILE`.
+    "codestral-mamba-gguf": _EmbedderBackend(
+        name="codestral-mamba-gguf",
+        checkpoint="gabriellarson/Mamba-Codestral-7B-v0.1-GGUF",
+        pooling="mean",   # informational; GGUF returns a pre-pooled embedding
+        max_seq_len=8192,
+        hidden_size=4096,
+        revision="main",  # operator pins via RC_<SLUG>_REVISION
+        license="apache-2.0",
+    ),
 }
 
 # Default to a backend with a real SHA pin so a fresh install works without
@@ -127,6 +141,7 @@ _ALLOWED_CHECKPOINTS = frozenset({
     DEFAULT_CHECKPOINT,
     *FALLBACK_CHECKPOINTS,
     "mistralai/Mamba-Codestral-7B-v0.1",
+    "gabriellarson/Mamba-Codestral-7B-v0.1-GGUF",
     "BAAI/bge-code-v1",
     "microsoft/unixcoder-base",
     "__random_mamba__",
@@ -381,6 +396,79 @@ def _resolve_dtype(backend: _EmbedderBackend) -> Any:
     return None
 
 
+_GGUF_DEFAULT_FILE = "Mamba-Codestral-7B-v0.1.Q6_K.gguf"
+
+
+def _try_load_gguf_backend(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
+    """Load a GGUF embedder via ``llama-cpp-python``.
+
+    Downloads the GGUF artifact from HuggingFace (default Q6_K, override
+    with ``RC_CODESTRAL_GGUF_FILE``) and instantiates ``llama_cpp.Llama``
+    in embedding mode. The handle's ``model`` is a thin adapter that the
+    GGUF branch in ``embed()`` keys on by backend name.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+        import llama_cpp  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        logger.error("llama-cpp-python or huggingface_hub import failed: %s", exc)
+        return None
+
+    revision = _resolve_revision_for_backend(backend)
+    filename = os.environ.get("RC_CODESTRAL_GGUF_FILE", _GGUF_DEFAULT_FILE)
+
+    logger.info(
+        "Loading GGUF embedder backend=%s repo=%s file=%s revision=%s",
+        backend.name, backend.checkpoint, filename, (revision or "latest")[:12],
+    )
+    try:
+        gguf_path = hf_hub_download(
+            repo_id=backend.checkpoint,
+            filename=filename,
+            revision=revision,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GGUF download failed for %s/%s: %s", backend.checkpoint, filename, exc)
+        return None
+
+    n_ctx = backend.max_seq_len or 8192
+    try:
+        llama = llama_cpp.Llama(
+            model_path=gguf_path,
+            embedding=True,
+            n_ctx=n_ctx,
+            n_threads=int(os.environ.get("RC_GGUF_THREADS", "0")) or None,
+            verbose=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("llama_cpp.Llama init failed: %s", exc)
+        return None
+
+    hidden = int(llama.n_embd()) if hasattr(llama, "n_embd") else backend.hidden_size
+    info = {
+        "checkpoint": backend.checkpoint,
+        "hidden_size": hidden,
+        "num_parameters": 7_151_185_920,  # Codestral-Mamba-7B
+        "license": backend.license,
+        "source_url": f"https://huggingface.co/{backend.checkpoint}",
+        "is_fallback": backend.name != _DEFAULT_BACKEND_NAME,
+        "device": "cpu",
+        "embedder_role": "feature_extractor",
+        "embedder_backend": backend.name,
+        "gguf_file": filename,
+        "gguf_path": gguf_path,
+    }
+    return _BackboneHandle(
+        model=llama,            # raw Llama instance; embed() dispatches on backend.name
+        tokenizer=None,         # GGUF tokenizer is inside Llama, accessed via embed()
+        device="cpu",
+        checkpoint=backend.checkpoint,
+        hidden_size=hidden,
+        info=info,
+        backend=backend,
+    )
+
+
 def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
     """Attempt to load a single backend. Returns None on failure."""
     try:
@@ -402,6 +490,8 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
             )
         if backend.name == "random-mamba":
             return _try_load_random_mamba(backend, device)
+        if backend.name == "codestral-mamba-gguf":
+            return _try_load_gguf_backend(backend, device)
 
         revision = _resolve_revision_for_backend(backend)
         logger.info(
@@ -702,6 +792,8 @@ def embed(text: str) -> Any:
     Pooling strategy depends on backend:
       - mean: mean over sequence dim (SSM backends)
       - cls:  first-token embedding (transformer backends: bge-code, unixcoder)
+      - GGUF backends (``codestral-mamba-gguf``) return a pre-pooled embedding
+        from llama.cpp and bypass the tokenize/forward/pool path entirely.
     """
     import torch
 
@@ -710,6 +802,15 @@ def embed(text: str) -> Any:
     tokenizer = handle.tokenizer
     device = handle.device
     backend = handle.backend
+
+    # GGUF path: llama.cpp returns a pre-pooled embedding via .embed(text).
+    if backend is not None and backend.name == "codestral-mamba-gguf":
+        text = text if text else " "
+        try:
+            vec = model.embed(text)  # llama_cpp.Llama instance
+        except Exception as exc:  # noqa: BLE001
+            raise BackboneUnavailableError(f"GGUF embed failed: {exc}") from exc
+        return torch.tensor(vec, dtype=torch.float32)
 
     max_len = 512
     pooling = "mean"

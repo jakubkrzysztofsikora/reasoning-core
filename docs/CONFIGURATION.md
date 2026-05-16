@@ -14,6 +14,7 @@ works for the `mamba-130m` backend only.
 |---|---|---|---|---|---|
 | `mamba-130m` (default) | `state-spaces/mamba-130m-hf` | 130M | 768 | mean | SHA-pinned, ships out of the box |
 | `codestral-mamba` | `mistralai/Mamba-Codestral-7B-v0.1` | 7B | 4096 | mean | Apache 2.0, code-pretrained Mamba-2; **defaults to fp16** (~14 GB RAM) — override with `RC_EMBEDDER_DTYPE`; **needs `RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char SHA>`** |
+| `codestral-mamba-gguf` | `gabriellarson/Mamba-Codestral-7B-v0.1-GGUF` | 7B (quantized) | 4096 | mean | Apache 2.0, **same code-pretrained Codestral** loaded via `llama-cpp-python`; default file `Mamba-Codestral-7B-v0.1.Q6_K.gguf` (~5.7 GB) — override with `RC_CODESTRAL_GGUF_FILE`. **Needs `RC_GABRIELLARSON_MAMBA_CODESTRAL_7B_V0_1_GGUF_REVISION=<40-char SHA>` and `pip install llama-cpp-python`.** |
 | `bge-code` | `BAAI/bge-code-v1` | ~4GB | 768 | cls | Code-specialised transformer; **needs SHA pin** |
 | `unixcoder-base` | `microsoft/unixcoder-base` | small | 768 | cls | MIT-licensed baseline; **needs SHA pin** |
 | `random-mamba` | _in-process control_ | 130M | 768 | mean | Random-init Mamba-2 for falsifiability tests |
@@ -40,6 +41,9 @@ provides a pinned SHA via `RC_<REPO_SLUG>_REVISION` (uppercase, non-alpha
 | `HF_HOME` | `$HOME/.cache/huggingface` | HF cache (shared with sibling repos / eval worktrees) |
 | `RC_<REPO_SLUG>_REVISION` | _unset_ | 40-char hex SHA override for `RC_EMBEDDER` backends with `revision="main"` |
 | `RC_EMBEDDER_DTYPE` | _unset_ | `float32` \| `float16` \| `bfloat16` \| `auto`. When unset, `codestral-mamba` defaults to `float16` (memory-saver on the 7B model, ~14 GB vs ~28 GB at fp32); other backends use transformers' native dtype (fp32). Invalid values rejected at load time. `low_cpu_mem_usage=True` is always passed to `from_pretrained` |
+| `RC_CODESTRAL_GGUF_FILE` | `Mamba-Codestral-7B-v0.1.Q6_K.gguf` | Filename to pull from `gabriellarson/Mamba-Codestral-7B-v0.1-GGUF` when `RC_EMBEDDER=codestral-mamba-gguf`. Pick a smaller quant (e.g. `Q4_K_M.gguf` ~4 GB) for tighter RAM at slight quality cost. |
+| `RC_GGUF_THREADS` | _unset_ (= all cores) | Thread count for llama.cpp inference; matches CPU count by default. |
+| `S2_MEM_LOG_INTERVAL_S` | `30` | Sidecar memory sampler interval (seconds). `0` disables. Logs process RSS / VSS, system memory %, swap usage — useful for diagnosing delayed OOM kills under codestral-mamba. |
 
 ## Source-code thresholds
 
