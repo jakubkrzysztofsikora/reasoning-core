@@ -1088,6 +1088,45 @@ def score_change(
 # HTTP service (FastAPI)
 # ---------------------------------------------------------------------------
 
+
+def _emit_memory_log() -> None:
+    """One-shot memory snapshot to the sidecar logger.
+
+    Logs process RSS / VSS plus system memory% and swap. Quietly no-ops if
+    psutil is unavailable so the sidecar never dies because of telemetry.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return
+    try:
+        mi = psutil.Process().memory_info()
+        vm = psutil.virtual_memory()
+        sw = psutil.swap_memory()
+        logger.info(
+            "mem rss=%.2fGB vsz=%.1fGB sys_used=%.1f%% sys_avail=%.1fGB swap=%.2fGB/%.2fGB",
+            mi.rss / 1024 ** 3,
+            mi.vms / 1024 ** 3,
+            vm.percent,
+            vm.available / 1024 ** 3,
+            sw.used / 1024 ** 3,
+            sw.total / 1024 ** 3,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("memory sampler failed: %s", exc)
+
+
+async def _memory_sampler(interval_s: float) -> None:
+    """Loop forever emitting ``_emit_memory_log()`` every ``interval_s`` seconds."""
+    import asyncio
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+        except asyncio.CancelledError:
+            return
+        _emit_memory_log()
+
+
 def create_app():
     """Construct the FastAPI app. Loads the SSM backbone eagerly via lifespan."""
     # Imports are hoisted into module globals so FastAPI's get_type_hints()
@@ -1110,8 +1149,35 @@ def create_app():
         except BackboneUnavailableError as exc:
             # Log + keep server alive so /health honestly reports model_loaded:false.
             logger.error("backbone load failed at startup: %s", exc)
-        yield
-        # No teardown work — the SSM handle is process-lifetime.
+
+        # Periodic memory sampler. Default 30s; set S2_MEM_LOG_INTERVAL_S=0
+        # to disable. Surfaces RSS growth across /score calls — useful for
+        # explaining delayed OOM kills under codestral-mamba 7B where the
+        # Mamba CPU naive forward retains activations between calls.
+        import asyncio as _asyncio
+        mem_task = None
+        try:
+            mem_interval = float(os.environ.get("S2_MEM_LOG_INTERVAL_S", "30"))
+        except ValueError:
+            mem_interval = 30.0
+        if mem_interval > 0:
+            _emit_memory_log()  # one immediate sample at boot
+            mem_task = _asyncio.create_task(_memory_sampler(mem_interval))
+            logger.info(
+                "memory sampler armed: interval=%.1fs (S2_MEM_LOG_INTERVAL_S=0 to disable)",
+                mem_interval,
+            )
+
+        try:
+            yield
+        finally:
+            if mem_task is not None:
+                mem_task.cancel()
+                try:
+                    await mem_task
+                except _asyncio.CancelledError:
+                    pass
+        # No backbone teardown — the SSM handle is process-lifetime.
 
     app = FastAPI(title="reasoning-core S2 sidecar", version="1.0", lifespan=_lifespan)
 
@@ -1322,6 +1388,8 @@ def _run() -> int:
     try:
         # uvicorn.run blocks. log_level is left as default; we already have
         # logging configured.
+        import setproctitle
+        setproctitle.setproctitle("reasoning-core-sidecar")
         uvicorn.run(app, host=host, port=port, log_level=os.environ.get("S2_LOG_LEVEL", "info"))
     except OSError as exc:
         # Address already in use, etc.

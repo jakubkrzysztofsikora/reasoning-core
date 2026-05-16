@@ -1,6 +1,8 @@
 # Hybrid Reasoning Core — runtime + dev deps
 # Pinned conservatively. macOS arm64 + Python 3.11+.
 
+setproctitle==1.3.7
+
 # --- HTTP & MCP ---
 fastapi>=0.110,<1.0
 uvicorn[standard]>=0.29,<1.0
@@ -41,6 +43,11 @@ einops>=0.7                  # required by mamba-ssm code paths
 
 # --- Cross-platform file locking for audit_log multi-host writers ---
 portalocker>=2.7
+
+# --- Sidecar memory sampler (logs RSS / VSS / swap every N seconds).
+# Optional in spirit but ImportError downgrades the sampler to a no-op
+# with a single warn-once line at boot.
+psutil>=5.9
 
 # --- Rule engine: PyYAML is required (see src/hooks/_rule_engine.py).
 # The fallback _basic_yaml_parse is a security-review-flagged divergence
