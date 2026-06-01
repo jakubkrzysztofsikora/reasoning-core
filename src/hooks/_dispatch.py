@@ -671,3 +671,74 @@ def gate_regression(*, report: Dict[str, Any]) -> GateOutcome:
         decision="blocked",
         reason="regression_detected",
     )
+
+
+# ---------------------------------------------------------------------------
+# PRM measurement gate (audit 2026-06-01 §B1).
+# Default OFF until training data lands; emits audit events but never blocks.
+# ---------------------------------------------------------------------------
+
+def gate_prm(
+    *,
+    file_path: str,
+    before_src: str,
+    after_src: str,
+    plan_text: Optional[str],
+) -> GateOutcome:
+    """Score (plan_claim, diff_hunk) via gen_client.score_plan_grounding.
+
+    PRM (process reward model) measurement-only gate. When RC_PRM_GATE=1,
+    each Edit produces an audit event with signal_source="prm" and
+    reason="prm_score=<0-1>". Never blocks — that would require a
+    trained PRM with calibrated thresholds, which is queued behind
+    eval/build_prm_corpus.py output (audit 2026-06-01 §9-10).
+    """
+    if os.environ.get("RC_PRM_GATE", "0") != "1":
+        return GateOutcome()  # action="pass", no signal
+    if not plan_text:
+        return GateOutcome(
+            action="continue_pair",
+            decision="audit_only",
+            reason="prm_skip:no_plan_md",
+            signal_source="prm",
+        )
+    import difflib
+    diff = "\n".join(difflib.unified_diff(
+        (before_src or "").splitlines(),
+        (after_src or "").splitlines(),
+        fromfile=f"a/{file_path}",
+        tofile=f"b/{file_path}",
+        lineterm="",
+    ))
+    diff_hunk = diff[:1500] if diff else f"(no-op edit on {file_path})"
+    plan_claim = plan_text[:500]
+    try:
+        try:
+            from src import gen_client as _gc  # type: ignore
+        except ImportError:
+            import gen_client as _gc  # type: ignore
+        verdict = _gc.score_plan_grounding(plan_claim, diff_hunk)
+    except Exception:  # noqa: BLE001
+        return GateOutcome(
+            action="continue_pair",
+            decision="audit_only",
+            reason="prm_unavailable",
+            signal_source="prm",
+        )
+    if not isinstance(verdict, dict) or not verdict:
+        return GateOutcome(
+            action="continue_pair",
+            decision="audit_only",
+            reason="prm_unavailable",
+            signal_source="prm",
+        )
+    yes = sum(1 for v in verdict.values() if v == 1)
+    total = len(verdict)
+    score = (yes / total) if total else 0.0
+    return GateOutcome(
+        action="continue_pair",
+        decision="allowed",
+        reason=f"prm_score={score:.2f}",
+        signal_source="prm",
+        audit_extra={"prm_score": float(score), "prm_yes": yes, "prm_total": total},
+    )
