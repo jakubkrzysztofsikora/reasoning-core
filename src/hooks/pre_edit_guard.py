@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import time
 import urllib.error
@@ -61,6 +62,26 @@ def _timeout_seconds() -> int:
         return int(os.getenv("S2_TIMEOUT", "30"))
     except ValueError:
         return 30
+
+
+def _hard_cap_seconds() -> float:
+    """Client-side hard cap on the /score POST.
+
+    Audit 2026-06-01 §1.4: sidecar p95=58s, p99=60s. Without a cap the
+    agent can stall for a full minute per Edit. Defaults to 1500ms; never
+    exceeds S2_TIMEOUT (the upstream HTTP read timeout). On cap-exceeded
+    the caller falls back to the symbolic gate (rule_engine + lang_lock)
+    and audits reason="symbolic_fallback".
+    """
+    try:
+        cap_ms = int(os.getenv("S2_HARD_CAP_MS", "1500"))
+    except ValueError:
+        cap_ms = 1500
+    return cap_ms / 1000.0
+
+
+def _effective_score_timeout() -> float:
+    return min(_hard_cap_seconds(), float(_timeout_seconds()))
 
 
 def _fail_closed() -> bool:
@@ -202,8 +223,9 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    cap_s = _effective_score_timeout()
     try:
-        with urllib.request.urlopen(req, timeout=_timeout_seconds()) as resp:
+        with urllib.request.urlopen(req, timeout=cap_s) as resp:
             data = resp.read()
             try:
                 parsed = json.loads(data.decode("utf-8"))
@@ -212,6 +234,16 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
             if not isinstance(parsed, dict):
                 raise SidecarUnavailable("invalid_sidecar_json")
             return parsed
+    except (socket.timeout, TimeoutError) as exc:
+        cap_ms = int(cap_s * 1000)
+        try:
+            sys.stderr.write(
+                f"[hybrid-reasoner] sidecar hard cap exceeded ({cap_ms}ms); "
+                f"symbolic fallback engaged.\n"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        raise SidecarUnavailable(f"hard_cap_exceeded:{cap_ms}ms") from exc
     except urllib.error.HTTPError as exc:
         if exc.code == 415:
             ext = Path(file_path).suffix
