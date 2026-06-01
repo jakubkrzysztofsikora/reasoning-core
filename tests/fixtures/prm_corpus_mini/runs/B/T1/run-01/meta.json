@@ -1,0 +1,7 @@
+{
+  "task_id": "T1",
+  "arm": "B",
+  "resolved": false,
+  "regression_introduced": true,
+  "regression_files": ["src/auth.py"]
+}

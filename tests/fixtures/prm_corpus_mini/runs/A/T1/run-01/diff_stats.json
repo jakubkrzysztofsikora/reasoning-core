@@ -1,0 +1,6 @@
+{
+  "files": [
+    {"path": "src/auth.py", "added": 22, "removed": 18},
+    {"path": "tests/test_auth.py", "added": 30, "removed": 0}
+  ]
+}

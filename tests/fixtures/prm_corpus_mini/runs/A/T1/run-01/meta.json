@@ -1,0 +1,7 @@
+{
+  "task_id": "T1",
+  "arm": "A",
+  "resolved": true,
+  "regression_introduced": false,
+  "wall_clock_s": 120
+}
