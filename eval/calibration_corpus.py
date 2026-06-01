@@ -77,6 +77,23 @@ def _is_revert(msg: str) -> bool:
     return head.startswith("revert")
 
 
+def _is_fix(msg: str) -> bool:
+    """Audit 2026-06-01 §10: treat conventional-commit fix:/bug: as a
+    regression marker — the parent commit introduced what the fix removed.
+    """
+    head = msg.lower().lstrip()
+    # Strip leading gitmoji / emoji (`:bug: fix: ...`)
+    head = head.lstrip(":")
+    while head and head[0] in " 🐛✨🔧📝⚡":
+        head = head[1:].lstrip()
+    return head.startswith(("fix:", "fix(", "bug:", "bug(", "hotfix:"))
+
+
+def _parent_sha(repo: str, sha: str) -> str:
+    raw = _run(["git", "rev-parse", f"{sha}^"], repo).strip()
+    return raw if len(raw) >= 7 and all(c in "0123456789abcdef" for c in raw) else ""
+
+
 def _revert_target(msg: str) -> str:
     """Extract reverted SHA from `Revert "..."` message."""
     import re
@@ -90,7 +107,11 @@ def _file_pair(repo: str, sha: str, path: str) -> tuple:
     return before, after
 
 
-def mine(repo: str, since: str, out_path: str) -> dict:
+def mine(repo: str, since: str, out_path: str, *,
+         include_positives: bool = True,
+         mode: str = "git-grep") -> dict:
+    if mode == "bisect":
+        raise NotImplementedError("bisect mode TBD — only git-grep currently supported")
     commits = _list_commits(repo, since)
     counts: Counter = Counter()
     rows: list = []
@@ -102,7 +123,7 @@ def mine(repo: str, since: str, out_path: str) -> dict:
         if len(c["parents"]) > 1:
             counts["skip_merge"] += 1
             continue
-        if _is_revert(msg):
+        if include_positives and _is_revert(msg):
             target = _revert_target(msg)
             if not target:
                 counts["skip_revert_no_target"] += 1
@@ -118,6 +139,30 @@ def mine(repo: str, since: str, out_path: str) -> dict:
                     "sha": c["sha"], "path": path, "label": "positive",
                     "file_kind": _file_kind(path),
                     "before": before, "after": after,
+                    "source": "revert_paired",
+                })
+                counts[f"positive_{_file_kind(path)}"] += 1
+        elif include_positives and _is_fix(msg):
+            # The parent of a fix commit introduced the regression that this
+            # commit removes. Use the parent's diff as the "positive" sample
+            # (before-fix → buggy state).
+            parent_sha = _parent_sha(repo, c["sha"])
+            if not parent_sha:
+                counts["skip_fix_no_parent"] += 1
+                continue
+            fix_files = _files_touched(repo, c["sha"])
+            parent_files = _files_touched(repo, parent_sha)
+            shared = sorted(fix_files & parent_files)
+            if not shared:
+                counts["skip_fix_no_shared_files"] += 1
+                continue
+            for path in shared:
+                before, after = _file_pair(repo, parent_sha, path)
+                rows.append({
+                    "sha": parent_sha, "path": path, "label": "positive",
+                    "file_kind": _file_kind(path),
+                    "before": before, "after": after,
+                    "source": f"fix_parent:{c['sha'][:7]}",
                 })
                 counts[f"positive_{_file_kind(path)}"] += 1
         else:
@@ -153,8 +198,18 @@ def main() -> int:
                          "to bound runtime on huge repos.")
     ap.add_argument("--progress", action="store_true",
                     help="Print one line per 50 commits to stderr.")
+    ap.add_argument("--include-positives", dest="include_positives",
+                    action="store_true", default=True,
+                    help="Emit positive-label rows from revert + fix commits (default).")
+    ap.add_argument("--no-positives", dest="include_positives",
+                    action="store_false",
+                    help="Suppress positive-label emission.")
+    ap.add_argument("--mode", choices=["git-grep", "bisect"], default="git-grep",
+                    help="Positive-label mining strategy. bisect = TBD.")
     args = ap.parse_args()
-    counts = mine(args.repo_root, args.since, args.out)
+    counts = mine(args.repo_root, args.since, args.out,
+                  include_positives=args.include_positives,
+                  mode=args.mode)
     sys.stdout.write(json.dumps({
         "out": args.out,
         "counts": counts,
