@@ -771,17 +771,17 @@ def _env_float(name: str, default: float) -> float:
 _REGRESSION_AIS_THRESHOLD = _env_float("S2_AIS_THRESHOLD", 0.4)
 # Threshold applied to coherence_delta, which is the chord distance between
 # L2-normalized before/after embeddings (in [0, 2], dimension-invariant).
-# Default is intentionally conservative; tune via S2_COHERENCE_THRESHOLD.
-# Warn when the env override is set above the metric's bound -- a legacy
-# value tuned against the previous raw-L2/sqrt(D) scale (e.g. the old 1.5
-# default) would silently make the gate unreachable.
-COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 0.5)
+# Default 0.09 is the empirical 95th percentile from the local audit corpus
+# (see thoughts/shared/research/2026-06-01-reasoning-core-1000pct-improvements.md
+# §1.3). Override via S2_COHERENCE_THRESHOLD. The previous 0.5 default fired
+# on 1 of 197 audit events — effectively dead.
+COHERENCE_DELTA_THRESHOLD = _env_float("S2_COHERENCE_THRESHOLD", 0.09)
 if COHERENCE_DELTA_THRESHOLD > 2.0:
     logger.warning(
         "S2_COHERENCE_THRESHOLD=%s exceeds the metric upper bound (2.0) -- "
         "the coherence_delta gate will never trigger. The metric changed from "
         "raw L2 / sqrt(D) to chord distance in this release; pick a value in "
-        "[0, 2] (default 0.5).",
+        "[0, 2] (default 0.09, recalibrated 2026-06-01).",
         COHERENCE_DELTA_THRESHOLD,
     )
 _REGRESSION_COHERENCE_THRESHOLD = COHERENCE_DELTA_THRESHOLD
@@ -812,19 +812,25 @@ def _file_kind(path: str) -> str:
 # distribution doesn't match the calibrated source-code baseline.
 _KIND_THRESHOLDS: dict[str, dict[str, float]] = {
     "source_code": {"cd": COHERENCE_DELTA_THRESHOLD, "ais": _REGRESSION_AIS_THRESHOLD, "dim": _REGRESSION_RISK_DIM_THRESHOLD},
-    "test_code":   {"cd": 0.7, "ais": 0.3, "dim": 0.95},
-    "plan_md":     {"cd": 1.0, "ais": 0.3, "dim": 1.0},
-    "doc_md":      {"cd": 1.0, "ais": 0.3, "dim": 1.0},
-    "config":      {"cd": 0.4, "ais": 0.5, "dim": 0.9},
+    "test_code":   {"cd": 0.14, "ais": 0.3, "dim": 0.95},
+    "plan_md":     {"cd": 0.30, "ais": 0.3, "dim": 1.0},
+    "doc_md":      {"cd": 0.30, "ais": 0.3, "dim": 1.0},
+    "config":      {"cd": 0.08, "ais": 0.5, "dim": 0.9},
 }
 
 
 def _cosine_similarity(a, b) -> float:
-    """Compute cosine sim between two 1D torch tensors. Returns float in [-1, 1]."""
+    """Compute cosine sim between two torch tensors. Returns float in [-1, 1].
+
+    Accepts 1D ``[D]`` (torch-native backbones) or 2D ``[1, D]`` / ``[D, 1]``
+    (GGUF llama.cpp embedding output). Higher-rank tensors are flattened.
+    """
     import torch
 
     if a is None or b is None:
         return 1.0
+    a = a.reshape(-1)
+    b = b.reshape(-1)
     na = torch.linalg.norm(a)
     nb = torch.linalg.norm(b)
     if float(na) == 0.0 or float(nb) == 0.0:
@@ -846,6 +852,8 @@ def _l2_distance(a, b) -> float:
 
     if a is None or b is None:
         return 0.0
+    a = a.reshape(-1)
+    b = b.reshape(-1)
     na = torch.linalg.norm(a)
     nb = torch.linalg.norm(b)
     # Symmetric zero (both embeddings degenerate) is identity. Asymmetric zero
@@ -1368,6 +1376,13 @@ def _run() -> int:
     """Run the HTTP service on 127.0.0.1:8765 (loopback only)."""
     host = "127.0.0.1"
     port = int(os.environ.get("S2_PORT", "8765"))
+
+    # Boot guards: single-instance flock + RLIMIT_AS cap. These MUST run
+    # before load_backbone() so a duplicate launch exits immediately and a
+    # runaway model load crashes with MemoryError instead of paging the host
+    # into swap thrash (2026-05-16 incident).
+    from .sidecar_boot import apply_boot_guards
+    apply_boot_guards()
 
     # Pre-warm the backbone synchronously BEFORE binding the port so callers
     # who probe /health immediately get model_loaded:true.
