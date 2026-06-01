@@ -180,6 +180,90 @@ def cmd_unskip_file(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- reasoning-efficiency (audit 2026-06-01 §7 north-star metric) -----------
+# Composite: (drift_caught - false_drifts) / (gate_wall_clock_s + 1)
+#             * repo_idiom_adherence_delta_norm * (1 - sidecar_unavailability_rate)
+# repo_idiom_adherence_delta_norm = 0.43 (iter-3 measured value, frozen until
+# a live measurement lands). The audit log already carries every input.
+_REPO_IDIOM_DELTA_NORM = 0.43
+
+
+def _walk_audit_events(audit_root: Path, days: int):
+    import datetime as _dt
+    import gzip
+    cutoff = _dt.datetime.now(tz=_dt.timezone.utc) - _dt.timedelta(days=days)
+    if not audit_root.is_dir():
+        return
+    for day_dir in sorted(audit_root.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")):
+        try:
+            day = _dt.datetime.strptime(day_dir.name, "%Y-%m-%d").replace(
+                tzinfo=_dt.timezone.utc
+            )
+        except ValueError:
+            continue
+        if day < cutoff.replace(hour=0, minute=0, second=0, microsecond=0):
+            continue
+        for f in day_dir.iterdir():
+            opener = gzip.open if f.name.endswith(".gz") else open
+            try:
+                with opener(f, "rt", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            yield json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+            except OSError:
+                continue
+
+
+def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
+    """Audit 2026-06-01 §7: composite north-star metric from the audit log."""
+    audit_root = Path(args.audit_root or _audit_root())
+    drift_caught = 0
+    false_drifts = 0
+    total_latency_ms = 0
+    sidecar_unavailable = 0
+    n_events = 0
+    for ev in _walk_audit_events(audit_root, args.days):
+        n_events += 1
+        latency = ev.get("latency_ms")
+        if isinstance(latency, int):
+            total_latency_ms += latency
+        reason = ev.get("reason") or ""
+        decision = ev.get("decision") or ""
+        if reason == "plan_impl_drift" and decision in ("blocked", "warn", "shadow_blocked"):
+            drift_caught += 1
+            if ev.get("retry_after_block") is True and decision == "blocked":
+                # Proxy for false-drift: agent retried and the retry was allowed.
+                false_drifts += 1
+        if isinstance(reason, str) and reason.startswith("sidecar_unavailable"):
+            sidecar_unavailable += 1
+
+    if n_events == 0:
+        print(f"no events in last {args.days} days under {audit_root}")
+        return 0
+    gate_wall_clock_s = total_latency_ms / 1000.0
+    sidecar_unavailable_rate = sidecar_unavailable / n_events
+    numerator = max(0, drift_caught - false_drifts)
+    eff = (
+        (numerator / (gate_wall_clock_s + 1.0))
+        * _REPO_IDIOM_DELTA_NORM
+        * max(0.0, 1.0 - sidecar_unavailable_rate)
+    )
+    _print_kv("days", str(args.days))
+    _print_kv("events", str(n_events))
+    _print_kv("drift_caught", str(drift_caught))
+    _print_kv("false_drifts (proxy)", str(false_drifts))
+    _print_kv("gate_wall_clock_s", f"{gate_wall_clock_s:.2f}")
+    _print_kv("sidecar_unavailable_rate", f"{sidecar_unavailable_rate:.3f}")
+    _print_kv("repo_idiom_delta_norm (const)", f"{_REPO_IDIOM_DELTA_NORM}")
+    _print_kv("reasoning_efficiency", f"{eff:.6f}")
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -194,6 +278,13 @@ def main(argv: list | None = None) -> int:
     u = sub.add_parser("unskip-file")
     u.add_argument("path")
     u.set_defaults(func=cmd_unskip_file)
+    re_cmd = sub.add_parser(
+        "reasoning-efficiency",
+        help="audit-log composite metric (audit 2026-06-01 §7)",
+    )
+    re_cmd.add_argument("--days", type=int, default=7)
+    re_cmd.add_argument("--audit-root", default=None)
+    re_cmd.set_defaults(func=cmd_reasoning_efficiency)
     args = p.parse_args(argv)
     return args.func(args)
 
