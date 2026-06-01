@@ -103,12 +103,62 @@ def _emit_receipt(*, fired: bool, env_value: str) -> None:
         pass
 
 
+def _maybe_scaffold_plan() -> None:
+    """Best-effort PLAN.md scaffold when RC_PLAN_GROUNDING is enabled.
+
+    Audit 2026-06-01 §B4: repos without PLAN.md silently degrade to
+    audit_only:no_plan_md. Generate a stub on first contact. Honors
+    RC_NO_PLAN_SCAFFOLD=1. Never raises into the SessionStart hook.
+    """
+    pg = os.environ.get("RC_PLAN_GROUNDING", "0")
+    if pg not in ("1", "2"):
+        return
+    project_dir = (
+        os.environ.get("RC_RUN_DIR")
+        or os.environ.get("CLAUDE_PROJECT_DIR")
+        or os.getcwd()
+    )
+    try:
+        from src.hooks import _plan_scaffold as _ps  # type: ignore
+    except Exception:  # noqa: BLE001
+        try:
+            import _plan_scaffold as _ps  # type: ignore
+        except Exception:  # noqa: BLE001
+            return
+    try:
+        created = _ps.maybe_scaffold_plan(project_dir)
+    except Exception:  # noqa: BLE001
+        return
+    if created is None:
+        return
+    # Emit a one-line audit receipt so operators can see the scaffold fired.
+    try:
+        _hooks_dir = os.path.dirname(os.path.abspath(__file__))
+        if _hooks_dir not in sys.path:
+            sys.path.insert(0, _hooks_dir)
+        import audit_log  # type: ignore
+        audit_log.append_event(audit_log.new_event(
+            tool_name="SessionStart",
+            decision="injected",
+            file_path=str(created),
+            signal_source="plan_scaffold",
+            reason="auto_scaffolded_from_readme",
+            gate_id="plan_grounding",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> int:
     env_value = os.environ.get("RC_BEST_EFFORT_SPEC", "")
     fired = env_value == "1"
     if fired:
         _emit_envelope()
     _emit_receipt(fired=fired, env_value=env_value)
+    try:
+        _maybe_scaffold_plan()
+    except Exception:  # noqa: BLE001
+        pass
     return 0
 
 
