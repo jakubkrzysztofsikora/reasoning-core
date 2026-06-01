@@ -208,7 +208,17 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
     returns a degraded dict matching the bridge contract. On any other non-200
     raises SidecarUnavailable so the caller applies fail-open / fail-closed.
     """
+    # Audit 2026-06-01 §Summary #1: without session_id the sidecar can never
+    # compute Phase-2 dims (session_centroid_drift, project_fan_in,
+    # project_coupling). CLAUDE_SESSION_ID is rarely set in real hook runs;
+    # fall back to the stable per-process id audit_log already uses.
     sid = os.environ.get("CLAUDE_SESSION_ID")
+    if not sid:
+        try:
+            import audit_log as _al  # type: ignore
+            sid = _al._session_id()
+        except Exception:  # noqa: BLE001
+            sid = None
     payload: Dict[str, Any] = {
         "path": file_path,
         "before_src": before_src,
