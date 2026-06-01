@@ -100,9 +100,25 @@ are left alone.
 claude       # or: gemini / copilot / vibe — hooks fire from any of them
 ```
 
-The gate ships in **shadow mode** by default — decisions are logged to
-`~/.local/share/reasoning-core/events/` but not enforced. Watch it for a few
-sessions, then flip `RC_SHADOW_MODE=0` in `.envrc.local`.
+### Defaults (effective 2026-06-01)
+
+- **`RC_SHADOW_MODE=0`** — gate enforces blocking decisions.
+- **`RC_PLAN_GROUNDING=1`** — warn (stderr-only) when an Edit drifts from
+  PLAN.md. Set `=0` to silence, `=2` to hard-block. On first contact with
+  a repo missing PLAN.md a stub is auto-scaffolded from README.md
+  (override with `RC_NO_PLAN_SCAFFOLD=1`).
+- **`RC_BEST_EFFORT_SPEC=1`** — SessionStart hook injects the iter-3
+  spec overlay.
+- **`S2_HARD_CAP_MS=1500`** — hard client-side cap on `/score` POSTs;
+  on timeout the gate falls back to the symbolic layer
+  (`reason="hard_cap_exceeded"`).
+- **`S2_COHERENCE_THRESHOLD=0.09`** — coherence-delta ceiling
+  recalibrated from 0.5 to the empirical 95th percentile (audit
+  2026-06-01 §1.3).
+
+Decisions are always logged to `~/.local/share/reasoning-core/events/`
+regardless of mode. See `docs/CHANGELOG-2026-06-01.md` for migration
+notes.
 
 ## Uninstall
 

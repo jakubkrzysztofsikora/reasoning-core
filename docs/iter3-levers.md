@@ -1,6 +1,15 @@
 # Iter-3 Levers
 
-> **Symmetry guarantee.** All three levers default OFF in `reasoning-core/.envrc`. Setup A's exported environment is bit-identical to iter-2 v3 — the iter-3 lever vars resolve to `0` (no overlay, no gate). Only Setup B opts in by exporting `=1` in its own `eval-setups/B/.envrc`. Reasoning-core ships levers; the eval team turns them on.
+> **Update 2026-06-01 — defaults flipped on.** Per audit
+> [`thoughts/shared/research/2026-06-01-reasoning-core-1000pct-improvements.md`](../thoughts/shared/research/2026-06-01-reasoning-core-1000pct-improvements.md)
+> §B4, `RC_BEST_EFFORT_SPEC` and `RC_PLAN_GROUNDING` now default `=1` in
+> `.envrc:133,141` from this commit forward. The iter-3 symmetry
+> guarantee for historical replays is preserved by the pinned
+> `docs/iter3-frozen-artifacts/eval-setups-A/envrc.txt` which still
+> exports `=0`; replay against that pinned `.envrc`, NOT the current
+> default, to keep A vs B apples-to-apples.
+
+> **Original symmetry guarantee (pre-2026-06-01, historical).** All three levers default OFF in `reasoning-core/.envrc`. Setup A's exported environment is bit-identical to iter-2 v3 — the iter-3 lever vars resolve to `0` (no overlay, no gate). Only Setup B opts in by exporting `=1` in its own `eval-setups/B/.envrc`. Reasoning-core ships levers; the eval team turns them on.
 
 ## Quick Start (adopter — 5 min)
 
