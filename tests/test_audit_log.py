@@ -137,3 +137,30 @@ def test_session_id_falls_back_when_no_env(monkeypatch, tmp_path):
     monkeypatch.setattr(audit_log, "_AUDIT_ROOT", str(tmp_path))
     sid = audit_log._session_id()
     assert sid.startswith("anon-") and len(sid) > 5
+
+
+# ---------------------------------------------------------------------------
+# U4 (2026-06-01): gate_id plumbing
+# ---------------------------------------------------------------------------
+
+def test_gate_id_validation_known(isolated_audit):
+    ev = audit_log.new_event(
+        tool_name="Edit",
+        decision="allowed",
+        gate_id="scorer",
+    )
+    assert ev.get("gate_id") == "scorer"
+
+
+def test_gate_id_validation_unknown_stripped(isolated_audit):
+    ev = audit_log.new_event(
+        tool_name="Edit",
+        decision="allowed",
+        gate_id="not_a_real_gate",
+    )
+    assert "gate_id" not in ev
+
+
+def test_gate_id_omitted_when_none(isolated_audit):
+    ev = audit_log.new_event(tool_name="Edit", decision="allowed")
+    assert "gate_id" not in ev

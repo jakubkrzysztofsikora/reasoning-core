@@ -478,6 +478,7 @@ def main() -> None:
         rc_plan_block=block_env,
         before_bytes=0,
         after_bytes=len(content.encode("utf-8", errors="replace")),
+        gate_id="plan_grounding",
     ))
 
     if will_block:

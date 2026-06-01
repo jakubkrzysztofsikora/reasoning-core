@@ -292,10 +292,28 @@ _AUDIT_RESERVED_KEYS = frozenset({
     "tool_name", "decision", "file_path", "language",
     "ais", "coherence_delta", "regression_detected", "risk_vector",
     "cumulative_drift", "latency_ms", "before_bytes", "after_bytes",
-    "retry_after_block", "reason", "signal_source",
+    "retry_after_block", "reason", "signal_source", "gate_id",
     # Set by audit_log.new_event itself:
     "ts", "decision_id", "session_id", "project_dir",
 })
+
+
+# Audit 2026-06-01 infra-1: map signal_source → gate_id so per-gate
+# ablation queries on the audit log work without hand-mapping. The audit_log
+# module already declares GATE_IDS = {scorer, plan_grounding, rules,
+# calibration, lang_lock, mock_detector, drift_gate}.
+_SIGNAL_SOURCE_TO_GATE_ID: Dict[str, str] = {
+    "ssm": "scorer",
+    "mock_heuristic": "mock_detector",
+    "plan_grounding": "plan_grounding",
+    "lang_lock": "lang_lock",
+    "drift_gate": "drift_gate",
+    "calibration": "calibration",
+    "rules": "rules",
+    "rule_engine": "rules",
+    "prm": "plan_grounding",
+    "symbolic_fallback": "rules",
+}
 
 
 def _emit_audit(
@@ -310,6 +328,7 @@ def _emit_audit(
     reason: str = "",
     retry_after_block: bool = False,
     signal_source: str = "",
+    gate_id: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Best-effort audit emit. Never raises.
@@ -335,6 +354,11 @@ def _emit_audit(
             cumulative_drift = report.get("cumulative_drift")
             human_summary = report.get("human_summary") or ""
         ext = Path(file_path or "").suffix.lstrip(".") or ""
+        effective_signal = signal_source or (
+            "mock_heuristic" if (isinstance(report, dict) and report.get("mock_detector_triggered")) else "ssm"
+        )
+        # Derive gate_id from signal_source if caller didn't pin one explicitly.
+        effective_gate_id = gate_id or _SIGNAL_SOURCE_TO_GATE_ID.get(effective_signal)
         audit_log.append_event(audit_log.new_event(
             tool_name=tool_name,
             decision=decision,
@@ -350,9 +374,8 @@ def _emit_audit(
             after_bytes=len((after_src or "").encode("utf-8", errors="replace")),
             retry_after_block=retry_after_block,
             reason=reason or human_summary,
-            signal_source=signal_source or (
-                "mock_heuristic" if (isinstance(report, dict) and report.get("mock_detector_triggered")) else "ssm"
-            ),
+            signal_source=effective_signal,
+            gate_id=effective_gate_id,
             # Filter reserved keys so a future gate stuffing `reason`/`signal_source`
             # into audit_extra doesn't crash the splat into TypeError (which would
             # then be silently swallowed by the bare except below — losing the audit

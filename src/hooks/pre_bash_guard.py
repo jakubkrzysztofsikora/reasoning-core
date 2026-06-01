@@ -389,6 +389,7 @@ def main() -> None:
             command=cmd[:512],
             latency_ms=int((time.time() - started) * 1000),
             reason=msg.splitlines()[0] if msg else "",
+            gate_id="rules",
         ))
     except Exception:  # noqa: BLE001
         pass
