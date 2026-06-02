@@ -86,7 +86,10 @@ def test_default_budget_reads_env_at_call_time(monkeypatch):
 
 
 def test_score_plan_grounding_inactive_backend(monkeypatch):
-    monkeypatch.delenv("RC_REASONER_BACKEND", raising=False)
+    # Audit 2026-06-02 follow-up: _backend_active() now auto-probes the
+    # sidecar when RC_REASONER_BACKEND is unset. Hard-opt-out keeps the
+    # original semantics for this test.
+    monkeypatch.setenv("RC_REASONER_BACKEND", "off")
     res = gc.score_plan_grounding("claim", "hunk")
     assert res == {"supported": 0, "total": 0}
 

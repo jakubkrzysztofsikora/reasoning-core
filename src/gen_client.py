@@ -89,8 +89,41 @@ def _default_budget_ms() -> int:
     return int(os.environ.get("RC_GEN_BUDGET_MS", "2500"))
 
 
+# Per-process cache for the auto-probe so /v1/models isn't hit on every Edit.
+# Keyed on the resolved URL so flipping RC_GEN_URL invalidates the cache.
+_AUTOPROBE_CACHE: Dict[str, bool] = {}
+
+
 def _backend_active() -> bool:
-    return os.environ.get("RC_REASONER_BACKEND", "").lower() in ("mlx", "llama", "remote")
+    """Audit 2026-06-02 follow-up: auto-detect a running gen sidecar.
+
+    Resolution order:
+      1. RC_REASONER_BACKEND in {off, 0, no, false, disabled} → hard opt-out.
+      2. RC_REASONER_BACKEND in {mlx, llama, remote}           → explicit on.
+      3. else (auto/unset) → probe /v1/models once per (URL) per process.
+         Cached so the gate doesn't pay the probe on every Edit.
+    """
+    raw = os.environ.get("RC_REASONER_BACKEND", "").lower()
+    if raw in ("off", "0", "no", "false", "disabled"):
+        return False
+    if raw in ("mlx", "llama", "remote"):
+        return True
+    url = _default_url()
+    key = f"auto::{url}"
+    cached = _AUTOPROBE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    try:
+        active = health_ok(url)
+    except Exception:  # noqa: BLE001 — never raise into the gate
+        active = False
+    _AUTOPROBE_CACHE[key] = active
+    return active
+
+
+def _reset_autoprobe_cache_for_tests() -> None:
+    """Test hook — clear the per-process probe cache."""
+    _AUTOPROBE_CACHE.clear()
 
 
 def _audit_emit(reason: str, **fields: Any) -> None:
