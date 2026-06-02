@@ -63,14 +63,23 @@ class _SlowStubSidecar:
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", "0") or 0)
-                _ = self.rfile.read(length)
+                try:
+                    _ = self.rfile.read(length)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return
                 if outer.delay_s > 0:
                     time.sleep(outer.delay_s)
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(outer._body)))
-                self.end_headers()
-                self.wfile.write(outer._body)
+                # Client may have abandoned the connection during the sleep
+                # (that is exactly the hard-cap path under test) — suppress
+                # the BrokenPipe traceback so the server thread stays clean.
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(outer._body)))
+                    self.end_headers()
+                    self.wfile.write(outer._body)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return
 
             def do_GET(self):
                 self.send_response(200)
