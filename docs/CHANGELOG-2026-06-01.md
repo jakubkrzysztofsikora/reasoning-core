@@ -82,6 +82,19 @@ This release lands 10 changes from the audit at
 
 ## Follow-up commits
 
+- **`6617611 feat(gen_client): auto-detect gen sidecar via /v1/models probe`**
+  — previously the gen sidecar was wired through but dead because
+  `_backend_active()` required an explicit `RC_REASONER_BACKEND` env flag.
+  Now: if the operator runs `scripts/start-gen-sidecar.sh`, the gate
+  picks it up on the first Edit (probes `/v1/models` once per URL,
+  caches per process). The new resolution order is:
+    1. `RC_REASONER_BACKEND in {off, 0, no, false, disabled}` → hard opt-out.
+    2. `RC_REASONER_BACKEND in {mlx, llama, remote}`           → explicit on.
+    3. unset / auto → probe; if reachable, treat as on.
+  Result: gen-sidecar adoption is now a one-step ("start the sidecar")
+  instead of two-step ("start sidecar + export env vars"). Run with
+  `RC_REASONER_BACKEND=off` to force-disable.
+
 - **`54c7aad fix(_plan_scaffold)`** — the auto-PLAN.md scaffold now
   refuses to write into the reasoning-core repo itself. Found via
   verification: a sibling test invoked `session_start_best_effort.main()`
