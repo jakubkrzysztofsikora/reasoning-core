@@ -63,6 +63,15 @@ def maybe_scaffold_plan(project_dir: str, *, force: bool = False) -> Optional[Pa
     root = Path(project_dir)
     if not root.is_dir():
         return None
+    # Self-protection: never scaffold INTO the reasoning-core repo itself.
+    # The repo's plan lives in docs/PLAN.md; a top-level PLAN.md would land
+    # on every dev's tree and break the iter3-smoke wiring test.
+    try:
+        marker = root / "src" / "hooks" / "_plan_scaffold.py"
+        if marker.resolve() == Path(__file__).resolve():
+            return None
+    except OSError:
+        pass
     plan_path = root / "PLAN.md"
     if plan_path.exists():
         return None
