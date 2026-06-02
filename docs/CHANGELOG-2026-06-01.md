@@ -80,6 +80,49 @@ This release lands 10 changes from the audit at
   excessive `symbolic_fallback` audit events on a host with a cold
   Mamba boot, raise it: `S2_HARD_CAP_MS=5000` in `.envrc.local`.
 
+## Follow-up commits
+
+- **`54c7aad fix(_plan_scaffold)`** — the auto-PLAN.md scaffold now
+  refuses to write into the reasoning-core repo itself. Found via
+  verification: a sibling test invoked `session_start_best_effort.main()`
+  from cwd=repo and the scaffold dropped a stray top-level `PLAN.md`,
+  which broke `test_iter3_wiring_smoke::test_smoke_plan_grounding_audit_on_missing_plan`
+  (the hook walked up and found the stray file instead of seeing
+  "no PLAN.md"). The helper now detects the marker file
+  `src/hooks/_plan_scaffold.py` under `project_dir` and skips when it
+  resolves to itself.
+- **`929789f fix(tests)`** — `tests/test_sidecar_hard_cap.py` stub
+  now suppresses `BrokenPipeError` / `ConnectionResetError` on read
+  and response-write. The hard-cap path under test deliberately
+  abandons the connection at 500ms while the stub is still sleeping;
+  the BrokenPipe trace was harmless but noisy in CI.
+
+## Verification observations (2026-06-02)
+
+Ran the 5 user-visible surfaces directly (not via the test suite):
+
+| Surface | Observation |
+|---|---|
+| `pre_edit_guard` subprocess + slow stub | Hook exits 0 in 0.70s vs the 5s stub delay; stderr emits `sidecar hard cap exceeded (500ms); symbolic fallback engaged`. ✅ |
+| `rc reasoning-efficiency` | 3089-event audit log → composite metric prints with stable schema. ✅ |
+| `scripts/risk_vector_correlation.py` | 3089 events → 8×8 correlation populated, **three redundant pairs surfaced**: `fan_in↔fan_out r=+0.708`, `fan_in↔depth r=+0.876`, `fan_out↔depth r=+0.757`. The Phase-2 dim columns (`session_centroid_drift`, `project_fan_in`, `project_coupling`) are **all-NaN today** because they never fired in historical audit data — they only start firing after U3 (session_id fallback) is in effect. Re-run after 14 days of production traffic to confirm those dims become non-degenerate. |
+| `eval/build_prm_corpus.py` | Real iter-2 corpus → 900 rows, label distribution {-1:360, 0:260, +1:280}. Schema fits the AgentPRM training contract. ✅ |
+| `eval/calibration_corpus.py --include-positives` | Reasoning-core's own 1-month history → 39 positives sourced from 16 distinct `fix_parent:<sha>` commits. One positive sample points at `src/hooks/pre_edit_guard.py` from commit `b633cd1` (this batch's U3 fix) — the corpus is self-feeding. ✅ |
+
+## Known follow-ups
+
+- **Re-run `scripts/risk_vector_correlation.py` ~2026-06-15** to
+  confirm Phase-2 dims start firing in production audit data after
+  U3 + U5 unlock them. If they remain NaN, U5.i (session_id) didn't
+  reach `/score` in real Claude Code sessions and needs a different
+  fix.
+- **Train a PRM on the corpus extractors' output** before flipping
+  `RC_PRM_GATE=1` to default-on. Calibration thresholds will follow
+  from training, not from heuristics.
+- **Re-mine positives quarterly** — `eval/calibration_corpus.py
+  --include-positives` produces growing yield as the repo accumulates
+  more fix/revert commits.
+
 ## Sources
 
 - Audit + improvement plan:

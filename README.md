@@ -117,8 +117,15 @@ claude       # or: gemini / copilot / vibe — hooks fire from any of them
   2026-06-01 §1.3).
 
 Decisions are always logged to `~/.local/share/reasoning-core/events/`
-regardless of mode. See `docs/CHANGELOG-2026-06-01.md` for migration
-notes.
+regardless of mode. See [`docs/CHANGELOG-2026-06-01.md`](docs/CHANGELOG-2026-06-01.md)
+for migration notes and
+[`thoughts/shared/research/2026-06-01-reasoning-core-1000pct-improvements.md`](thoughts/shared/research/2026-06-01-reasoning-core-1000pct-improvements.md)
+§13 for the implementation status, verification observations, and the
+queued follow-ups (PRM training, Phase-2-dim verification, periodic
+positive-label re-mining).
+
+Run `rc reasoning-efficiency` to see today's composite north-star
+score from your local audit log.
 
 ## Uninstall
 
