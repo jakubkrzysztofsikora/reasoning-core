@@ -48,7 +48,22 @@ _PLAN_PATH_PATTERNS = (
 # Default per-file LOC budgets.
 _LOC_BUDGET_DEFAULT = 400
 _LOC_BUDGET_TEST = 200
-_LOC_BUDGET_BLOCK = 800  # severity=block when exceeded under RC_PLAN_BLOCK=1
+
+
+def _loc_budget_block() -> int:
+    """Block-tier LOC budget. 2026-06-02 research §6 raised 800→1200
+    (iter-3 empirics showed 800 was below p75 file size in production
+    work). Override via RC_PLAN_LOC_BLOCK per repo as needed.
+    """
+    try:
+        return int(os.environ.get("RC_PLAN_LOC_BLOCK", "1200"))
+    except ValueError:
+        return 1200
+
+
+# Back-compat constant for tests and reads (mutable lookup goes through the
+# function above so env-override still wins per invocation).
+_LOC_BUDGET_BLOCK = 1200  # severity=block when exceeded under RC_PLAN_BLOCK=1
 
 # Boundary-crossing prose. Word-boundary aware, case-insensitive.
 _BOUNDARY_PROSE_PATTERNS = (
@@ -138,15 +153,18 @@ def _is_test_file(path: str) -> bool:
 
 def _check_per_file_loc(content: str) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
+    block_budget = _loc_budget_block()
     for path, loc in _extract_files_with_loc(content):
         budget = _LOC_BUDGET_TEST if _is_test_file(path) else _LOC_BUDGET_DEFAULT
-        if loc > _LOC_BUDGET_BLOCK:
+        if loc > block_budget:
             warnings.append({
                 "rule_id": "per_file_loc_block",
                 "severity": "block",
                 "file_path": path,
+                "loc": loc,
+                "block_budget": block_budget,
                 "message": (
-                    f"Estimated LOC {loc} exceeds hard block budget {_LOC_BUDGET_BLOCK} "
+                    f"Estimated LOC {loc} exceeds hard block budget {block_budget} "
                     f"for {path}; split this file in the plan."
                 ),
             })
@@ -392,6 +410,46 @@ def _check_framework_pivot(content: str) -> List[Dict[str, Any]]:
         return []
 
 
+def _format_decompose_recipe(blocking: List[Dict[str, Any]]) -> str:
+    """Build an agent-actionable decomposition recipe (research 2026-06-02 §6).
+
+    Returns an empty string when no recognised LOC-block rule fired — the
+    caller still emits the generic block stderr in that case.
+    """
+    if os.environ.get("RC_PLAN_DECOMPOSE", "1") != "1":
+        return ""
+    block_budget = _loc_budget_block()
+    loc_rows: List[Tuple[str, int]] = []
+    for w in blocking:
+        if w.get("rule_id") != "per_file_loc_block":
+            continue
+        fp = w.get("file_path") or "?"
+        loc_val = w.get("loc")
+        if not isinstance(loc_val, int):
+            m = re.search(r"LOC (\d+)", w.get("message", "") or "")
+            loc_val = int(m.group(1)) if m else 0
+        loc_rows.append((fp, loc_val))
+    if not loc_rows:
+        return ""
+    lines = ["[plan-guard] DECOMPOSITION REQUIRED:"]
+    for fp, loc in loc_rows:
+        phases = max(2, (loc // block_budget) + 1)
+        lines.append(
+            f"  - {fp}: ~{loc} LOC → split into {phases} sequential phases "
+            f"of ≤ {block_budget} LOC each."
+        )
+    lines.append(
+        "Rewrite PLAN.md (or use PLAN-phase-1.md / PLAN-phase-2.md). "
+        "Each phase must be net-additive before introducing breaking changes; "
+        "earlier phases land tests that later phases must keep green."
+    )
+    lines.append(
+        "Override (operator only): RC_PLAN_LOC_BLOCK=N to raise the budget, "
+        "or RC_PLAN_DECOMPOSE=0 to silence this hint."
+    )
+    return "\n".join(lines)
+
+
 def _gather_warnings(content: str, project_dir: str) -> List[Dict[str, Any]]:
     warnings: List[Dict[str, Any]] = []
     warnings.extend(_check_per_file_loc(content))
@@ -448,6 +506,15 @@ def main() -> None:
     if warnings:
         lines.append(summary)
 
+    # 2026-06-02 §B: emit a decomposition recipe when LOC-block fires so the
+    # agent has an actionable recovery path instead of just "BLOCK: too big".
+    decompose_recipe = ""
+    if has_block:
+        blocking = [w for w in warnings if w.get("severity") == "block"]
+        decompose_recipe = _format_decompose_recipe(blocking)
+        if decompose_recipe:
+            lines.append(decompose_recipe)
+
     latency_ms = int((time.time() - started) * 1000)
 
     # Decide exit code first; audit always runs.
@@ -468,6 +535,14 @@ def main() -> None:
         "blocked" if will_block else ("degraded" if warnings else "allowed")
     )
 
+    # When the recipe fires alongside a block, tag the signal_source so
+    # downstream tooling (rc reasoning-efficiency, audit triage) can
+    # distinguish "blocked with recovery hint" from "blocked, agent stuck".
+    plan_signal_source = (
+        "plan_decompose_hint" if (will_block and decompose_recipe) else "plan_grounding"
+    )
+    plan_reason = "decomposition_required" if (will_block and decompose_recipe) else ""
+
     audit_log.append_event(audit_log.new_event(
         tool_name=TOOL_NAME,
         decision=decision,
@@ -478,6 +553,8 @@ def main() -> None:
         rc_plan_block=block_env,
         before_bytes=0,
         after_bytes=len(content.encode("utf-8", errors="replace")),
+        signal_source=plan_signal_source,
+        reason=plan_reason,
         gate_id="plan_grounding",
     ))
 
