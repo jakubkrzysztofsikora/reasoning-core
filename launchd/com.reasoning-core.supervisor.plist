@@ -52,7 +52,7 @@
         <key>RC_PROJECT_INDEX</key>
         <string>1</string>
         <key>RC_EMBEDDER</key>
-        <string>codestral-mamba-gguf</string>
+        <string>mamba-130m</string>
         <key>RC_CODESTRAL_GGUF_FILE</key>
         <string>Mamba-Codestral-7B-v0.1-Q4_0.gguf</string>
         <key>RC_GGUF_N_CTX</key>
