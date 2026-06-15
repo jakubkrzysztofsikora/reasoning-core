@@ -57,6 +57,10 @@
         <string>Mamba-Codestral-7B-v0.1-Q4_0.gguf</string>
         <key>RC_GGUF_N_CTX</key>
         <string>2048</string>
+        <key>RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION</key>
+        <string>4f086c08c1e0f07bdc50ca25125dbbf7475d21da</string>
+        <key>RC_GABRIELLARSON_MAMBA_CODESTRAL_7B_V0_1_GGUF_REVISION</key>
+        <string>d9d15af238175d5697f0ca4ca64fcd0d514d2fe6</string>
         <key>HF_HOME</key>
         <string>__HOME__/.cache/huggingface</string>
         <key>S2_HARD_CAP_MS</key>
