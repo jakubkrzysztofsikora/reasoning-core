@@ -208,6 +208,18 @@ def _clear_session_baselines() -> None:
         _BASELINES.clear()
 
 
+def _persist_session_baseline_for_path(session_id: str, path: str, emb: Any) -> None:
+    """Store emb as the baseline for path if no baseline exists yet."""
+    with _BASELINES_LOCK:
+        baselines = _BASELINES.get(session_id)
+        if baselines is None:
+            baselines = {}
+            _BASELINES[session_id] = baselines
+        if path not in baselines and "__corpus__" not in baselines:
+            # Only auto-persist when no explicit /baseline was called
+            baselines[path] = emb
+
+
 # ---------------------------------------------------------------------------
 # Project index integration
 # ---------------------------------------------------------------------------
@@ -940,6 +952,10 @@ def score_change(
     try:
         emb_before = embed(before_tokens)
         emb_after = embed(after_tokens)
+        # Auto-persist baseline on first encounter so cumulative_drift fires
+        # on subsequent edits within the same session.
+        if session_id:
+            _persist_session_baseline_for_path(session_id, path, emb_after)
         cos = _cosine_similarity(emb_before, emb_after)
         raw_l2 = _l2_distance(emb_before, emb_after)
     except BackboneUnavailableError:

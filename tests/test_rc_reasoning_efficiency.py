@@ -71,3 +71,56 @@ def test_main_via_argparse(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "reasoning_efficiency" in out
+
+
+def test_false_drifts_uses_override_links(tmp_path, capsys, monkeypatch):
+    """When override_links.json exists, blocks with matching overrides count as false_drifts."""
+    import time
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path / "events"))
+    # Write synthetic audit events with decision_ids
+    day = _today_dir(tmp_path / "events")
+    decision_id = "dec-deadbeef-001"
+    _write_event(day, decision="blocked", tool_name="Edit", latency_ms=20,
+                 reason="plan_impl_drift", retry_after_block=False,
+                 decision_id=decision_id, file_path="src/foo.py")
+    _write_event(day, decision="allowed_via_override", tool_name="Edit", latency_ms=5,
+                 reason="kill_switch_or_bypass_next", file_path="src/foo.py",
+                 extra={"git_head": "abc12345"})
+    # Write override links file
+    links_dir = Path(os.path.expanduser("~/.local/state/reasoning-core"))
+    links_dir.mkdir(parents=True, exist_ok=True)
+    links_path = links_dir / "override_links.json"
+    links_path.write_text(json.dumps({
+        f"src/foo.py:{int(time.time())}": {
+            "file_path": "src/foo.py",
+            "blocked_decision_id": decision_id,
+            "ts": time.time(),
+        }
+    }))
+    args = argparse.Namespace(audit_root=str(tmp_path / "events"), days=30)
+    rc = rc_cli.cmd_reasoning_efficiency(args)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "false_drifts" in out
+    # Should count the overridden block as false drift
+    for line in out.splitlines():
+        if line.strip().startswith("false_drifts"):
+            assert "1" in line, f"Expected false_drifts=1, got: {line}"
+
+
+def test_override_survival_subcommand(tmp_path, capsys, monkeypatch):
+    """rc override-survival scans audit log for allowed_via_override events with git_head."""
+    monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path))
+    day = _today_dir(tmp_path)
+    _write_event(day, decision="allowed_via_override", tool_name="Edit",
+                 file_path="src/foo.py", reason="kill_switch_or_bypass_next",
+                 extra={"git_head": "abc12345"})
+    _write_event(day, decision="allowed_via_override", tool_name="Edit",
+                 file_path="src/bar.py", reason="magic_comment:skip:test",
+                 extra={"git_head": "def67890"})
+    rc = rc_cli.main(["override-survival", "--audit-root", str(tmp_path), "--days", "30"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "total overrides" in out
+    assert "survival ratio" in out

@@ -74,7 +74,7 @@ def _hard_cap_seconds() -> float:
     and audits reason="symbolic_fallback".
     """
     try:
-        cap_ms = int(os.getenv("S2_HARD_CAP_MS", "1500"))
+        cap_ms = int(os.getenv("S2_HARD_CAP_MS", "3000"))
     except ValueError:
         cap_ms = 1500
     return cap_ms / 1000.0
@@ -459,6 +459,7 @@ def main() -> None:
                 file_path=file_path,
                 started=started,
                 reason="kill_switch_or_bypass_next",
+                extra={"git_head": audit_log._get_git_head()},
             )
             _exit(0)
     if _magic_comments is not None:
@@ -497,6 +498,7 @@ def main() -> None:
                 file_path=file_path,
                 started=started,
                 reason=f"magic_comment:{directive_before.name}:{directive_before.reason}",
+                extra={"git_head": audit_log._get_git_head()},
             )
             _exit(0)
 

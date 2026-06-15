@@ -188,6 +188,30 @@ def cmd_unskip_file(args: argparse.Namespace) -> int:
 _REPO_IDIOM_DELTA_NORM = 0.43
 
 
+
+def _load_override_links() -> dict[str, set[str]]:
+    """Load override_links.json, return {file_path: {blocked_decision_id, ...}}."""
+    import json as _json
+    state_dir = os.path.expanduser("~/.local/state/reasoning-core")
+    path = os.path.join(state_dir, "override_links.json")
+    try:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                links = _json.loads(fh.read() or "{}")
+        else:
+            return {}
+    except (OSError, ValueError):
+        return {}
+    result: dict[str, set[str]] = {}
+    for v in links.values():
+        if isinstance(v, dict):
+            fp = v.get("file_path")
+            bid = v.get("blocked_decision_id")
+            if fp and bid:
+                result.setdefault(fp, set()).add(bid)
+    return result
+
+
 def _walk_audit_events(audit_root: Path, days: int):
     import datetime as _dt
     import gzip
@@ -222,6 +246,7 @@ def _walk_audit_events(audit_root: Path, days: int):
 def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
     """Audit 2026-06-01 §7: composite north-star metric from the audit log."""
     audit_root = Path(args.audit_root or _audit_root())
+    override_links = _load_override_links()
     drift_caught = 0
     false_drifts = 0
     total_latency_ms = 0
@@ -236,9 +261,14 @@ def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
         decision = ev.get("decision") or ""
         if reason == "plan_impl_drift" and decision in ("blocked", "warn", "shadow_blocked"):
             drift_caught += 1
+            # Check retry_after_block proxy
             if ev.get("retry_after_block") is True and decision == "blocked":
-                # Proxy for false-drift: agent retried and the retry was allowed.
                 false_drifts += 1
+            # Check override_links: if block was later overridden, count as false
+            elif ev.get("file_path") and ev.get("decision_id"):
+                fp_overrides = override_links.get(ev["file_path"], set())
+                if ev["decision_id"] in fp_overrides:
+                    false_drifts += 1
         if isinstance(reason, str) and reason.startswith("sidecar_unavailable"):
             sidecar_unavailable += 1
 
@@ -264,6 +294,71 @@ def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_override_survival(args: argparse.Namespace) -> int:
+    '''Compute override survival ratio from audit log git_head fields.'''
+    audit_root = Path(args.audit_root or _audit_root())
+    survived = 0
+    reverted = 0
+    unknown = 0
+    import subprocess
+
+    repo_root = None
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            repo_root = Path(r.stdout.strip())
+    except Exception:
+        pass
+
+    for ev in _walk_audit_events(audit_root, args.days):
+        if ev.get("decision") != "allowed_via_override":
+            continue
+        extra = ev.get("extra")
+        git_head = extra.get("git_head") if isinstance(extra, dict) else ev.get("git_head")
+        fp = ev.get("file_path")
+        if not git_head or not fp:
+            unknown += 1
+            continue
+        if repo_root:
+            try:
+                r = subprocess.run(
+                    ["git", "show", f"{git_head}:{fp}"],
+                    capture_output=True, text=True, timeout=5, cwd=str(repo_root),
+                )
+                content_at_override = r.stdout if r.returncode == 0 else None
+            except Exception:
+                content_at_override = None
+            fpath = repo_root / fp
+            try:
+                content_current = fpath.read_text(encoding="utf-8", errors="replace") if fpath.is_file() else None
+            except OSError:
+                content_current = None
+            if content_at_override is not None and content_current is not None:
+                if content_at_override == content_current:
+                    survived += 1
+                else:
+                    reverted += 1
+                continue
+        unknown += 1
+
+    total = survived + reverted + unknown
+    if total == 0:
+        print(f"no override events with git_head in last {args.days} days under {audit_root}")
+        return 0
+    _print_kv("total overrides", str(total))
+    _print_kv("survived (unchanged)", str(survived))
+    _print_kv("reverted (changed)", str(reverted))
+    _print_kv("unknown", str(unknown))
+    _print_kv("survival ratio", f"{survived / max(1, total):.2%}")
+    _print_kv("reverted ratio", f"{reverted / max(1, total):.2%}")
+    return 0
+
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -285,6 +380,13 @@ def main(argv: list | None = None) -> int:
     re_cmd.add_argument("--days", type=int, default=7)
     re_cmd.add_argument("--audit-root", default=None)
     re_cmd.set_defaults(func=cmd_reasoning_efficiency)
+    os_cmd = sub.add_parser(
+        "override-survival",
+        help="override survival ratio from audit log (2026-06-15)",
+    )
+    os_cmd.add_argument("--days", type=int, default=30)
+    os_cmd.add_argument("--audit-root", default=None)
+    os_cmd.set_defaults(func=cmd_override_survival)
     args = p.parse_args(argv)
     return args.func(args)
 

@@ -331,6 +331,53 @@ def is_retry_after_block(file_path: str, *, now: Optional[float] = None) -> bool
         return False
 
 
+
+
+def _get_git_head() -> Optional[str]:
+    """Best-effort git HEAD hash capture. Returns None if not in a git repo."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()[:8]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def record_override(file_path: str, blocked_decision_id: str, *, now: Optional[float] = None) -> None:
+    """Persist override link: override at file_path reversed block decision_id."""
+    if not file_path or not blocked_decision_id:
+        return
+    import time as _time, json as _json2
+
+    now_ts = now if now is not None else _time.time()
+    state_dir = _os.path.expanduser("~/.local/state/reasoning-core")
+    try:
+        _os.makedirs(state_dir, exist_ok=True)
+    except OSError:
+        return
+    path = _os.path.join(state_dir, "override_links.json")
+    links: dict = {}
+    try:
+        if _os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                links = _json2.loads(fh.read() or "{}")
+    except (OSError, ValueError):
+        links = {}
+    key = f"{file_path}:{int(now_ts)}"
+    links[key] = {"file_path": file_path, "blocked_decision_id": blocked_decision_id, "ts": now_ts}
+    cutoff = now_ts - 86400 * 7
+    links = {k: v for k, v in links.items() if isinstance(v, dict) and v.get("ts", 0) >= cutoff}
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_json2.dumps(links))
+    except OSError:
+        pass
+
 def record_block(file_path: str, *, now: Optional[float] = None) -> None:
     """Persist ``file_path`` as recently blocked so the next call can detect retry."""
     if not file_path:

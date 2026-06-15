@@ -11,7 +11,9 @@
 </p>
 
 <p align="center">
-  Stop the agent vibecoding files outside its plan. Save your AI tokens. 100% locally.
+  Stop the agent vibecoding files outside its plan. Save your AI tokens.
+  <br/>
+  <strong>100% local — loopback only, zero telemetry, your code never leaves your machine.</strong>
 </p>
 
 <p align="center">
@@ -64,7 +66,7 @@ On an 8-task eval with 3 runs each, blind-graded by 3 cross-vendor judges:
 - **−8.2% tokens averaged across tasks** — best single-task saving **−29%** on PR review.
 - **Plan quality 3.62 → 3.94** (1–5 BARS scale) — structured, sound plans on the first run.
 - **Stays inside promised files +0.23, uses your repo's existing patterns +0.43** — fewer "no, use the existing util" loops.
-- **100% local** — default 130M-param Mamba SSM, ~200MB RAM, sits next to `claude`. No telemetry, no cloud relay.
+- **100% local** — sidecars bind `127.0.0.1` only (loopback, refuses external NIC). Default 130M-param Mamba SSM, ~200MB RAM, sits next to `claude`. No telemetry, no cloud relay — your code stays on your laptop ([engineers asked for exactly this](thoughts/shared/research/2026-06-02-community-pain-points.md#5-demand-for-local--no-cloud-enforcement)).
 - **Repo-scoped** via direnv — leaves every other folder on your machine untouched.
 
 Costs: **+98s wall-clock per run** (the gate plans before editing), and code legibility was a tie.
@@ -80,11 +82,11 @@ Full numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 git clone https://github.com/jakubkrzysztofsikora/reasoning-core.git
 cd reasoning-core
 
-# 2. One-time bootstrap (venv + model weights + sidecar)
+# 2. One-time bootstrap (venv + model weights + supervised stack)
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 huggingface-cli download state-spaces/mamba-130m-hf
-bash scripts/start-sidecar.sh           # ~30s first boot; serves at 127.0.0.1:8765
+bash scripts/install-supervisor-launchagent.sh   # daemonized: S2 (:8765) + gen (:8766), broker (:8764)
 
 # 3. Enable it in any repo you want gated
 cd /path/to/your-repo
@@ -109,7 +111,7 @@ claude       # or: gemini / copilot / vibe — hooks fire from any of them
   (override with `RC_NO_PLAN_SCAFFOLD=1`).
 - **`RC_BEST_EFFORT_SPEC=1`** — SessionStart hook injects the iter-3
   spec overlay.
-- **`S2_HARD_CAP_MS=1500`** — hard client-side cap on `/score` POSTs;
+- **`S2_HARD_CAP_MS=3000`** — hard client-side cap on `/score` POSTs;
   on timeout the gate falls back to the symbolic layer
   (`reason="hard_cap_exceeded"`).
 - **`S2_COHERENCE_THRESHOLD=0.09`** — coherence-delta ceiling
@@ -117,7 +119,9 @@ claude       # or: gemini / copilot / vibe — hooks fire from any of them
   2026-06-01 §1.3).
 
 Decisions are always logged to `~/.local/share/reasoning-core/events/`
-regardless of mode. See [`docs/CHANGELOG-2026-06-01.md`](docs/CHANGELOG-2026-06-01.md)
+regardless of mode. See [`docs/CHANGELOG-2026-06-02.md`](docs/CHANGELOG-2026-06-02.md)
+(memory-watchdog fix + supervised-stack defaults) and
+[`docs/CHANGELOG-2026-06-01.md`](docs/CHANGELOG-2026-06-01.md)
 for migration notes and
 [`thoughts/shared/research/2026-06-01-reasoning-core-1000pct-improvements.md`](thoughts/shared/research/2026-06-01-reasoning-core-1000pct-improvements.md)
 §13 for the implementation status, verification observations, and the
@@ -187,6 +191,8 @@ single-shot bypasses:
 rc status                   # sidecar health + threshold posture
 rc explain                  # why the last edit was blocked
 rc bypass-next              # arm one bypass for the next Edit/Write
+rc reasoning-efficiency     # composite north-star metric from audit log
+rc override-survival        # how many operator overrides survived to git HEAD
 ```
 
 ---
