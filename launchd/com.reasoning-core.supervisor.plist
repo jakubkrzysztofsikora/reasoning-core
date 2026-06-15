@@ -52,7 +52,7 @@
         <key>RC_PROJECT_INDEX</key>
         <string>1</string>
         <key>RC_EMBEDDER</key>
-        <string>mamba-130m</string>
+        <string>codestral-mamba-gguf</string>
         <key>RC_CODESTRAL_GGUF_FILE</key>
         <string>Mamba-Codestral-7B-v0.1-Q4_0.gguf</string>
         <key>RC_GGUF_N_CTX</key>
@@ -63,6 +63,14 @@
         <string>d9d15af238175d5697f0ca4ca64fcd0d514d2fe6</string>
         <key>HF_HOME</key>
         <string>__HOME__/.cache/huggingface</string>
+        <key>SSL_CERT_FILE</key>
+        <string>__HOME__/.cache/reasoning-core/ca-bundle.pem</string>
+        <key>REQUESTS_CA_BUNDLE</key>
+        <string>__HOME__/.cache/reasoning-core/ca-bundle.pem</string>
+        <key>CURL_CA_BUNDLE</key>
+        <string>__HOME__/.cache/reasoning-core/ca-bundle.pem</string>
+        <key>S2_HEALTH_GRACE_S</key>
+        <string>600</string>
         <key>S2_HARD_CAP_MS</key>
         <string>3000</string>
     </dict>

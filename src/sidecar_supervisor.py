@@ -42,7 +42,7 @@ from _supervisor_recalibrate import recalibrate_watcher
 _LOG_ROTATE_BYTES = 100 * 1024 * 1024
 _HEALTH_TIMEOUT_S = 3.0
 _FAILURE_THRESHOLD = 5
-_HEALTH_GRACE_S = 30.0
+_HEALTH_GRACE_S = float(os.environ.get("S2_HEALTH_GRACE_S", "30.0"))
 _BROKER_PORT = int(os.environ.get("RC_BROKER_PORT", "8764"))
 
 
@@ -186,7 +186,11 @@ def _build_children(repo_root: Path) -> List[_Child]:
         # returns 200 once the model is loaded. Works on llama_cpp.server too.
         children.append(_Child(
             name="gen",
-            cmd=["bash", str(repo_root / "scripts" / "start-gen-sidecar.sh")],
+            # Route through gen_sidecar_launcher so MLX / Metal allocations
+            # are watchdogged against S2_GEN_MEM_LIMIT_GB (falls back to
+            # S2_MEM_LIMIT_GB). Shell script kept as a manual entry point but
+            # no longer the supervisor-managed path. 2026-06-02 incident fix.
+            cmd=[sys.executable, "-m", "gen_sidecar_launcher"],
             health_url=f"http://127.0.0.1:{gen_port}/v1/models",
         ))
     return children
