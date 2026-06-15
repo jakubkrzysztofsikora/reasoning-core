@@ -27,8 +27,8 @@ fi
 
 mkdir -p "${DEST_DIR}"
 
-# Substitute __REPO__ placeholder with the actual repo path.
-sed "s|__REPO__|${REPO}|g" "${SRC_PLIST}" > "${DEST_PLIST}"
+# Substitute placeholders with actual values.
+sed -e "s|__REPO__|${REPO}|g" -e "s|__HOME__|${HOME}|g" "${SRC_PLIST}" > "${DEST_PLIST}"
 echo "installed: ${DEST_PLIST}"
 
 # Validate the rendered plist.

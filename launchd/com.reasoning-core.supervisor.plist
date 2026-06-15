@@ -41,8 +41,26 @@
         <string>__REPO__</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PYTHONPATH</key>
+        <string>__REPO__:__REPO__/src</string>
         <key>RC_REASONER_BACKEND</key>
-        <string></string>
+        <string>mlx</string>
+        <key>S2_MEM_LIMIT_GB</key>
+        <string>25</string>
+        <key>S2_GEN_MEM_LIMIT_GB</key>
+        <string>25</string>
+        <key>RC_PROJECT_INDEX</key>
+        <string>1</string>
+        <key>RC_EMBEDDER</key>
+        <string>codestral-mamba-gguf</string>
+        <key>RC_CODESTRAL_GGUF_FILE</key>
+        <string>Mamba-Codestral-7B-v0.1-Q4_0.gguf</string>
+        <key>RC_GGUF_N_CTX</key>
+        <string>2048</string>
+        <key>HF_HOME</key>
+        <string>__HOME__/.cache/huggingface</string>
+        <key>S2_HARD_CAP_MS</key>
+        <string>3000</string>
     </dict>
 
     <key>ProcessType</key>
