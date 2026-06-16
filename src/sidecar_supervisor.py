@@ -41,7 +41,7 @@ from _supervisor_recalibrate import recalibrate_watcher
 
 _LOG_ROTATE_BYTES = 100 * 1024 * 1024
 _HEALTH_TIMEOUT_S = 3.0
-_FAILURE_THRESHOLD = 5
+_FAILURE_THRESHOLD = int(os.environ.get("S2_FAILURE_THRESHOLD", "5"))
 _HEALTH_GRACE_S = float(os.environ.get("S2_HEALTH_GRACE_S", "30.0"))
 _BROKER_PORT = int(os.environ.get("RC_BROKER_PORT", "8764"))
 
