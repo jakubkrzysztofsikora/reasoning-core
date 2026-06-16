@@ -34,8 +34,10 @@ from pathlib import Path
 
 _HOST_ENVS = {
     "claude": ("CLAUDE_PROJECT_DIR", "CLAUDE_SESSION_ID"),
-    "gemini": ("GEMINI_PROJECT_DIR", "GEMINI_SESSION_ID"),
+    "codex": ("CODEX_PROJECT_DIR", "CODEX_SESSION_ID"),
     "copilot": ("COPILOT_PROJECT_DIR", "COPILOT_SESSION_ID"),
+    "gemini": ("GEMINI_PROJECT_DIR", "GEMINI_SESSION_ID"),
+    "kimi": ("KIMI_PROJECT_DIR", "KIMI_SESSION_ID"),
     "vibe": ("VIBE_PROJECT_DIR", "VIBE_SESSION_ID"),
 }
 

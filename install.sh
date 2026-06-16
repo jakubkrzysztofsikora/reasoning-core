@@ -236,6 +236,26 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# 3b. .codex/settings.json
+# ---------------------------------------------------------------------------
+install_codex() {
+  local template="$RC_REPO/.codex/settings.json.template"
+  if [[ ! -f "$template" ]]; then
+    warn "codex template missing at $template — skipping"
+    return
+  fi
+  mkdir -p .codex
+  local target=".codex/settings.json"
+  if [[ ! -e "$target" ]]; then
+    render_template "$template" "$target"
+    ok "wrote $target"
+    record "$target"
+  else
+    skip "$target already exists"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 4. .gemini/settings.json
 # ---------------------------------------------------------------------------
 install_gemini() {
@@ -327,6 +347,26 @@ PYEOF
 }
 
 # ---------------------------------------------------------------------------
+# 5b. .kimi/settings.json
+# ---------------------------------------------------------------------------
+install_kimi() {
+  local template="$RC_REPO/.kimi/settings.json.template"
+  if [[ ! -f "$template" ]]; then
+    warn "kimi template missing at $template — skipping"
+    return
+  fi
+  mkdir -p .kimi
+  local target=".kimi/settings.json"
+  if [[ ! -e "$target" ]]; then
+    render_template "$template" "$target"
+    ok "wrote $target"
+    record "$target"
+  else
+    skip "$target already exists"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 6. .vibe/* + ~/.vibe/trusted_folders.toml entry
 # ---------------------------------------------------------------------------
 install_vibe() {
@@ -407,7 +447,9 @@ update_gitignore() {
 # >>> reasoning-core >>>
 .envrc.local
 .claude/settings.local.json
+.codex/settings.json
 .gemini/settings.json
+.kimi/settings.json
 .vibe/config.toml
 .reasoning-core/
 # <<< reasoning-core <<<
@@ -437,14 +479,16 @@ printf '  RC_REPO     = %s\n' "$RC_REPO"
 printf '  TARGET_REPO = %s\n\n' "$TARGET_REPO"
 
 if [[ ! -x "$RC_PYTHON" ]]; then
-  warn "no venv at $RC_PYTHON yet — finish step 'Next' below before launching claude/gemini/copilot/vibe"
+  warn "no venv at $RC_PYTHON yet — finish step 'Next' below before launching claude/codex/gemini/copilot/kimi/vibe"
 fi
 
 ensure_direnv
 install_envrc
 install_claude
+install_codex
 install_gemini
 install_copilot
+install_kimi
 install_vibe
 update_gitignore
 direnv_allow

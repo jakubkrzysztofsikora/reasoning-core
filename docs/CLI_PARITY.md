@@ -1,24 +1,23 @@
 # CLI parity — reasoning-core
 
-Per-host integration of the System 2 sidecar across Claude Code, Gemini
-CLI, GitHub Copilot CLI, and Mistral Vibe CLI. Verified hands-on
-2026-05-08.
+Per-host integration of the System 2 sidecar across Claude Code, OpenAI
+Codex CLI, Gemini CLI, GitHub Copilot CLI, Moonshot Kimi CLI, and Mistral
+Vibe CLI. Verified hands-on 2026-05-08 (Codex + Kimi added 2026-06-15).
 
 ## Parity matrix
 
-| Surface | Claude Code | Gemini CLI v0.37.1 | Copilot CLI v1.0.29 | Vibe v2.9.4 |
-|---|---|---|---|---|
-| **PreToolUse hook** | ✓ exit-2 | ✓ Claude-compat (`gemini hooks migrate`) | ✗ no hook subcommand | ✗ post-agent-turn only |
-| **PostToolUse hook** | ✓ | ✓ | ✗ | ✓ post_agent_turn |
-| **SessionStart** | ✓ | ✓ | ✗ | ✗ |
-| **UserPromptSubmit** | ✓ | ✓ | ✗ | ✗ |
-| **PreCompact** | ✓ | ✓ | ✗ | ✗ |
-| **MCP server (stdio)** | ✓ `.claude/settings.json` | ✓ `.gemini/settings.json` | ✓ `~/.copilot/mcp-config.json` (user-level only) | ✓ `.vibe/config.toml` `[[mcp_servers]]` |
-| **Skills** | ✓ `.claude/skills/` | ✓ `.gemini/skills/` (`gemini skills`) | ✓ `.copilot/skills/` | ✓ `.vibe/skills/` |
-| **Context file** | `CLAUDE.md` | `GEMINI.md` | `.copilot/copilot-instructions.md` | `.vibe/AGENTS.md` |
-| **Headless trust bypass** | (built-in) | `--yolo` / `--approval-mode yolo` | `--allow-all-tools` / `COPILOT_ALLOW_ALL=1` | `--trust` (per-invocation) / `--prompt` |
-| **Runtime gate path** | hooks | hooks | `gate_edit` MCP tool | `gate_edit` MCP tool + AGENTS.md instruction |
-| **Audit visibility** | full | full | post-MCP-call audit row | post-MCP-call + post-agent-turn audit |
+| Surface | Claude Code | Codex CLI | Gemini CLI | Copilot CLI | Kimi CLI | Vibe |
+|---|---|---|---|---|---|---|---|
+| **PreToolUse hook** | ✓ exit-2 | ✓ Claude-compat | ✓ Claude-compat | ✗ | ✓ Claude-compat | ✗ |
+| **PostToolUse hook** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| **SessionStart** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
+| **UserPromptSubmit** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
+| **PreCompact** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
+| **MCP server** | ✓ `.claude/` | ✓ `.codex/` | ✓ `.gemini/` | ✓ `~/.copilot/` | ✓ `.kimi/` | ✓ `.vibe/` |
+| **Skills** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Context file** | `CLAUDE.md` | `CODEX.md` | `GEMINI.md` | `copilot-instructions.md` | `KIMI.md` | `AGENTS.md` |
+| **Gate path** | hooks | hooks | hooks | MCP tool | hooks | MCP tool |
+| **Audit visibility** | full | full | full | post-MCP-call | full | post-MCP-call |
 
 ## Install
 
@@ -37,6 +36,12 @@ bash $RC_REPO/scripts/enable-in-repo-gemini.sh
 
 # Copilot
 bash $RC_REPO/scripts/enable-in-repo-copilot.sh
+
+# Codex
+bash $RC_REPO/scripts/enable-in-repo-codex.sh
+
+# Kimi
+bash $RC_REPO/scripts/enable-in-repo-kimi.sh
 
 # Vibe
 bash $RC_REPO/scripts/enable-in-repo-vibe.sh
