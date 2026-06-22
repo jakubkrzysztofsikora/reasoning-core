@@ -78,6 +78,10 @@ metric and would silently disable the gate.
 | `RC_SHADOW_MODE` | `1` | Log decisions, do not enforce |
 | `RC_PLAN_BLOCK` | `1` | Plan-guard warnings escalate to hard block |
 | `RC_PLAN_QUALITY` | `0` | Enable plan-quality CGS gate |
+| `RC_PLAN_NOVELTY_RATIO` | `1.8` | Novelty-drift cutoff: flag a plan that sits this many × farther from the recent-plan cluster than the typical peer. Raise to tolerate broader scope, lower to police drift more tightly. |
+| `RC_PLAN_NOVELTY_MIN_SPREAD` | `0.05` | Floor for the novelty-drift denominator, as a fraction of the peers' vector scale. Stops a near-duplicate peer cluster from exploding the ratio and false-firing on a barely-changed plan. |
+| `RC_PLAN_NOVELTY_MUZZLE` | `1` | Redirect the backbone's fd-level stderr (e.g. the transformers/Mamba "fast path not available" warning) to `/dev/null` during embedding, so library noise is not surfaced as a hook error. Set `0` to debug the backbone. |
+| `RC_PLAN_NOVELTY_CACHE` | `1` | Content-addressed disk cache for peer-plan embeddings (avoids re-running the SSM forward on unchanged prior plans every Write). Set `0` to always re-embed. |
 | `RC_MOCK_DETECTOR` | `1` | Reject placeholder code patterns |
 | `RC_LANG_LOCK` | `1` | Reject edits introducing un-fingerprinted languages |
 | `RC_LANG_ALLOW` | _unset_ | CSV of additional languages to permit |
@@ -180,6 +184,33 @@ Project-scoped via the per-repo `.envrc`. All default OFF.
 | `RC_RUN_DIR` | _unset_ | Override for PLAN.md resolution; precedence: `RC_RUN_DIR` > `CLAUDE_PROJECT_DIR` > cwd |
 
 See [`iter3-levers.md`](iter3-levers.md) for the full design.
+
+## Sidecar memory caps
+
+The S2 sidecar and the gen sidecar each run a memory watchdog that polls
+process memory and exits 75 (or SIGKILLs the gen child) when the cap is
+exceeded. On macOS the reader is
+`proc_pid_rusage(RUSAGE_INFO_V4).ri_phys_footprint` — the same value
+Activity Monitor shows, including MLX / Metal / IOSurface unified-memory
+allocations. The earlier `ru_maxrss` reader missed those entirely
+(2026-06-02 incident: gen sidecar hit 37 GB under a "32 GB" cap because
+the cap counted only CPU resident pages).
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `S2_MEM_LIMIT_GB` | `16` (`25` via plist) | S2 sidecar watchdog cap |
+| `S2_GEN_MEM_LIMIT_GB` | `S2_MEM_LIMIT_GB` | gen sidecar watchdog cap (independent) |
+| `S2_GEN_MEM_POLL_S` | `5.0` | gen watchdog poll interval seconds |
+| `S2_SINGLE_INSTANCE` | `1` | S2 sidecar flock (`0` disables) |
+| `S2_GEN_SINGLE_INSTANCE` | `1` | gen sidecar flock (`0` disables) |
+| `S2_BACKBONE_FAIL_COOLDOWN_S` | `60` | Negative cache for failed backbone loads — prevents repeated multi-GB GGUF mmaps under request load |
+
+Set in `launchd/com.reasoning-core.supervisor.plist` under
+`EnvironmentVariables` so launchd-spawned children inherit them
+(`.envrc` is shell-only). The supervisor's child-env allowlist
+(`src/_supervisor_env.py`) forwards `S2_MEM_LIMIT_GB`,
+`S2_GEN_MEM_LIMIT_GB`, `S2_GEN_MEM_POLL_S`, and the single-instance
+flags to children.
 
 ## Multi-host
 

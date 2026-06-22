@@ -216,19 +216,155 @@ def _check_boundary_prose(content: str) -> List[Dict[str, Any]]:
     return out
 
 
+import contextlib  # noqa: E402
+
+
+@contextlib.contextmanager
+def _muzzle_stderr():
+    """Redirect the C-level stderr fd to /dev/null for the duration.
+
+    The novelty path imports ``transformers`` which prints model-load
+    warnings (e.g. Mamba "fast path is not available, falling back to the
+    sequential implementation") straight to fd 2. In the harness build this
+    hook runs under, non-empty stderr on an exit-0 PreToolUse hook is surfaced
+    to the agent as a "PreToolUse:Write hook error" — so an advisory
+    (block=False) reads as a tool failure and agents try to work around it.
+    (Per the documented Claude Code contract the *decision* keys on exit code,
+    not stderr; but observed harness behavior surfaces exit-0 stderr, which is
+    what this muzzle defends against. Muzzling at the fd level — not just
+    ``logging`` / ``warnings`` — is the only thing that also catches
+    C-extension prints.)
+
+    Disable with RC_PLAN_NOVELTY_MUZZLE=0 when debugging the backbone itself.
+
+    fd hygiene: ``saved_fd`` and ``devnull_fd`` are acquired and released so
+    that a failure at any single os.* call cannot (a) leak an fd or (b) leave
+    fd 2 pointing at /dev/null for the rest of the process — which would
+    silently swallow the verdict banner this hook emits later.
+    """
+    if os.environ.get("RC_PLAN_NOVELTY_MUZZLE", "1") != "1":
+        yield
+        return
+    sys.stderr.flush()
+    saved_fd = os.dup(2)
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    except OSError:
+        # Could not open /dev/null — run un-muzzled rather than leak saved_fd.
+        os.close(saved_fd)
+        yield
+        return
+    try:
+        os.dup2(devnull_fd, 2)
+        yield
+    finally:
+        # Restore fd 2 FIRST and in its own guard, so even if dup2 raises we
+        # still attempt to close both fds rather than leaking them.
+        try:
+            sys.stderr.flush()
+            os.dup2(saved_fd, 2)
+        finally:
+            os.close(devnull_fd)
+            os.close(saved_fd)
+
+
 def _embed_safe(text: str):
-    """Return a torch tensor or None if backbone unavailable."""
+    """Return a torch tensor or None if backbone unavailable.
+
+    Wrapped in ``_muzzle_stderr`` so library load warnings never leak onto
+    the hook's stderr channel (which the harness reads as a tool error). Any
+    failure — BackboneUnavailableError, import error, OOM, native abort caught
+    as a Python exception — collapses to the same advisory: novelty scoring is
+    skipped this run.
+    """
     try:
-        # Local import — keep the hook fast on the non-novelty path.
-        from src.ssm_backbone import BackboneUnavailableError, embed  # type: ignore
-    except Exception:
-        return None, "novelty_unavailable"
-    try:
-        return embed(text), None
-    except BackboneUnavailableError:
-        return None, "novelty_unavailable"
+        with _muzzle_stderr():
+            # Local import — keep the hook fast on the non-novelty path.
+            from src.ssm_backbone import embed  # type: ignore
+            return embed(text), None
     except Exception:  # noqa: BLE001
         return None, "novelty_unavailable"
+
+
+def _embed_cache_path() -> "Path":
+    """Disk location for the content-addressed peer-embedding cache."""
+    return (
+        Path.home() / ".local" / "state" / "reasoning-core" / "plan_embed_cache.npz"
+    )
+
+
+# In-process memo so repeated peers within one invocation hit RAM, not disk.
+_EMBED_MEMO: Dict[str, Any] = {}
+
+
+def _embed_cached(text: str):
+    """``_embed_safe`` with a content-addressed cache (key = sha1(text)).
+
+    Motivation: ``_check_novelty`` embeds up to 8 peer plans on every plan
+    Write, and ``ssm_backbone.embed`` runs a real SSM forward each time with
+    no internal caching — so the same prior plans were re-embedded on every
+    save. An individual plan's embedding never changes, so we key on the
+    content hash rather than the recency set (the set rotates on every Write;
+    the per-plan vector does not). Mirrors ``_ood_detector``'s disk cache but
+    at per-text granularity.
+
+    Returns the same ``(vec, err)`` tuple as ``_embed_safe``. Disable with
+    RC_PLAN_NOVELTY_CACHE=0 (tests set this to avoid cross-case contamination
+    from the persistent store).
+    """
+    if os.environ.get("RC_PLAN_NOVELTY_CACHE", "1") != "1":
+        return _embed_safe(text)
+    import hashlib
+
+    key = hashlib.sha1(text.encode("utf-8", errors="replace")).hexdigest()
+    if key in _EMBED_MEMO:
+        return _EMBED_MEMO[key], None
+    # Disk lookup.
+    try:
+        import numpy as np
+        import torch
+
+        cache_file = _embed_cache_path()
+        if cache_file.exists():
+            data = np.load(cache_file, allow_pickle=False)
+            if key in data.files:
+                vec = torch.from_numpy(data[key])
+                _EMBED_MEMO[key] = vec
+                return vec, None
+    except Exception:  # noqa: BLE001
+        pass  # corrupt/missing cache → fall through to a live embed
+    vec, err = _embed_safe(text)
+    if vec is None:
+        return None, err
+    _EMBED_MEMO[key] = vec
+    _persist_embed(key, vec)
+    return vec, None
+
+
+def _persist_embed(key: str, vec: Any) -> None:
+    """Merge one embedding into the on-disk cache, capped to bound growth."""
+    _CACHE_CAP = 256
+    try:
+        import numpy as np
+
+        cache_file = _embed_cache_path()
+        existing: Dict[str, Any] = {}
+        if cache_file.exists():
+            try:
+                data = np.load(cache_file, allow_pickle=False)
+                existing = {k: data[k] for k in data.files}
+            except Exception:  # noqa: BLE001
+                existing = {}
+        arr = vec.detach().cpu().numpy() if hasattr(vec, "detach") else np.asarray(vec)
+        existing[key] = arr
+        # Bound size: keep the most-recently-inserted CACHE_CAP entries.
+        if len(existing) > _CACHE_CAP:
+            for stale_key in list(existing.keys())[: len(existing) - _CACHE_CAP]:
+                existing.pop(stale_key, None)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(cache_file, **existing)
+    except Exception:  # noqa: BLE001
+        pass  # caching is best-effort; never fail the gate over it
 
 
 def _gather_recent_plans(project_dir: str, limit: int = 5) -> List[str]:
@@ -255,8 +391,55 @@ def _gather_recent_plans(project_dir: str, limit: int = 5) -> List[str]:
     return out
 
 
+def _novelty_ratio_threshold() -> float:
+    """Drift ratio cutoff: flag when the new plan sits this many times farther
+    from the recent-plan centroid than recent plans typically do. Default 1.8
+    (≈80% farther than the median peer). Override per-repo via
+    RC_PLAN_NOVELTY_RATIO; raise it to tolerate broader scope, lower it to
+    police drift more tightly.
+    """
+    try:
+        return float(os.environ.get("RC_PLAN_NOVELTY_RATIO", "1.8"))
+    except ValueError:
+        return 1.8
+
+
+def _novelty_min_spread_frac() -> float:
+    """Floor for the novelty-drift denominator, as a fraction of the peers'
+    own vector scale. Prevents a near-duplicate peer cluster (median spread
+    → 0) from exploding the distance ratio and false-firing on a barely
+    different plan. Default 0.05 (5% of typical embedding magnitude). Override
+    via RC_PLAN_NOVELTY_MIN_SPREAD.
+    """
+    try:
+        return float(os.environ.get("RC_PLAN_NOVELTY_MIN_SPREAD", "0.05"))
+    except ValueError:
+        return 0.05
+
+
 def _check_novelty(content: str, project_dir: str) -> List[Dict[str, Any]]:
-    others = _gather_recent_plans(project_dir, limit=5)
+    """Adaptive novelty drift.
+
+    Iter-4 recalibration (2026-06-21): the previous gate compared a RAW L2
+    distance ``‖plan − mean(peers)‖`` against a FIXED ``3.0``. Raw L2 scales
+    with the embedder's hidden-dim and vector magnitude, so 3.0 was
+    meaningless for this backbone — audit history showed every firing landed
+    at 13.7–18.1 (4–6× over), i.e. it fired on essentially every
+    feature-introducing plan. A plan that introduces a feature SHOULD drift; a
+    fixed absolute cutoff cannot tell "new feature" from "off-the-rails".
+
+    The fix is self-calibrating and robust to high-dimensional distance
+    concentration (which makes MAD-style spread estimates degenerate with only
+    a handful of peers): we take the new plan's distance to the recent-plan
+    centroid and divide by the MEDIAN peer-to-centroid distance. The result is
+    a unit-free ratio — "how many times farther out than usual is this plan?"
+    A plan flags only when it sits substantially beyond the repo's own recent
+    rhythm, not merely "not identical to last week". The raw distance the old
+    gate keyed on would give ratio ≈ 1.0 for every one of the 5 historical
+    false-fires, so those are now silent.
+    """
+    # Embed the plan FIRST: if the backbone is unavailable we return here
+    # without doing the up-to-8-file peer read that would otherwise be wasted.
     plan_vec, err = _embed_safe(content)
     if plan_vec is None:
         return [{
@@ -265,6 +448,7 @@ def _check_novelty(content: str, project_dir: str) -> List[Dict[str, Any]]:
             "file_path": None,
             "message": err or "Backbone unavailable; novelty scoring skipped.",
         }]
+    others = _gather_recent_plans(project_dir, limit=8)
     if not others:
         return []
     try:
@@ -272,24 +456,67 @@ def _check_novelty(content: str, project_dir: str) -> List[Dict[str, Any]]:
 
         peers = []
         for o in others:
-            v, _ = _embed_safe(o)
+            # Peers use the content-addressed cache — the same prior plans are
+            # re-embedded on every Write otherwise.
+            v, _ = _embed_cached(o)
             if v is not None:
                 peers.append(v)
-        if not peers:
+        # Need ≥3 peers for a stable median baseline; below that, stay silent
+        # rather than fire on a sample too small to define "typical".
+        if len(peers) < 3:
             return []
-        mean = torch.stack(peers).mean(dim=0)
-        drift = float(torch.linalg.norm(plan_vec - mean))
+        import math
+
+        stack = torch.stack(peers)
+        centroid = stack.mean(dim=0)
+        peer_dists = torch.linalg.norm(stack - centroid, dim=1)
+        plan_dist = float(torch.linalg.norm(plan_vec - centroid))
+        # True median (averages the middle two for even N). torch.median()
+        # returns the lower-middle element, which biases the denominator down
+        # and inflates every ratio — use quantile(0.5) for the real median.
+        median = float(peer_dists.quantile(0.5))
+        # The denominator is the *typical* peer spread, but it must be FLOORED:
+        # when recent plans are tight near-duplicates the median collapses
+        # toward 0, and `plan_dist / median` explodes into the hundreds for a
+        # plan that is barely different — re-creating the exact false-fire this
+        # gate was recalibrated to eliminate (concentration of measure: with a
+        # near-zero spread, every plan looks like an outlier). Floor the spread
+        # at a small fraction of the peers' own vector scale so a degenerate
+        # cluster can't manufacture a huge ratio. This also dissolves the old
+        # special-case "<1e-6" branch into one continuous metric.
+        peer_scale = float(stack.norm(dim=1).quantile(0.5))
+        denom = max(median, _novelty_min_spread_frac() * peer_scale)
+        # NaN/inf guard: a degenerate embedding can make plan_dist or denom
+        # non-finite. ``NaN > cut`` is False, which would SILENTLY pass exactly
+        # the off-the-rails plan this gate exists to catch — bail to "skipped".
+        if not math.isfinite(plan_dist) or not math.isfinite(denom):
+            return []
+        if denom < 1e-9:
+            # Both spread AND scale are ~0 — embeddings are degenerate (all
+            # near the origin). No meaningful baseline; don't fire on noise.
+            return []
+        ratio = plan_dist / denom
+        if not math.isfinite(ratio):
+            return []
     except Exception:  # noqa: BLE001
         return []
-    if drift > 3.0:
+    cut = _novelty_ratio_threshold()
+    if ratio > cut:
         return [{
             "rule_id": "novelty_drift",
             "severity": "warn",
             "file_path": None,
-            "drift": drift,
+            "drift": round(plan_dist, 3),
+            "ratio": round(ratio, 2),
+            "peer_median": round(median, 3),
+            "denom": round(denom, 3),
+            "peer_count": len(peers),
             "message": (
-                f"Plan novelty drift {drift:.2f} > 3.0 vs recent {len(peers)} plans; "
-                "verify scope is intentional."
+                f"Plan novelty drift: it sits {ratio:.1f}× farther from the recent "
+                f"plan cluster than usual ({plan_dist:.1f} vs baseline {denom:.1f}; "
+                f"threshold {cut:.1f}×, {len(peers)} peers). This is ADVISORY — the "
+                f"write PROCEEDED. Confirm the broad scope is intentional, or split "
+                f"the plan if it spans unrelated work. Tune via RC_PLAN_NOVELTY_RATIO."
             ),
         }]
     return []
@@ -493,18 +720,14 @@ def main() -> None:
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
     warnings = _gather_warnings(content, project_dir)
 
-    # Build stderr report.
+    # Build stderr report. The machine-readable JSON warning objects come
+    # first; the human banner is appended LAST (after the block decision is
+    # known) so it can state the real outcome — see below.
     lines: List[str] = []
     for w in warnings:
         lines.append(json.dumps(w, ensure_ascii=False, sort_keys=True))
     has_block = any(w.get("severity") == "block" for w in warnings)
     has_warn = any(w.get("severity") in ("warn", "block") for w in warnings)
-    summary = (
-        f"[hybrid-reasoner] plan-guard: {len(warnings)} warning(s); "
-        f"block={has_block} file={file_path}"
-    )
-    if warnings:
-        lines.append(summary)
 
     # 2026-06-02 §B: emit a decomposition recipe when LOC-block fires so the
     # agent has an actionable recovery path instead of just "BLOCK: too big".
@@ -542,6 +765,43 @@ def main() -> None:
         "plan_decompose_hint" if (will_block and decompose_recipe) else "plan_grounding"
     )
     plan_reason = "decomposition_required" if (will_block and decompose_recipe) else ""
+
+    # Human-readable banner — appended last so it states the ACTUAL outcome.
+    # Prior versions emitted a terse `block=False`, which agents misread as a
+    # tool error and tried to "work around" (re-issuing the Write, shelling out
+    # to `cat`, etc.). Be explicit: say whether the write proceeded, that
+    # warnings are advisory unless block=True, and what each severity means.
+    if warnings:
+        warn_ct = sum(1 for w in warnings if w.get("severity") == "warn")
+        block_ct = sum(1 for w in warnings if w.get("severity") == "block")
+        info_ct = sum(1 for w in warnings if w.get("severity") == "info")
+        rule_ids = ", ".join(sorted({str(w.get("rule_id")) for w in warnings}))
+        if will_block:
+            verdict = (
+                "BLOCKED — the Write did NOT proceed. RC_PLAN_BLOCK=1 is set and "
+                "a block-severity rule fired. Fix the plan per the rule message(s) "
+                "above and retry; this is a real gate, not a tool error."
+            )
+        elif shadow_active and block_env and has_warn:
+            verdict = (
+                "ADVISORY (shadow mode) — the Write PROCEEDED. A block-severity "
+                "rule fired but RC_SHADOW_MODE suppresses enforcement. No action "
+                "required; logged for calibration."
+            )
+        else:
+            verdict = (
+                "ADVISORY — the Write PROCEEDED and the plan file was saved. "
+                "These are non-blocking quality signals, NOT a tool failure and "
+                "NOT something to work around. Read them, decide if the flagged "
+                "scope is intentional, and continue. To enforce, set "
+                "RC_PLAN_BLOCK=1."
+            )
+        lines.append(
+            f"[hybrid-reasoner] plan-guard: {len(warnings)} signal(s) "
+            f"[{block_ct} block / {warn_ct} warn / {info_ct} info] "
+            f"rules=[{rule_ids}] file={file_path}"
+        )
+        lines.append(f"[hybrid-reasoner] plan-guard verdict: {verdict}")
 
     audit_log.append_event(audit_log.new_event(
         tool_name=TOOL_NAME,
