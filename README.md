@@ -79,6 +79,55 @@ Full numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 ---
 
+## What this means if you live in Claude Code / Codex / OpenCode
+
+Think of reasoning-core as a **local, private governance layer** that sits
+between you and the AI agent. It doesn't replace Claude, Codex, or OpenCode —
+it makes them prove their work before the edit lands in your repo.
+
+**1. The plan is no longer just vibes.**  
+`PLAN.md` is compiled into a machine-readable contract. If the agent tries to
+edit a file that isn't in the plan, introduce a forbidden import, or violate an
+invariant you wrote down, the gate catches it first. No more 3 AM "billing
+module refactor" that wasn't in the plan.
+
+**2. Cheap local checks run before the expensive neural model.**  
+Execution-grounded oracles — `py_compile`, AST smoke tests, `ruff` on changed
+files — fire in milliseconds before the SSM embedder is even asked. Syntax
+errors and bad imports get rejected instantly, saving you GPU time and patience.
+
+**3. A Process Reward Model asks, "Does this edit actually match the claim?"**  
+The PRM gate scores how well a diff hunk supports the claim in `PLAN.md`. It
+starts in shadow mode, collecting evidence across repos and days, and only
+promotes itself to a blocking gate once it has proven it would catch real
+drift. The system earns the right to block.
+
+**4. It learns from your own git history.**  
+`rc audit-history` mines your recent commits and labels a commit **negative**
+if it was followed within 48 hours by a fix/revert/hotfix on the same files.
+That labeled feedback loop recalibrates thresholds so the gate gets tighter
+where you actually make mistakes and looser where you don't.
+
+**5. You get an operator dashboard, not a black box.**  
+`rc status`, `rc explain`, `rc reasoning-efficiency`, `rc override-survival`,
+and `rc audit-history` turn gate behavior into numbers you can reason about.
+You can see whether the gate is helping or just getting in the way.
+
+**6. It travels across agents.**  
+The same contract/oracle/PRM/commit-miner stack runs under Claude Code,
+Codex, Gemini, OpenCode, or any other host that speaks the hook protocol. As
+the agent market fragments, your safety layer comes with you.
+
+**7. The audit log doesn't lie.**  
+An honesty baseline distinguishes verified signals from unverified ones. When
+you're debugging why something was blocked — or why something *wasn't* — the
+log tells you exactly what the gate actually checked.
+
+Bottom line: fewer broken commits, less silent drift, and a measurable answer
+to the question "is this AI actually making me faster, or just busier?"
+
+---
+
 ## Install
 
 ```bash
@@ -205,6 +254,7 @@ rc confirm-next             # confirm the next block was correct (audit ground-t
 rc enable-enforcement       # first-run wizard: scaffold PLAN.md and flip to copilot
 rc reasoning-efficiency     # composite north-star metric from audit log
 rc override-survival        # how many operator overrides survived to git HEAD
+rc audit-history            # label recent commits for calibration feedback
 ```
 
 `rc bypass-next` and `rc confirm-next` emit explicit `operator_override`
