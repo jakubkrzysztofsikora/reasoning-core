@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 # rc — short shim for `python3 -m src.rc_cli`. Put bin/ on PATH.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT" || exit 1
 exec python3 -m src.rc_cli "$@"
