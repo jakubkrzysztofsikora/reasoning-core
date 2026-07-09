@@ -207,7 +207,7 @@ def test_hard_cap_symbolic_fallback_emits_audit_event(tmp_path):
         )
     assert proc.returncode == 0, proc.stderr
     # Find the JSONL file written today.
-    day_dir = audit_root / _dt.date.today().isoformat()
+    day_dir = audit_root / _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%d")
     jsonl_files = list(day_dir.glob("*.jsonl"))
     assert jsonl_files, "expected an audit JSONL file"
     lines = jsonl_files[0].read_text(encoding="utf-8").strip().splitlines()

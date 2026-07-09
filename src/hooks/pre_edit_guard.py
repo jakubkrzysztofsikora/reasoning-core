@@ -307,6 +307,15 @@ def _exit(code: int, stderr_msg: str = "") -> None:
         sys.stderr.write(stderr_msg)
         if not stderr_msg.endswith("\n"):
             sys.stderr.write("\n")
+    if code == 2:
+        last = audit_log.last_event()
+        decision_id = last.get("decision_id") if isinstance(last, dict) else None
+        if decision_id:
+            sys.stderr.write(
+                f"\n[hybrid-reasoner] Decision ID: {decision_id}\n"
+                f"  Inspect: rc explain {decision_id}\n"
+                f"  Override: rc bypass-next\n"
+            )
     sys.exit(code)
 
 
@@ -530,12 +539,14 @@ def _emit_audit(
     signal_source: str = "",
     gate_id: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> Optional[Dict[str, Any]]:
     """Best-effort audit emit. Never raises.
 
     ``extra`` (iter-3): per-gate audit_extra dict. Keys are folded into the
     event as siblings of the standard fields so downstream aggregators can
     consume gate-specific signals (e.g. plan_grounding's plan_refs_count).
+
+    Returns the emitted event (with decision_id), or None on failure.
     """
     try:
         latency_ms = int((time.time() - started) * 1000)
@@ -559,7 +570,7 @@ def _emit_audit(
         )
         # Derive gate_id from signal_source if caller didn't pin one explicitly.
         effective_gate_id = gate_id or _SIGNAL_SOURCE_TO_GATE_ID.get(effective_signal)
-        audit_log.append_event(audit_log.new_event(
+        event = audit_log.new_event(
             tool_name=tool_name,
             decision=decision,
             file_path=file_path,
@@ -581,9 +592,10 @@ def _emit_audit(
             # then be silently swallowed by the bare except below — losing the audit
             # row entirely). Engineer-flagged in iter-3 phase-validation review.
             **{k: v for k, v in (extra or {}).items() if k not in _AUDIT_RESERVED_KEYS},
-        ))
+        )
+        return audit_log.append_event(event)
     except Exception:  # noqa: BLE001
-        pass
+        return None
 
 
 def main() -> None:

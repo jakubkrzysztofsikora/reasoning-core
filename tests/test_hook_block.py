@@ -229,6 +229,64 @@ def test_regressing_edit_exits_two(stub_sidecar, tmp_path):
     assert result.stderr.strip(), "expected non-empty stderr reason"
 
 
+def test_block_stderr_includes_decision_id_and_rc_instructions(stub_sidecar, tmp_path):
+    """Every exit-2 block must tell the agent how to inspect/override it."""
+    stub_sidecar.set_response(200, {
+        "architectural_impact_score": 0.1,
+        "coherence_delta": 2.5,
+        "risk_vector": [0.95, 0.5, 0.5, 0.4, 0.3, 0.2, 0.1, 0.7],
+        "risk_labels": [
+            "cyclomatic", "fan_in", "fan_out", "depth",
+            "churn", "coupling", "cohesion", "novelty",
+        ],
+        "regression_detected": True,
+        "human_summary": "guard removed; unbounded recursion",
+    })
+    src_file = tmp_path / "regressing.py"
+    src_file.write_text(
+        "def f(n):\n    if not n:\n        return 0\n    return n + f(n - 1)\n",
+        encoding="utf-8",
+    )
+    payload = _edit_payload(
+        str(src_file),
+        "def f(n):\n    if not n:\n        return 0\n    return n + f(n - 1)\n",
+        "def f(n):\n    return n + f(n + 1)\n",
+    )
+    audit_root = tmp_path / "audit"
+    audit_root.mkdir(parents=True, exist_ok=True)
+    result = _run_hook(
+        payload,
+        env={
+            "S2_URL": stub_sidecar.url(),
+            "RC_MODE": "copilot",
+            "RC_AUDIT_ROOT": str(audit_root),
+        },
+    )
+    assert result.returncode == 2, f"expected exit 2, got {result.returncode}; stderr={result.stderr!r}"
+    assert "Decision ID:" in result.stderr
+    assert "rc explain" in result.stderr
+    assert "rc bypass-next" in result.stderr
+    # Extract the decision id so we can verify the audit row exists.
+    decision_id = None
+    for line in result.stderr.splitlines():
+        if "Decision ID:" in line:
+            decision_id = line.split("Decision ID:", 1)[-1].strip()
+            break
+    assert decision_id, "decision_id not found in block stderr"
+    # The audit row should be findable under RC_AUDIT_ROOT.
+    rows = list(audit_root.rglob("*.jsonl"))
+    assert rows, "no audit file written"
+    found = False
+    for row_path in rows:
+        for line in row_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                ev = json.loads(line)
+                if ev.get("decision_id") == decision_id:
+                    found = True
+                    break
+    assert found, f"decision_id {decision_id} not found in audit log"
+
+
 def test_regressing_edit_advise_mode_warns(stub_sidecar, tmp_path):
     """RC_MODE=advise (default) downgrades a regression block to a warning."""
     stub_sidecar.set_response(200, {

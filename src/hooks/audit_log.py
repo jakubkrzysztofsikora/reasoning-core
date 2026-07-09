@@ -226,7 +226,7 @@ def new_event(
     return base
 
 
-def append_event(event: Dict[str, Any], *, fsync: bool = False) -> None:
+def append_event(event: Dict[str, Any], *, fsync: bool = False) -> Optional[Dict[str, Any]]:
     """Append ``event`` to the per-session JSONL. Best-effort, never raises.
 
     Side effects:
@@ -234,6 +234,8 @@ def append_event(event: Dict[str, Any], *, fsync: bool = False) -> None:
       - Opens the session file in append mode and writes one line.
       - On any OSError / unwritable target, writes a single warning to stderr
         and returns silently.
+
+    Returns the emitted event (with decision_id), or None on failure.
     """
     try:
         # Auto-inject host + schema_version if caller skipped new_event().
@@ -276,6 +278,7 @@ def append_event(event: Dict[str, Any], *, fsync: bool = False) -> None:
             rotate(_AUDIT_ROOT, today)
         except Exception:  # noqa: BLE001
             pass
+        return redacted
     except OSError as exc:
         try:
             sys.stderr.write(
@@ -288,6 +291,21 @@ def append_event(event: Dict[str, Any], *, fsync: bool = False) -> None:
             sys.stderr.write(f"[hybrid-reasoner] audit_log: unexpected ({exc}).\n")
         except Exception:  # noqa: BLE001
             pass
+    return None
+
+
+def last_event() -> Optional[Dict[str, Any]]:
+    """Return the most recent event in today's session log, or None."""
+    try:
+        path = Path(_AUDIT_ROOT) / _today() / f"{_session_id()}.jsonl"
+        if not path.exists():
+            return None
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if not lines:
+            return None
+        return json.loads(lines[-1])
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # ---------------------------------------------------------------------------
