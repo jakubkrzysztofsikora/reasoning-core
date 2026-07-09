@@ -1,0 +1,31 @@
+From: hybrid-reasoner debug session 2026-06-02
+Subject: cut gen sidecar over to gen_sidecar_launcher (memory watchdog)
+
+The 2026-06-02 incident showed the gen sidecar (mlx_lm.server) growing to
+36 GB with zero memory cap, because mlx_lm.server is a third-party Python
+entry point and never calls apply_boot_guards.
+
+src/gen_sidecar_launcher.py wraps it as a child process and watchdogs its
+phys_footprint via _phys_footprint_darwin(pid). On cap-exceeded the child
+gets SIGKILL and the launcher exits 75 so the supervisor restarts it.
+
+These two files are guarded; apply with RC_ALLOW_GUARD_EDIT=1 in your shell.
+
+Apply with:
+  RC_ALLOW_GUARD_EDIT=1 git apply scripts/gen-sidecar-cutover.patch
+
+--- a/src/sidecar_supervisor.py
++++ b/src/sidecar_supervisor.py
+@@ -186,7 +186,11 @@ def _build_children(repo_root: Path) -> List[_Child]:
+         # returns 200 once the model is loaded. Works on llama_cpp.server too.
+         children.append(_Child(
+             name="gen",
+-            cmd=["bash", str(repo_root / "scripts" / "start-gen-sidecar.sh")],
++            # Route through gen_sidecar_launcher so MLX / Metal allocations
++            # are watchdogged against S2_GEN_MEM_LIMIT_GB (falls back to
++            # S2_MEM_LIMIT_GB). Shell script kept as a manual entry point but
++            # no longer the supervisor-managed path. 2026-06-02 incident fix.
++            cmd=[sys.executable, "-m", "gen_sidecar_launcher"],
+             health_url=f"http://127.0.0.1:{gen_port}/v1/models",
+         ))
+     return children

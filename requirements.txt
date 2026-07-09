@@ -51,7 +51,7 @@ psutil>=5.9
 
 # --- GGUF backend for codestral-mamba (RC_EMBEDDER=codestral-mamba-gguf).
 # Loads quantized Mamba weights via llama.cpp — keeps Codestral's code
-# pretraining at a fraction of the RAM (~5.7 GB Q6_K vs ~14 GB fp16 HF).
+# pretraining at a fraction of the RAM (~2.5 GB Q2_K vs ~14 GB fp16 HF).
 # Optional at runtime: ImportError falls back to the HF transformers
 # path silently, so the dep is only mandatory if you actually select
 # the gguf backend. Builds a C++ extension on install — first install

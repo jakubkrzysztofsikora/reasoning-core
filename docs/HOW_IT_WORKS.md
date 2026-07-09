@@ -87,7 +87,7 @@ Claude proposes an edit
 │   Neural gate                                        │
 │   • Tree-sitter parse → AST + call graph             │
 │   • Embedder forward (RC_EMBEDDER) → pooled emb      │
-│   • 11-dim risk vector (delta semantics)             │
+│   • 8-dim risk vector (delta semantics)              │
 │   • Chord-distance coherence_delta in [0, 2]         │
 │   • Per-kind thresholds (source/test/plan/doc/cfg)   │
 │   • Cold-start aware (new files don't lie)           │
@@ -126,10 +126,10 @@ Sidecar response (abbreviated):
   "architectural_impact_score": 0.31,
   "coherence_delta": 0.94,
   "file_kind": "source_code",
-  "risk_vector": [0.0, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.94, 0.0, 0.0, 0.0],
-  "risk_labels": ["cyclomatic","fan_in","fan_out","depth","churn","coupling","cohesion","novelty","session_centroid_drift","project_fan_in","project_coupling"],
+  "risk_vector": [0.0, 0.0, 0.0, 0.0, 0.02, 0.0, 0.0, 0.94],
+  "risk_labels": ["cyclomatic","fan_in","fan_out","depth","churn","coupling","cohesion","novelty"],
   "regression_detected": true,
-  "fired_conditions": ["dim_above_ceiling"],
+  "fired_conditions": ["dim_ceiling_breached"],
   "fired_dims": ["novelty"]
 }
 ```
@@ -159,15 +159,14 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the deep-dive and
    selected by `RC_EMBEDDER` (default `mamba-130m`, hidden=768, mean-pool;
    `codestral-mamba` is 7B/hidden=4096; `bge-code`/`unixcoder-base` use
    CLS-pooled transformer outputs).
-5. **Risk vector** (11 dims, all delta-semantics):
-   - 8 file-local dims: `cyclomatic`, `fan_in`, `fan_out`, `depth`,
-     `churn`, `coupling`, `cohesion`, `novelty`.
-   - 1 session-aware dim: `session_centroid_drift` — distance from the
-     per-file baseline registered via `POST /baseline`, normalised against
-     the empirical 95th percentile.
-   - 2 project-wide dims (opt-in via `RC_PROJECT_INDEX=1`):
-     `project_fan_in` (count of files importing the edited module) and
-     `project_coupling` (cross-file edge delta).
+5. **Risk vector** (8 dims, all delta-semantics):
+   `cyclomatic`, `fan_in`, `fan_out`, `depth`, `churn`, `coupling`,
+   `cohesion`, `novelty`.
+   Three additional dims are emitted only when explicitly enabled:
+   - `session_centroid_drift` — requires `POST /baseline` to register a
+     session corpus; otherwise `0.0`.
+   - `project_fan_in` / `project_coupling` — require `RC_PROJECT_INDEX=1`
+     and a session id.
 6. **Coherence delta** is the chord distance on the L2-normalised
    embeddings (`||a/||a|| − b/||b||||`, in `[0, 2]`) — backbone-invariant,
    no `sqrt(hidden_size)` divisor. Cold-start (empty/<32-char `before_src`)
@@ -192,9 +191,12 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the deep-dive and
 
 ## Scoring math
 
-### 11-dim risk vector (`risk_labels_version=2`)
+### 8-dim risk vector (`risk_labels_version=2`)
 
 All dims normalised to `[0, 1]`. The 8 file-local dims have delta semantics.
+Three additional dims (`session_centroid_drift`, `project_fan_in`,
+`project_coupling`) are emitted only when their preconditions are met —
+otherwise the vector ends at `novelty`.
 
 | Dim | Formula | Normalizer |
 |---|---|---|
@@ -207,10 +209,11 @@ All dims normalised to `[0, 1]`. The 8 file-local dims have delta semantics.
 | `cohesion` | `max(lack_cohesion_after − lack_cohesion_before, 0)` | 1.0 |
 | `novelty` | `1 − max(cos(emb_before, emb_after), 0)` | 1.0 |
 | `session_centroid_drift` | `clamp(_l2_distance(emb_after, baseline) / drift_p95, 0, 1)` | _empirical p95_ |
-| `project_fan_in` | `clamp(len(pidx.files_importing(module(path))) / 8, 0, 1)` | 8 |
+| `project_fan_in` | `clamp(len(pidx.files_importing(module(path))) / 20, 0, 1)` | 20 |
 | `project_coupling` | `clamp(Δ cross-file edges / 40, 0, 1)` | 40 |
 
-`project_fan_in` and `project_coupling` are zero unless
+`session_centroid_drift` is zero unless a `/baseline` corpus was registered
+for the session. `project_fan_in` and `project_coupling` are zero unless
 `RC_PROJECT_INDEX=1` and a session id is present.
 
 ### Architectural impact score (AIS)
@@ -250,18 +253,34 @@ the gate. The sidecar logs a warning at load time if
 
 | kind | `cd` | `ais` | dim ceiling |
 |---|---:|---:|---:|
-| `source_code` | `0.5` (env) | `0.4` (env) | `0.9` (env) |
-| `test_code`   | `0.7` | `0.3` | `0.95` |
-| `plan_md`     | `1.0` | `0.3` | `1.0` |
-| `doc_md`      | `1.0` | `0.3` | `1.0` |
-| `config`      | `0.4` | `0.5` | `0.9` |
+| `source_code` | `0.09` (env) | `0.4` (env) | `0.9` (env) |
+| `test_code`   | `0.14` | `0.3` | `0.95` |
+| `plan_md`     | `0.30` | `0.3` | `1.0` |
+| `doc_md`      | `0.30` | `0.3` | `1.0` |
+| `config`      | `0.08` | `0.5` | `0.9` |
 
 Block fires iff `ais < threshold[kind]` OR `cd > threshold[kind]` OR any
 `risk_dim > dim_ceiling[kind]`.
 
 ---
 
-## Architectural rule engine
+## Operating modes (`RC_MODE`)
+
+Phase 0 introduces a single canonical posture knob:
+
+| Mode | Blocks? | Auto-repair? | Use when |
+|---|---|---|---|
+| `advise` (default) | No | No | Learning the gate on your repo; shadow reporting |
+| `copilot` | On contract / oracle / rule / lang-lock failures | No | You trust the 48-hour shadow report |
+| `autopilot` | Same as `copilot` | Yes, within policy | Explicit opt-in after oracles pass kill criteria |
+
+`RC_SHADOW_MODE=1` is kept as a legacy alias for the log-only posture and is
+equivalent to `RC_MODE=advise` for blocking behavior. `RC_MODE` takes
+precedence when both are set.
+
+On an SSM `/score` timeout (`S2_HARD_CAP_MS` exceeded), the hook invokes the
+symbolic gates (`gate_rule_engine`, `gate_lang_lock`, `gate_plan_grounding`)
+and emits `signal_source="symbolic_fallback"`. It does not silently fail-open.
 
 Opt-in via `RC_RULE_ENGINE=1`. Loads `.reasoning-core/rules.yaml` from the
 project root. Each rule is one of two types:

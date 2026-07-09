@@ -28,6 +28,9 @@ def _try_scipy_wilcoxon(deltas: Sequence[float]) -> float | None:
     except Exception:
         return None
     try:
+        # Degenerate case: all zero differences carry no signed information.
+        if all(d == 0.0 for d in deltas):
+            return float("nan")
         # zero_method='wilcox' (the default) drops zero-differences -- matches
         # EVAL_DESIGN section 5.5.
         result = wilcoxon(list(deltas), zero_method="wilcox", alternative="two-sided")

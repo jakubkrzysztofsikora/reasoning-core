@@ -2,10 +2,11 @@
 """Shared audit-log writer for the reasoning-core hook layer.
 
 Every hook (pre_edit_guard, pre_bash_guard, pre_plan_guard, pre_task_guard,
-post_bash_revive) calls :func:`append_event` once per invocation with a
-structured record. Records are appended as one JSON object per line to::
+post_bash_revive) and the operator CLI (``rc``) calls :func:`append_event` once
+per invocation with a structured record. Records are appended as one JSON object
+per line to::
 
-    /tmp/rc-events/<YYYY-MM-DD>/<session_id>.jsonl
+    $RC_AUDIT_ROOT/<YYYY-MM-DD>/<session_id>.jsonl
 
 Hard contracts (see board RC-203):
 
@@ -20,9 +21,14 @@ Hard contracts (see board RC-203):
 - Schema is intentionally permissive: missing fields are allowed; readers
   should rely on ``decision``/``tool_name`` and treat the rest as advisory.
 
+Recognised ``decision`` values include the usual hook outcomes
+(``allowed``, ``blocked``, ``warn``, ``shadow_blocked``, ``fail-open``,
+``allowed_via_override``) and the operator ground-truth signals added in
+Phase 0: ``operator_override`` and ``operator_confirmed``.
+
 The module also exposes :func:`new_event` as a small helper that pre-fills
-``ts``, ``session_id``, and ``project_dir`` from the environment so callers
-only need to add hook-specific fields.
+``ts``, ``decision_id``, ``session_id``, ``project_dir``, and ``host`` from the
+environment so callers only need to add command-specific fields.
 """
 
 from __future__ import annotations
@@ -51,13 +57,15 @@ try:
     import portalocker  # type: ignore
 except Exception:  # noqa: BLE001 - fallback to no-op lock if not installed
     portalocker = None  # type: ignore
-    # Surface the fallback so a missing pip install isn't silently a no-op
-    # lock in production. Reviewer-flagged Phase 0.5.
-    sys.stderr.write(
-        "[hybrid-reasoner] audit_log: portalocker not installed; "
-        "concurrent multi-host writes may interleave. "
-        "Run `pip install portalocker>=2.7`.\n"
-    )
+    # Surface the fallback once per process when RC_AUDIT_WARN_PORTALOCKER=1.
+    # Avoid writing to stderr by default: hooks run in agent-visible context
+    # and the warning is not actionable for most users.
+    if os.environ.get("RC_AUDIT_WARN_PORTALOCKER") == "1":
+        sys.stderr.write(
+            "[hybrid-reasoner] audit_log: portalocker not installed; "
+            "concurrent multi-host writes may interleave. "
+            "Run `pip install portalocker>=2.7`.\n"
+        )
 
 SCHEMA_VERSION = 3
 
@@ -393,6 +401,43 @@ def record_block(file_path: str, *, now: Optional[float] = None) -> None:
     _save_retry_markers(markers)
 
 
+def record_operator_override(
+    reason: str = "bypass_next_armed",
+    *,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Emit an explicit ``operator_override`` audit event.
+
+    Used by ``rc bypass-next`` so the audit log carries ground-truth that the
+    operator intentionally overrode a guard decision. The event is emitted when
+    the operator arms the bypass, i.e. before the next edit is allowed through.
+    """
+    append_event(new_event(
+        tool_name="rc",
+        decision="operator_override",
+        reason=reason,
+        **(extra or {}),
+    ))
+
+
+def record_operator_confirmed(
+    reason: str = "confirm_next_armed",
+    *,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Emit an explicit ``operator_confirmed`` audit event.
+
+    Used by ``rc confirm-next`` so the audit log carries ground-truth that the
+    operator agreed a block was correct.
+    """
+    append_event(new_event(
+        tool_name="rc",
+        decision="operator_confirmed",
+        reason=reason,
+        **(extra or {}),
+    ))
+
+
 def record_shadow_block(file_path: str, *, now: Optional[float] = None) -> None:
     """Like record_block but lives in a separate namespace.
 
@@ -437,5 +482,7 @@ __all__ = [
     "is_retry_after_block",
     "new_event",
     "record_block",
+    "record_operator_confirmed",
+    "record_operator_override",
     "record_shadow_block",
 ]

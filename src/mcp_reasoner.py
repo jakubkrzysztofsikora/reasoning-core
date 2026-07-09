@@ -221,6 +221,21 @@ except Exception as exc:  # noqa: BLE001 - never break reason_over_edit
     except Exception:  # noqa: BLE001
         pass
 
+# Phase 5: validate_imports — symbol/module resolution against project_index.
+# Closes the gap in 2026-06-02-pain-feature-mapping.md §6 (hallucinated APIs).
+# forbid_import is deny-list only; this is the allow-list dual.
+try:
+    from src.mcp_import_validator import validate_imports as _validate_imports_impl
+    mcp.tool()(_validate_imports_impl)
+except Exception as exc:  # noqa: BLE001 - never break reason_over_edit
+    import sys as _sys
+    try:
+        _sys.stderr.write(
+            f"[hybrid-reasoner] WARNING: validate_imports registration failed: {exc!r}\n"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 try:
     from src.mcp_gate import gate_edit as _gate_edit_impl
     mcp.tool()(_gate_edit_impl)

@@ -39,7 +39,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -60,79 +60,11 @@ class GateOutcome:
 # Pre-score gates (run once before the SSM /score call).
 # ---------------------------------------------------------------------------
 
-def gate_kill_switch_and_magic(
-    *,
-    tool_name: str,
-    tool_input: Dict[str, Any],
-    file_path: str,
-    read_before_src,
-) -> GateOutcome:
-    """Layer 2 — operator override path (kill switches + magic comments).
-
-    Mirrors lines 333-386 of pre-Phase-0 pre_edit_guard. Returns:
-      - exit_allow: kill switch / magic comment grants bypass
-      - fall_through: agent self-introduced directive — decline override but
-        do not bypass; orchestrator must emit override_declined and proceed
-      - pass: no override active
-    """
-    try:
-        import _kill_switches  # type: ignore
-        import _magic_comments  # type: ignore
-    except ImportError:
-        return GateOutcome(action="pass")
-
-    if _kill_switches is not None:
-        if (
-            _kill_switches.is_disabled_globally()
-            or _kill_switches.consume_bypass_next()
-            or _kill_switches.is_file_skipped(file_path)
-        ):
-            return GateOutcome(
-                action="exit_allow",
-                decision="allowed_via_override",
-                reason="kill_switch_or_bypass_next",
-            )
-
-    if _magic_comments is None:
-        return GateOutcome(action="pass")
-
-    before_for_directive = read_before_src(file_path)
-    directive_before = _magic_comments.parse(before_for_directive)
-    after_for_directive = before_for_directive
-    if tool_name == "Write":
-        after_for_directive = tool_input.get("content") or ""
-    elif tool_name == "Edit":
-        old_s = tool_input.get("old_string", "") or ""
-        new_s = tool_input.get("new_string", "") or ""
-        if old_s and old_s in before_for_directive:
-            after_for_directive = before_for_directive.replace(old_s, new_s, 1)
-    directive_after = _magic_comments.parse(after_for_directive)
-    self_introduced = (
-        directive_before is None and directive_after is not None
-    ) or (
-        directive_before is not None
-        and directive_after is not None
-        and directive_before.name != directive_after.name
-    )
-    if self_introduced and directive_after is not None:
-        return GateOutcome(
-            action="fall_through",
-            decision="override_declined",
-            reason=f"magic_comment_self_introduced:{directive_after.name}",
-        )
-    if _magic_comments.bypasses_all(directive_before):
-        return GateOutcome(
-            action="exit_allow",
-            decision="allowed_via_override",
-            reason=f"magic_comment:{directive_before.name}:{directive_before.reason}",
-        )
-    return GateOutcome(action="pass")
-
-
 def gate_lang_lock(*, file_path: str, read_before_src) -> GateOutcome:
     """Layer 3 — language fingerprint lock (P3 Invariant 1).
 
-    Returns either an exit_block, a continue_pair (shadow), or pass.
+    Returns either an exit_block, a continue_pair (shadow), a stderr_only
+    (warn in RC_MODE=advise), or pass.
     """
     if (
         os.environ.get("RC_LANG_LOCK") != "1"
@@ -177,16 +109,33 @@ def gate_lang_lock(*, file_path: str, read_before_src) -> GateOutcome:
                     signal_source="lang_lock",
                 )
             declared = mani.get("declared_language")
+            file_lang = _session_manifest.language_for_path(file_path)
+            stderr = (
+                f"[hybrid-reasoner] BLOCKED: language fingerprint violation\n"
+                f"  file: {file_path}\n"
+                f"  declared: {declared}"
+            )
+            reason = "language_fingerprint_violation"
+            if os.environ.get("RC_MODE", "advise").strip().lower() == "advise":
+                return GateOutcome(
+                    action="stderr_only",
+                    code=0,
+                    stderr=(
+                        f"[hybrid-reasoner] WARN: language fingerprint violation\n"
+                        f"  file: {file_path}\n"
+                        f"  declared: {declared}\n"
+                        f"  file_lang: {file_lang}"
+                    ),
+                    decision="warn",
+                    reason=reason,
+                    signal_source="lang_lock",
+                )
             return GateOutcome(
                 action="exit_block",
                 code=2,
-                stderr=(
-                    f"[hybrid-reasoner] BLOCKED: language fingerprint violation\n"
-                    f"  file: {file_path}\n"
-                    f"  declared: {declared}"
-                ),
+                stderr=stderr,
                 decision="blocked",
-                reason="language_fingerprint_violation",
+                reason=reason,
                 signal_source="lang_lock",
             )
     except Exception:  # noqa: BLE001
@@ -217,8 +166,23 @@ def _resolve_plan_path() -> Optional[Path]:
     return p if p.exists() else None
 
 
-def gate_plan_grounding(*, file_path: str) -> GateOutcome:
+def gate_plan_grounding(
+    *,
+    file_path: str,
+    after_src: Optional[str] = None,
+    path_check: bool = True,
+) -> GateOutcome:
     """Iter-3 lever — plan-impl coupling audit signal.
+
+    Phase 1 upgrade: this gate now evaluates a machine-readable contract
+    derived from ``PLAN.md`` or an explicit ``.reasoning-core/contract.yaml``.
+    Path checks remain cheap and run on every call. Import/invariant checks
+    run only when ``after_src`` is supplied (the orchestrator calls this
+    once per edit pair after extracting the proposed source).
+
+    ``path_check=False`` skips the path-level evaluation so the orchestrator
+    can evaluate imports/invariants in the pair loop without re-emitting the
+    path-violation message.
 
     Modes (RC_PLAN_GROUNDING):
       - unset / "0" : disabled, gate is no-op (default).
@@ -227,9 +191,7 @@ def gate_plan_grounding(*, file_path: str) -> GateOutcome:
       - "2"         : block — orchestrator records audit block + exit code 2.
 
     PLAN.md itself is always allowed (basename match) so the gate cannot
-    block plan revision. Path-match uses ``os.path.normpath`` + suffix
-    against the full reference string (engineer-flagged tightening over the
-    naive ``Path(fp).name in refs``).
+    block plan revision.
     """
     mode = os.environ.get("RC_PLAN_GROUNDING", "0").strip()
     if mode not in ("1", "2"):
@@ -253,45 +215,114 @@ def gate_plan_grounding(*, file_path: str) -> GateOutcome:
             reason="no_plan_md",
             signal_source="plan_grounding",
         )
+
     # Lazy import: _dispatch.py does NOT inject src/hooks into sys.path
     # itself. Import inside the function body so callers that have already
     # set sys.path (pre_edit_guard.py:33-36) resolve correctly, while a
     # cold direct import of _dispatch from elsewhere doesn't crash.
     try:
-        from _plan_paths import distinct_file_paths  # type: ignore
-        plan_text = plan_path.read_text(encoding="utf-8", errors="replace")
-        refs = distinct_file_paths(plan_text)
+        from _plan_contract import Contract  # type: ignore
+
+        contract = Contract.load(
+            project_root=str(plan_path.parent),
+            plan_text=plan_path.read_text(encoding="utf-8", errors="replace"),
+            plan_path=plan_path,
+        )
     except (OSError, ImportError) as exc:
         # Distinguish ImportError (load bug) from OSError (operator state)
         # so the audit reason is diagnostic-grade.
-        reason = "plan_extractor_unavailable" if isinstance(exc, ImportError) else "plan_unreadable"
+        reason = (
+            "plan_contract_unavailable"
+            if isinstance(exc, ImportError)
+            else "plan_unreadable"
+        )
         return GateOutcome(
             action="audit_only",
             decision="audit_only",
             reason=reason,
             signal_source="plan_grounding",
         )
-    norm = os.path.normpath(file_path)
-    # P1.1 fix (sweep round-5): suffix-match must require a path-separator
-    # anchor. Without it, plan ref `foo.py` would match edit `bar/myfoo.py`,
-    # producing a false `in_plan` allow that weakens the gate signal.
-    for ref in refs:
-        ref_norm = os.path.normpath(ref)
-        if norm == ref_norm or norm.endswith(os.sep + ref_norm):
-            return GateOutcome(reason="in_plan")
+
+    # Path check first (T0 cheap).
+    path_violation = contract.check_path(file_path) if path_check else None
+
+    # Import/invariant checks only when after_src is available.
+    rich_violations: List[Any] = []
+    if after_src is not None:
+        rich_violations.extend(contract.check_imports(file_path, after_src))
+        rich_violations.extend(contract.check_invariants(file_path, after_src))
+
+    first_deny = contract.first_deny(rich_violations)
+
     audit_extra: Dict[str, Any] = {
         "plan_path": str(plan_path),
-        "plan_refs_count": len(refs),
+        "contract_source": contract.source,
+        "contract_version": contract.version,
     }
-    if mode == "1":
+
+    # Backward-compatible behavior: a plan-derived contract with only path
+    # rules uses the original reason/message shape that existing tests assert.
+    plan_derived_only = (
+        path_check
+        and contract.source == str(plan_path)
+        and not rich_violations
+    )
+
+    if path_violation is None and first_deny is None:
+        return GateOutcome(
+            reason="in_plan",
+            audit_extra=audit_extra,
+        )
+
+    # Rich violations (imports/invariants) take precedence for the block
+    # message, but path violations still use the legacy shape when the
+    # contract is a simple PLAN.md derivation.
+    violation = first_deny or path_violation
+    if violation is None:
+        return GateOutcome(reason="in_plan", audit_extra=audit_extra)
+
+    if plan_derived_only and violation.kind == "path":
+        audit_extra["plan_refs_count"] = len(contract.allowed_paths)
+        if mode == "1":
+            return GateOutcome(
+                action="stderr_only",
+                stderr=(
+                    f"[reasoning-core] WARN: edit drifts from plan — "
+                    f"{file_path} not in {plan_path} ({len(contract.allowed_paths)} files in plan)\n"
+                ),
+                decision="warn",
+                reason="plan_impl_drift",
+                signal_source="plan_grounding",
+                audit_extra=audit_extra,
+            )
+        return GateOutcome(
+            action="exit_block",
+            code=2,
+            stderr=(
+                f"[reasoning-core] BLOCKED: plan_impl_drift — {file_path} not in PLAN.md.\n"
+                f"  Update PLAN.md to include this file, or set RC_PLAN_GROUNDING=1 for warn-only.\n"
+            ),
+            decision="blocked",
+            reason="plan_impl_drift",
+            signal_source="plan_grounding",
+            audit_extra=audit_extra,
+        )
+
+    # Rich-contract violation messaging.
+    audit_extra["contract_violations"] = [
+        v.to_dict() for v in ([path_violation] if path_violation else []) + rich_violations
+        if v is not None
+    ]
+    severity = violation.severity
+    if mode == "1" or severity == "warn":
         return GateOutcome(
             action="stderr_only",
             stderr=(
-                f"[reasoning-core] WARN: edit drifts from plan — "
-                f"{file_path} not in {plan_path} ({len(refs)} files in plan)\n"
+                f"[reasoning-core] WARN: contract violation — "
+                f"{violation.message} ({violation.rule_id})\n"
             ),
             decision="warn",
-            reason="plan_impl_drift",
+            reason=f"contract_violation:{violation.kind}:{violation.rule_id}",
             signal_source="plan_grounding",
             audit_extra=audit_extra,
         )
@@ -299,11 +330,11 @@ def gate_plan_grounding(*, file_path: str) -> GateOutcome:
         action="exit_block",
         code=2,
         stderr=(
-            f"[reasoning-core] BLOCKED: plan_impl_drift — {file_path} not in PLAN.md.\n"
-            f"  Update PLAN.md to include this file, or set RC_PLAN_GROUNDING=1 for warn-only.\n"
+            f"[reasoning-core] BLOCKED: contract violation — "
+            f"{violation.message} ({violation.rule_id})\n"
         ),
         decision="blocked",
-        reason="plan_impl_drift",
+        reason=f"contract_violation:{violation.kind}:{violation.rule_id}",
         signal_source="plan_grounding",
         audit_extra=audit_extra,
     )
@@ -596,6 +627,11 @@ def gate_rule_engine(
             )
         return GateOutcome(
             action="exit_block",
+            code=2,
+            stderr=(
+                f"[rule_engine] BLOCKED: {deny_hits[0].rule_id} — "
+                f"{deny_hits[0].message}\n"
+            ),
             report=new_report,
             decision="rule_engine",
             reason=f"rule_engine:{deny_hits[0].rule_id}:{deny_hits[0].message}",
@@ -644,11 +680,14 @@ def _detect_language(file_path: str) -> str:
     return mapping.get(ext, "unknown")
 
 
-def gate_regression(*, report: Dict[str, Any]) -> GateOutcome:
+def gate_regression(
+    *, report: Dict[str, Any], file_path: str = "", is_retry: bool = False
+) -> GateOutcome:
     """Final SSM regression gate.
 
-    Returns exit_block (with format_block stderr filled by orchestrator) or
-    continue_pair (shadow) or pass.
+    Returns exit_block (stderr pre-formatted via _format_block), continue_pair
+    (shadow), or pass. When file_path is omitted, stderr falls back to a
+    reason-only message so advise-mode downgrades still produce a warning.
     """
     if not (isinstance(report, dict) and report.get("regression_detected") is True):
         return GateOutcome(action="pass")
@@ -662,12 +701,23 @@ def gate_regression(*, report: Dict[str, Any]) -> GateOutcome:
             decision="shadow_blocked",
             reason="regression_detected_shadow",
         )
-    # Orchestrator fills the stderr via _format_block — leave stderr empty
-    # as a sentinel meaning "use _format_block".
+    stderr = ""
+    if file_path:
+        try:
+            from _block_format import format_block as _format_block  # type: ignore
+            stderr = _format_block(file_path, report, is_retry=is_retry)
+        except Exception:  # noqa: BLE001
+            stderr = ""
+    if not stderr:
+        summary = report.get("human_summary") or ""
+        stderr = f"[hybrid-reasoner] BLOCKED: regression detected"
+        if summary:
+            stderr += f" — {summary}"
+        stderr += "\n"
     return GateOutcome(
         action="exit_block",
         code=2,
-        stderr="",  # sentinel: orchestrator must call _format_block
+        stderr=stderr,
         decision="blocked",
         reason="regression_detected",
     )
@@ -687,11 +737,15 @@ def gate_prm(
 ) -> GateOutcome:
     """Score (plan_claim, diff_hunk) via gen_client.score_plan_grounding.
 
-    PRM (process reward model) measurement-only gate. When RC_PRM_GATE=1,
-    each Edit produces an audit event with signal_source="prm" and
-    reason="prm_score=<0-1>". Never blocks — that would require a
-    trained PRM with calibrated thresholds, which is queued behind
-    eval/build_prm_corpus.py output (audit 2026-06-01 §9-10).
+    PRM gate. Behavior depends on ``RC_PRM_GATE`` and ``RC_PRM_BLOCK``:
+      - RC_PRM_GATE unset/0   : gate is no-op.
+      - RC_PRM_GATE=1         : emit audit events (shadow mode).
+      - RC_PRM_BLOCK=1        : block when score < RC_PRM_THRESHOLD if the
+                                promotion criteria are met; otherwise shadow.
+
+    Default threshold is 0.25. Promotion requires ≥2 weeks, ≥1000 events,
+    ≥5 distinct repo installs (tracked in
+    ``~/.cache/reasoning-core/prm-shadow-state.jsonl``).
     """
     if os.environ.get("RC_PRM_GATE", "0") != "1":
         return GateOutcome()  # action="pass", no signal
@@ -735,10 +789,61 @@ def gate_prm(
     yes = sum(1 for v in verdict.values() if v == 1)
     total = len(verdict)
     score = (yes / total) if total else 0.0
+
+    audit_extra = {
+        "prm_score": float(score),
+        "prm_yes": yes,
+        "prm_total": total,
+    }
+
+    try:
+        threshold = float(os.environ.get("RC_PRM_THRESHOLD", "0.25"))
+    except ValueError:
+        threshold = 0.25
+
+    if score < threshold:
+        # Blocking only after promotion criteria are met.
+        try:
+            from _prm_promotion import promotion_status  # type: ignore
+
+            promo = promotion_status()
+            audit_extra["prm_promoted"] = promo.promoted
+            audit_extra["prm_promo_reason"] = promo.reason
+        except Exception:  # noqa: BLE001
+            promo = None
+            audit_extra["prm_promoted"] = False
+
+        if os.environ.get("RC_PRM_BLOCK") == "1" and promo is not None and promo.promoted:
+            return GateOutcome(
+                action="exit_block",
+                code=2,
+                stderr=(
+                    f"[reasoning-core] BLOCKED: PRM score {score:.2f} below "
+                    f"threshold {threshold:.2f}\n"
+                ),
+                decision="blocked",
+                reason=f"prm_score:{score:.2f}<{threshold:.2f}",
+                signal_source="prm",
+                audit_extra=audit_extra,
+            )
+
+        # Shadow / advisory path.
+        return GateOutcome(
+            action="stderr_only",
+            stderr=(
+                f"[reasoning-core] WARN: PRM score {score:.2f} below "
+                f"threshold {threshold:.2f} (shadow)\n"
+            ),
+            decision="warn",
+            reason=f"prm_shadow:{score:.2f}<{threshold:.2f}",
+            signal_source="prm",
+            audit_extra=audit_extra,
+        )
+
     return GateOutcome(
         action="continue_pair",
         decision="allowed",
         reason=f"prm_score={score:.2f}",
         signal_source="prm",
-        audit_extra={"prm_score": float(score), "prm_yes": yes, "prm_total": total},
+        audit_extra=audit_extra,
     )

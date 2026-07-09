@@ -509,6 +509,29 @@ def test_try_load_passes_revision_and_no_trust_remote_code(monkeypatch):
     fake.AutoModel = _FakeAutoModel
     monkeypatch.setitem(sys.modules, "transformers", fake)
 
+    # _try_load imports torch even though the stubbed model does not need it.
+    class _NoGrad:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    class _FakeTensor:
+        def __init__(self, data):
+            self._data = data
+        def to(self, _device):
+            return self
+        def dim(self):
+            return 1
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.long = int
+    fake_torch.float32 = object()
+    fake_torch.no_grad = _NoGrad
+    fake_torch.manual_seed = lambda _seed: None
+    fake_torch.tensor = lambda data, dtype=None: _FakeTensor(data)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
     from src import ssm_backbone
 
     handle = ssm_backbone._try_load(ssm_backbone.DEFAULT_CHECKPOINT, "cpu")

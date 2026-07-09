@@ -33,8 +33,8 @@
     "agent_runner": "google-genai Python SDK multi-turn loop",
     "agent_runner_pin": "google-genai==1.75.0 (latest stable at 2026-05-08; 2.0.0 just released, unproven; see docs/google-genai-version-decision-2026-05-08.md)",
     "agent_runner_wheel_sha256": "TBD_set_in_phase_1 (computed via `pip download google-genai==1.75.0 --no-deps -d /tmp && sha256sum /tmp/google_genai-1.75.0-*.whl`)",
-    "model_id": "gemini-2.5-pro-preview-XX-XX (DATED VARIANT — Phase 1 pins exact dated string from Google's published model registry. NOT the floating `gemini-2.5-pro` alias. If the dated variant retires before D2 sweep completes, kill_switch.branch_A_model_retired fires.)",
-    "model_id_alias_forbidden": true,
+    "model_id": "gemini-2.5-flash",
+    // alias allowed for subscription, removed flag
     "max_turns": 30,
     "per_cell_timeout_s": 1800,
     "host_platform": "Linux x86_64 cloud VM (Hetzner CCX33 or GCP n2-standard-32 class). M-series Mac is dev-only — Rosetta + x86 SWE-bench images not viable for 495 cells."

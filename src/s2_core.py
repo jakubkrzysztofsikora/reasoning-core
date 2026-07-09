@@ -952,10 +952,6 @@ def score_change(
     try:
         emb_before = embed(before_tokens)
         emb_after = embed(after_tokens)
-        # Auto-persist baseline on first encounter so cumulative_drift fires
-        # on subsequent edits within the same session.
-        if session_id:
-            _persist_session_baseline_for_path(session_id, path, emb_after)
         cos = _cosine_similarity(emb_before, emb_after)
         raw_l2 = _l2_distance(emb_before, emb_after)
     except BackboneUnavailableError:
@@ -1008,14 +1004,17 @@ def score_change(
 
     # ---- New dimensions (Phase 2) -----------------------------------------
 
-    # session_centroid_drift: per-file baseline drift, normalised against
-    # the empirical 95th percentile computed during /baseline ingestion.
+    # session_centroid_drift / cumulative_drift: only compare against a
+    # baseline that existed before this edit. Auto-persist happens below, so
+    # the first encounter for a session/path reports no drift.
     session_centroid_drift: float = 0.0
+    cumulative_drift: Optional[float] = None
     if session_id:
         baseline_vec, drift_p95 = _get_session_baseline_for_path(session_id, path)
         if baseline_vec is not None:
             try:
                 raw_drift = float(_l2_distance(emb_after, baseline_vec))
+                cumulative_drift = raw_drift
                 # Normalise to [0, 1]: 0 == no drift, 1 == at-or-beyond p95.
                 # Clamping keeps risk_vector co-domain consistent with the
                 # other dimensions; the raw ratio is exposed separately via
@@ -1027,6 +1026,7 @@ def score_change(
                 session_centroid_drift = max(0.0, min(1.0, ratio))
             except Exception:
                 session_centroid_drift = 0.0
+                cumulative_drift = None
 
     # project_fan_in / project_coupling: project-wide structural awareness.
     project_fan_in: float = 0.0
@@ -1081,14 +1081,10 @@ def score_change(
     public_lang = PUBLIC_LANGUAGE.get(lang_id, lang_id)
     summary = _summarize(ais, coherence_delta, risk_vector, regression, public_lang)
 
-    cumulative_drift: Optional[float] = None
+    # Auto-persist baseline on first encounter so cumulative_drift fires
+    # on subsequent edits within the same session.
     if session_id:
-        baseline_vec, _ = _get_session_baseline_for_path(session_id, path)
-        if baseline_vec is not None:
-            try:
-                cumulative_drift = float(_l2_distance(emb_after, baseline_vec))
-            except Exception:
-                cumulative_drift = None
+        _persist_session_baseline_for_path(session_id, path, emb_after)
 
     return ImpactReport(
         architectural_impact_score=float(ais),

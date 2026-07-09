@@ -11,8 +11,14 @@
 # `.reasoning-core/install.manifest` so re-runs accumulate state and
 # `uninstall.sh` knows what to remove.
 #
-# Defaults are conservative (shadow mode ON, fail-open). Promote later by
-# editing `.envrc.local` per `docs/USAGE.md`.
+# Phase 0 honest opt-in defaults (Option B):
+#   RC_MODE=advise            -- log/warn only, never block
+#   RC_SHADOW_MODE=1          -- decisions are logged, not enforced
+#   RC_PLAN_GROUNDING=1       -- warn on plan drift
+#   RC_BEST_EFFORT_SPEC=1     -- inject iter-3 spec overlay
+#   RC_RULE_ENGINE=1          -- evaluate .reasoning-core/rules.yaml
+# Promote to enforcement after reviewing a 48-hour shadow report:
+#   rc enable-enforcement     -- flips RC_MODE=copilot and scaffolds PLAN.md
 
 set -euo pipefail
 
@@ -145,26 +151,38 @@ export S2_TIMEOUT="\${S2_TIMEOUT:-30}"
 export S2_FAIL_CLOSED="\${S2_FAIL_CLOSED:-0}"
 export HF_HOME="\${HF_HOME:-\$HOME/.cache/huggingface}"
 
-# Hook policy. Shadow mode ON by default — decisions are logged, not enforced.
-# Flip RC_SHADOW_MODE=0 in .envrc.local once you've watched the audit log for
-# a few sessions and trust the gate.
+# Hook policy. Phase 0 ships honest opt-in (advise / shadow mode).
+# Decisions are logged and warnings are emitted; the gate does NOT block.
+# Run \`rc enable-enforcement\` after reviewing a 48-hour shadow report to
+# promote this repo to copilot mode (block on contract/oracle/rule failures).
+export RC_MODE="\${RC_MODE:-advise}"
 export RC_SHADOW_MODE="\${RC_SHADOW_MODE:-1}"
 export RC_PLAN_BLOCK="\${RC_PLAN_BLOCK:-0}"
 
-# Opt-in features (all default off):
+# Plan-grounding / spec levers (default-on in advise mode):
+#   RC_PLAN_GROUNDING     =0 disabled, =1 warn, =2 hard block.
+#   RC_BEST_EFFORT_SPEC   SessionStart overlay nudging away from
+#                         "DIVERGENCES.md alone" gameability.
+#   RC_RULE_ENGINE        evaluate .reasoning-core/rules.yaml symbolic gate.
+export RC_PLAN_GROUNDING="\${RC_PLAN_GROUNDING:-1}"
+export RC_BEST_EFFORT_SPEC="\${RC_BEST_EFFORT_SPEC:-1}"
+export RC_RULE_ENGINE="\${RC_RULE_ENGINE:-1}"
+
+# Opt-in features (default off):
 #   RC_EMBEDDER         — embedder backend; default mamba-130m (130M, ~200MB).
 #                         Alternatives: codestral-mamba (7B, code-pretrained,
 #                         needs SHA pin via RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION),
 #                         bge-code, unixcoder-base, random-mamba.
-#   RC_RULE_ENGINE      — enable .reasoning-core/rules.yaml symbolic gate.
-#                         Fail-closed by default; RC_RULE_ENGINE_LENIENT=1 to soft-degrade.
 #   RC_PROJECT_INDEX    — fill project_fan_in / project_coupling risk dims by
 #                         indexing the whole repo once per session.
 #   RC_DIFF_AUDIT       — Stop-hook scans last assistant diff with validate_unified_diff.
 # export RC_EMBEDDER=mamba-130m
-# export RC_RULE_ENGINE=1
 # export RC_PROJECT_INDEX=1
 # export RC_DIFF_AUDIT=1
+
+# Autopilot mode (block + auto-repair within policy) remains explicitly
+# opt-in; set RC_MODE=autopilot only after validating copilot for a week.
+# export RC_MODE=autopilot
 
 # Personal toggles / secrets → .envrc.local (gitignored, sourced last).
 [[ -f .envrc.local ]] && source_env .envrc.local

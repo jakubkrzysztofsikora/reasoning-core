@@ -7,10 +7,12 @@
   - Model: `devstral-2-123b-instruct-2512`.
 - **System 2** = Local Python sidecar (`s2_core.py`).
   - Tree-sitter parses source files into AST/CFG knowledge graph.
-  - Mock SlideMamba inference loop produces an Architectural Impact Score (AIS) for proposed edits.
+  - A real pretrained Mamba SSM (`state-spaces/mamba-130m-hf` by default)
+    produces an Architectural Impact Score (AIS) and 8-dim risk vector for
+    proposed edits.
 - **Bridge** = `mcp_reasoner.py` (FastMCP server, name `hybrid-reasoner`).
   - Exposes tool `reason_over_edit(file_path, proposed_change)`.
-  - Round-trips to S2 via UNIX socket / HTTP, returns structured math validation.
+  - Round-trips to S2 via loopback HTTP, returns structured math validation.
 - **Hooks** = `.claude/settings.json` `PreToolUse` for `Edit` and `Write` tools.
   - Calls `hybrid-reasoner:reason_over_edit`.
   - Blocks (`exit 2`) on logical regression — i.e. AIS below threshold or coherence drift > limit.
@@ -58,9 +60,11 @@ reasoning-core/
 - Builds AST + simple CFG (function call graph).
 - `score_change(path, before_src, after_src) -> ImpactReport`:
   - `architectural_impact_score: float` ∈ [0, 1] (1 = perfectly aligned).
-  - `coherence_delta: float` (L2 distance between mock embeddings of before/after AST).
-  - `risk_vector: list[float]` (8 dims: cyclomatic, fan-in, fan-out, depth, churn, coupling, cohesion, novelty).
-  - `regression_detected: bool` — true when AIS < 0.4 OR coherence_delta > 1.5 OR any risk dim > 0.9.
+  - `coherence_delta: float` — chord distance between L2-normalized
+    embeddings of before/after AST-token streams, in [0, 2].
+  - `risk_vector: list[float]` (8 dims: cyclomatic, fan-in, fan-out, depth,
+    churn, coupling, cohesion, novelty).
+  - `regression_detected: bool` — true when AIS < 0.4 OR coherence_delta > 0.09 OR any risk dim > 0.9.
   - `human_summary: str`.
 - Runs as HTTP service on `127.0.0.1:8765` (FastAPI or stdlib `http.server`).
 

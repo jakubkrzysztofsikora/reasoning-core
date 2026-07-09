@@ -6,13 +6,14 @@ single-judge).
 
 > **Note on risk-vector dimensionality.** The headline eval below was
 > graded against an 8-dim risk vector (`risk_labels_version=1`). The
-> current build ships an 11-dim vector (`risk_labels_version=2`) — the new
-> dims (`session_centroid_drift`, `project_fan_in`, `project_coupling`)
-> are additive and the eight original dims are unchanged. `coherence_delta`
-> migrated from raw `L2/sqrt(D)` to chord distance `[0, 2]`, with all
-> thresholds rescaled. The 8-task headline numbers were not re-graded
-> against the new metric; the iter-2 re-run (sign-test acceptance criterion
-> below) targets the new schema.
+> current build still emits an 8-dim vector by default
+> (`risk_labels_version=2`); three additional dims
+> (`session_centroid_drift`, `project_fan_in`, `project_coupling`) are
+> emitted only when `RC_PROJECT_INDEX=1` and a session baseline is
+> registered. `coherence_delta` migrated from raw `L2/sqrt(D)` to chord
+> distance `[0, 2]`, with all thresholds rescaled. The 8-task headline
+> numbers were not re-graded against the new metric; the iter-2 re-run
+> (sign-test acceptance criterion below) targets the new schema.
 
 ---
 

@@ -33,10 +33,156 @@ import logging
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class _OfflineTokenizer:
+    """Deterministic whitespace tokenizer for the random-mamba control.
+
+    The random-mamba embedder is intentionally a random-weights control, so the
+    exact tokenization does not affect its falsifiability role. Using a local
+    tokenizer removes the prior dependency on downloading ``gpt2`` from
+    HuggingFace and makes the control runnable on air-gapped machines.
+    """
+
+    def __init__(self, vocab_size: int = 50000) -> None:
+        self.vocab_size = vocab_size
+        self.pad_token = "[PAD]"
+        self.eos_token = "[EOS]"
+        self.unk_token = "[UNK]"
+        self.pad_token_id = 0
+        self.eos_token_id = 1
+        self.unk_token_id = 2
+        self._special = {
+            self.pad_token: self.pad_token_id,
+            self.eos_token: self.eos_token_id,
+            self.unk_token: self.unk_token_id,
+        }
+
+    def _token_id(self, token: str) -> int:
+        if token in self._special:
+            return self._special[token]
+        h = hash(token) & 0xFFFFFFFF
+        return 3 + (h % (self.vocab_size - 3))
+
+    def __call__(
+        self,
+        text: str,
+        *,
+        return_tensors: Optional[str] = None,
+        truncation: bool = False,
+        max_length: int = 512,
+        padding: bool = False,
+    ) -> dict[str, Any]:
+        tokens = (text or "").split()
+        input_ids = [self.eos_token_id] + [self._token_id(t) for t in tokens] + [self.eos_token_id]
+        if truncation and max_length and len(input_ids) > max_length:
+            input_ids = input_ids[:max_length]
+        if padding:
+            # Padding is not used by the embedder path, but implement the contract.
+            input_ids = input_ids + [self.pad_token_id] * max(0, max_length - len(input_ids))
+        attention_mask = [1 if tid != self.pad_token_id else 0 for tid in input_ids]
+        if return_tensors == "pt":
+            try:
+                import torch
+
+                return {
+                    "input_ids": torch.tensor([input_ids], dtype=torch.long),
+                    "attention_mask": torch.tensor([attention_mask], dtype=torch.long),
+                }
+            except ImportError:
+                pass
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+class _TorchFreeEmbedding:
+    """Minimal tensor-like object returned by the torch-free embed path."""
+
+    def __init__(self, values: list[float]) -> None:
+        self._values = values
+        self.shape = (len(values),)
+
+    def dim(self) -> int:
+        return 1
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            return self._values[idx]
+        raise NotImplementedError
+
+    def tolist(self) -> list[float]:
+        return list(self._values)
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def to(self, _device):
+        return self
+
+
+class _TorchFreeRandomMamba:
+    """Deterministic random embedder for the random-mamba control without torch.
+
+    Produces reproducible mean-pooled embeddings from token IDs using Python's
+    stdlib random module seeded per token. This lets the random-mamba backend
+    load and embed on machines that lack PyTorch/Transformers, which is exactly
+    the air-gapped/test environment the control is meant to exercise.
+    """
+
+    def __init__(self, hidden_size: int, vocab_size: int = 50000) -> None:
+        self.hidden_size = hidden_size
+        self.vocab_size = vocab_size
+
+    def __call__(self, *, input_ids, attention_mask=None, **_kwargs) -> Any:
+        import random
+
+        # input_ids may be a nested list or a torch tensor.
+        if hasattr(input_ids, "tolist"):
+            batch = input_ids.tolist()
+        else:
+            batch = input_ids
+        if not isinstance(batch, list) or not batch:
+            batch = [[]]
+        if not isinstance(batch[0], list):
+            batch = [batch]
+
+        # Mean-pool over the sequence dimension for each batch item.
+        pooled_batch: list[list[float]] = []
+        for seq in batch:
+            token_vectors: list[list[float]] = []
+            for tid in seq:
+                rng = random.Random((tid + 1) * 7919 + _EMBED_SEED)
+                vec = [rng.gauss(0.0, 0.02) for _ in range(self.hidden_size)]
+                token_vectors.append(vec)
+            if token_vectors:
+                pooled = [sum(col) / len(token_vectors) for col in zip(*token_vectors)]
+            else:
+                pooled = [0.0] * self.hidden_size
+            pooled_batch.append(pooled)
+
+        # Return the first (and usually only) pooled vector wrapped in a
+        # tensor-like object. For multi-item batches callers can extend this.
+        return type("Out", (), {"pooled_embeddings": _TorchFreeEmbedding(pooled_batch[0])})()
+
+    def eval(self) -> "_TorchFreeRandomMamba":
+        return self
+
+    def to(self, _device) -> "_TorchFreeRandomMamba":
+        return self
+
+    def parameters(self):
+        return iter([])
+
 
 # --- Backend registry --------------------------------------------------------
 
@@ -105,10 +251,10 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
         is_code_pretrained=False,
     ),
     # Quantized Codestral-Mamba via llama.cpp / GGUF. Keeps the code
-    # pretraining at a fraction of the RAM (~5.7 GB for Q6_K vs ~14 GB
+    # pretraining at a fraction of the RAM (~2.5 GB for Q2_K vs ~14 GB
     # for the fp16 HF weights). Loaded via llama-cpp-python, not HF
     # transformers — see `_try_load_gguf_backend` and the dispatch in
-    # `embed()`. Default file is Q6_K; override with `RC_CODESTRAL_GGUF_FILE`.
+    # `embed()`. Default file is Q2_K; override with `RC_CODESTRAL_GGUF_FILE`.
     "codestral-mamba-gguf": _EmbedderBackend(
         name="codestral-mamba-gguf",
         checkpoint="gabriellarson/Mamba-Codestral-7B-v0.1-GGUF",
@@ -187,6 +333,32 @@ class _BackboneHandle:
 
 _HANDLE: Optional[_BackboneHandle] = None
 _LOAD_LOCK = threading.Lock()
+
+# Negative cache for backbone load failures. Without this, every call to
+# load_backbone() that fails (e.g. broken GGUF, upstream llama.cpp bug)
+# re-attempts the full load -- including a ~4 GB mmap of the GGUF file --
+# which compounds into severe memory pressure under request load
+# (2026-05-17 incident). The cooldown is configurable via env.
+_LAST_FAILURE_TS: float = 0.0
+_LAST_FAILURE_MSG: str = ""
+_DEFAULT_FAIL_COOLDOWN_S: float = 60.0
+
+
+def _fail_cooldown_s() -> float:
+    raw = os.environ.get("S2_BACKBONE_FAIL_COOLDOWN_S")
+    if raw is None or raw == "":
+        return _DEFAULT_FAIL_COOLDOWN_S
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEFAULT_FAIL_COOLDOWN_S
+
+
+def reset_failure_cache() -> None:
+    """Clear the cached load failure. Used by tests and operators."""
+    global _LAST_FAILURE_TS, _LAST_FAILURE_MSG
+    _LAST_FAILURE_TS = 0.0
+    _LAST_FAILURE_MSG = ""
 
 
 # --- Helpers ------------------------------------------------------------------
@@ -396,13 +568,13 @@ def _resolve_dtype(backend: _EmbedderBackend) -> Any:
     return None
 
 
-_GGUF_DEFAULT_FILE = "Mamba-Codestral-7B-v0.1.Q6_K.gguf"
+_GGUF_DEFAULT_FILE = "Mamba-Codestral-7B-v0.1-Q2_K.gguf"
 
 
 def _try_load_gguf_backend(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
     """Load a GGUF embedder via ``llama-cpp-python``.
 
-    Downloads the GGUF artifact from HuggingFace (default Q6_K, override
+    Downloads the GGUF artifact from HuggingFace (default Q2_K, override
     with ``RC_CODESTRAL_GGUF_FILE``) and instantiates ``llama_cpp.Llama``
     in embedding mode. The handle's ``model`` is a thin adapter that the
     GGUF branch in ``embed()`` keys on by backend name.
@@ -431,12 +603,23 @@ def _try_load_gguf_backend(backend: _EmbedderBackend, device: str) -> Optional[_
         logger.warning("GGUF download failed for %s/%s: %s", backend.checkpoint, filename, exc)
         return None
 
-    n_ctx = backend.max_seq_len or 8192
+    # n_ctx caps SSM activation/state buffers. On a 16 GiB host the Mamba-2
+    # forward pass at 8192 peaks ~18 GiB and trips the watchdog; 2048 is plenty
+    # for a code diff (avg ~600 tokens). Override via RC_GGUF_N_CTX.
+    n_ctx = int(os.environ.get("RC_GGUF_N_CTX", "0")) or (backend.max_seq_len or 8192)
+    # n_batch / n_ubatch dominate llama.cpp compute-buffer allocation for
+    # Mamba-2 (each scales the SSM scan workspace). On a 16 GiB host the default
+    # n_batch=512 blows peak RSS to ~20 GiB. Cap small; embedding-only use never
+    # benefits from large batches anyway.
+    n_batch = int(os.environ.get("RC_GGUF_N_BATCH", "128"))
+    n_ubatch = int(os.environ.get("RC_GGUF_N_UBATCH", str(min(n_batch, 64))))
     try:
         llama = llama_cpp.Llama(
             model_path=gguf_path,
             embedding=True,
             n_ctx=n_ctx,
+            n_batch=n_batch,
+            n_ubatch=n_ubatch,
             n_threads=int(os.environ.get("RC_GGUF_THREADS", "0")) or None,
             verbose=False,
         )
@@ -471,6 +654,11 @@ def _try_load_gguf_backend(backend: _EmbedderBackend, device: str) -> Optional[_
 
 def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
     """Attempt to load a single backend. Returns None on failure."""
+    # The random-mamba control can run without PyTorch/Transformers using a
+    # torch-free deterministic embedder, so skip the import requirement for it.
+    if backend.name == "random-mamba":
+        return _try_load_random_mamba(backend, device)
+
     try:
         import torch  # noqa: F401
         from transformers import AutoModel, AutoTokenizer
@@ -488,8 +676,6 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
                 f"backend {backend.name!r} checkpoint {backend.checkpoint!r} "
                 f"is not in _ALLOWED_CHECKPOINTS; refusing to load."
             )
-        if backend.name == "random-mamba":
-            return _try_load_random_mamba(backend, device)
         if backend.name == "codestral-mamba-gguf":
             return _try_load_gguf_backend(backend, device)
 
@@ -568,15 +754,44 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
 
 
 def _try_load_random_mamba(backend: _EmbedderBackend, device: str) -> Optional[_BackboneHandle]:
-    """Create a randomly-initialised Mamba-2 model for the falsifiability control."""
+    """Create a randomly-initialised Mamba-2 model for the falsifiability control.
+
+    Falls back to a torch-free deterministic embedder when PyTorch is not
+    installed, so the control remains usable in air-gapped / CI environments.
+    """
     try:
-        import torch
+        import torch  # noqa: F401
+        from transformers import Mamba2Config, Mamba2Model
+    except ImportError:
+        logger.info("random-mamba: torch/transformers unavailable, using torch-free control")
+        tokenizer: Any = _OfflineTokenizer(vocab_size=50000)
+        model = _TorchFreeRandomMamba(hidden_size=backend.hidden_size)
+        info = {
+            "checkpoint": "random-mamba-control",
+            "hidden_size": backend.hidden_size,
+            "num_parameters": 0,
+            "license": "n/a",
+            "source_url": "(randomly-initialised, torch-free)",
+            "is_fallback": False,
+            "device": device,
+            "embedder_role": "feature_extractor",
+            "embedder_backend": "random-mamba",
+        }
+        return _BackboneHandle(
+            model=model,
+            tokenizer=tokenizer,
+            device=device,
+            checkpoint="random-mamba",
+            hidden_size=backend.hidden_size,
+            info=info,
+            backend=backend,
+        )
+
+    try:
         # Use the base Mamba2Model rather than the CausalLM variant: embed()
         # pulls ``last_hidden_state`` off the forward output, and the CausalLM
         # head replaces that with ``logits``, which would make this backend
         # raise on every call.
-        from transformers import Mamba2Config, Mamba2Model
-
         logger.info("Creating random-mamba control model")
         config = Mamba2Config(
             hidden_size=backend.hidden_size,
@@ -584,18 +799,33 @@ def _try_load_random_mamba(backend: _EmbedderBackend, device: str) -> Optional[_
             state_size=128,
             conv_kernel=4,
             expand=2,
+            num_heads=24,
+            head_dim=64,
+            vocab_size=50000,
         )
         model = Mamba2Model(config)
         model.eval()
         model.to(device)
 
-        # Random-init models have no tokenizer — create a dummy GPT-2 tokenizer
-        from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(
-            "gpt2", trust_remote_code=False,
+        # Random-init models have no tokenizer. Prefer a fully offline
+        # whitespace tokenizer so the control runs without network credentials.
+        # Fall back to GPT-2 only when it is already cached, to preserve
+        # backward-compatible behaviour in warm environments.
+        tokenizer = _OfflineTokenizer(vocab_size=50000)
+        offline = (
+            os.environ.get("TRANSFORMERS_OFFLINE") == "1"
+            or os.environ.get("HF_HUB_OFFLINE") == "1"
         )
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
+        if not offline:
+            try:
+                from transformers import AutoTokenizer
+
+                gpt2 = AutoTokenizer.from_pretrained("gpt2", trust_remote_code=False)
+                if gpt2.pad_token is None:
+                    gpt2.pad_token = gpt2.eos_token
+                tokenizer = gpt2
+            except Exception:
+                logger.info("random-mamba: using offline tokenizer (gpt2 not cached)")
 
         num_params = sum(p.numel() for p in model.parameters())
         info = {
@@ -636,9 +866,22 @@ def load_backbone(
     Returns a (model, tokenizer) tuple. Raises BackboneUnavailableError if
     every candidate fails.
     """
-    global _HANDLE
+    global _HANDLE, _LAST_FAILURE_TS, _LAST_FAILURE_MSG
     if _HANDLE is not None and _HANDLE.model is not None:
         return _HANDLE.model, _HANDLE.tokenizer
+
+    # Negative cache: if a recent load failed, don't retry within the cooldown.
+    # Each failed attempt mmaps multi-GB model files and leaks file handles
+    # via llama_cpp.Llama's __del__ AttributeError, so retrying on every
+    # request rapidly fills swap.
+    cooldown = _fail_cooldown_s()
+    if cooldown > 0 and _LAST_FAILURE_TS > 0:
+        elapsed = time.monotonic() - _LAST_FAILURE_TS
+        if elapsed < cooldown:
+            raise BackboneUnavailableError(
+                f"{_LAST_FAILURE_MSG} (cached failure, retry in "
+                f"{cooldown - elapsed:.0f}s)"
+            )
 
     with _LOAD_LOCK:
         if _HANDLE is not None and _HANDLE.model is not None:
@@ -652,6 +895,8 @@ def load_backbone(
             handle = _try_load_legacy(legacy_ckpt, device)
             if handle is not None:
                 _HANDLE = handle
+                _LAST_FAILURE_TS = 0.0
+                _LAST_FAILURE_MSG = ""
                 BACKBONE_INFO.update(handle.info)
                 logger.info(
                     "SSM backbone ready (legacy path): checkpoint=%s hidden=%d",
@@ -664,6 +909,8 @@ def load_backbone(
         handle = _try_load_backend(backend, device)
         if handle is not None:
             _HANDLE = handle
+            _LAST_FAILURE_TS = 0.0
+            _LAST_FAILURE_MSG = ""
             BACKBONE_INFO.update(handle.info)
             logger.info(
                 "Embedder ready: backend=%s checkpoint=%s hidden=%d params=%d device=%s",
@@ -674,20 +921,46 @@ def load_backbone(
             )
             return handle.model, handle.tokenizer
 
-        # Fallback: try remaining backends in registry order
-        for name, fb_backend in _BACKENDS.items():
+        # If the operator explicitly set RC_EMBEDDER, honor it strictly: do
+        # NOT silently fall back to a heavier backend. The fallback loop used
+        # to iterate _BACKENDS in dict order, which put the 14 GB full-HF
+        # ``codestral-mamba`` first -- so any transient GGUF failure
+        # (download flake, revision mismatch, llama_cpp issue) silently
+        # promoted the load into the 76 GB swap-thrash territory that crashed
+        # the host on 2026-05-16. Strict mode short-circuits that path.
+        operator_explicit = bool(os.environ.get("RC_EMBEDDER", "").strip())
+        if operator_explicit:
+            msg = (
+                f"RC_EMBEDDER={backend.name} failed to load and no fallback "
+                "is permitted when the operator pinned the backend explicitly. "
+                "Unset RC_EMBEDDER to allow registry fallback."
+            )
+            _LAST_FAILURE_TS = time.monotonic()
+            _LAST_FAILURE_MSG = msg
+            raise BackboneUnavailableError(msg)
+
+        # Fallback: only runs when the operator did NOT pin RC_EMBEDDER.
+        # Tries remaining backends in registry order, smallest-first to keep
+        # an accidental fallback from blowing up RAM.
+        fallback_order = sorted(
+            _BACKENDS.items(),
+            key=lambda kv: 0 if kv[1].hidden_size <= 1024 else kv[1].hidden_size,
+        )
+        for name, fb_backend in fallback_order:
             if name == backend.name:
                 continue
             handle = _try_load_backend(fb_backend, device)
             if handle is not None:
                 _HANDLE = handle
+                _LAST_FAILURE_TS = 0.0
+                _LAST_FAILURE_MSG = ""
                 BACKBONE_INFO.update(handle.info)
                 logger.info(
                     "Embedder ready (fallback): backend=%s", fb_backend.name,
                 )
                 return handle.model, handle.tokenizer
 
-        raise BackboneUnavailableError(
+        msg = (
             "No embedder backend could be loaded. "
             "Tried RC_EMBEDDER={} and legacy fallbacks. "
             "Set RC_EMBEDDER to one of: {}.".format(
@@ -695,6 +968,9 @@ def load_backbone(
                 ", ".join(_BACKENDS.keys()),
             )
         )
+        _LAST_FAILURE_TS = time.monotonic()
+        _LAST_FAILURE_MSG = msg
+        raise BackboneUnavailableError(msg)
 
 
 def _try_load_legacy(ckpt: str, device: str) -> Optional[_BackboneHandle]:
@@ -787,30 +1063,59 @@ _EMBED_SEED = 0xC0DEC0DE & 0xFFFFFFFF
 
 
 def embed(text: str) -> Any:
-    """Return a 1D pooled embedding as a torch.Tensor.
+    """Return a 1D pooled embedding.
 
     Pooling strategy depends on backend:
       - mean: mean over sequence dim (SSM backends)
       - cls:  first-token embedding (transformer backends: bge-code, unixcoder)
       - GGUF backends (``codestral-mamba-gguf``) return a pre-pooled embedding
         from llama.cpp and bypass the tokenize/forward/pool path entirely.
-    """
-    import torch
 
+    When PyTorch is unavailable and the backend is the torch-free
+    random-mamba control, returns a ``_TensorLike`` with shape ``(hidden_size,)``.
+    """
     handle = get_handle()
     model = handle.model
     tokenizer = handle.tokenizer
     device = handle.device
     backend = handle.backend
 
-    # GGUF path: llama.cpp returns a pre-pooled embedding via .embed(text).
+    # Torch-free path: random-mamba control without PyTorch installed.
+    if isinstance(model, _TorchFreeRandomMamba):
+        max_len = backend.max_seq_len if backend is not None else 512
+        enc = tokenizer(
+            text or " ",
+            return_tensors=None,
+            truncation=True,
+            max_length=max_len,
+            padding=False,
+        )
+        input_ids = enc["input_ids"]
+        out = model(input_ids=input_ids)
+        return out.pooled_embeddings
+
+    import torch
+
+    # GGUF path: llama.cpp's .embed() returns either a flat [hidden] list
+    # (when the model GGUF declares a pooling type) or a per-token
+    # [n_tokens, hidden] list (Mamba-Codestral GGUFs do NOT declare pooling,
+    # so we get per-token). Detect 2D and mean-pool to [hidden] so the
+    # downstream cosine/L2 metrics get a stable shape independent of input
+    # token count. Failure to pool here surfaces as
+    # "inconsistent tensor size" in _cosine_similarity when two inputs of
+    # different lengths are compared.
     if backend is not None and backend.name == "codestral-mamba-gguf":
         text = text if text else " "
         try:
             vec = model.embed(text)  # llama_cpp.Llama instance
         except Exception as exc:  # noqa: BLE001
             raise BackboneUnavailableError(f"GGUF embed failed: {exc}") from exc
-        return torch.tensor(vec, dtype=torch.float32)
+        t = torch.tensor(vec, dtype=torch.float32)
+        if t.dim() == 2:
+            t = t.mean(dim=0)
+        elif t.dim() > 2:
+            t = t.reshape(-1, t.shape[-1]).mean(dim=0)
+        return t
 
     max_len = 512
     pooling = "mean"

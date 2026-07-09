@@ -66,12 +66,16 @@ def _calibration_path() -> Path:
     override = os.environ.get("RC_CALIBRATION_PATH")
     if override:
         return Path(override)
-    try:
-        from src.hooks import _host_env  # type: ignore
-        project_dir = str(_host_env.project_dir())
-    except Exception:  # noqa: BLE001
-        project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-    return Path(project_dir) / "eval" / "runs" / "calibration.json"
+    # Calibration is reasoning-core-internal: resolve relative to RC_REPO
+    # (where this hook code lives), not CLAUDE_PROJECT_DIR. Otherwise the
+    # hook hunts for calibration.json under every foreign project that
+    # invokes it and emits stderr noise.
+    rc_repo = os.environ.get("RC_REPO")
+    if rc_repo:
+        base = Path(rc_repo)
+    else:
+        base = Path(__file__).resolve().parent.parent.parent
+    return base / "eval" / "runs" / "calibration.json"
 
 
 def _warn_once(key: str, msg: str) -> None:
@@ -88,7 +92,7 @@ def _load_models_cached(path: Path) -> Optional[Dict[str, Any]]:
     """Lazy-load + cache models keyed by mtime. Returns None on any error."""
     try:
         if not path.exists() or not path.is_file():
-            _warn_once(f"missing:{path}", f"file not found ({path})")
+            _warn_once(f"missing:{path}", "model file not found")
             return None
         mtime_ns = path.stat().st_mtime_ns
     except OSError as exc:

@@ -46,13 +46,15 @@ have, or violates a coupling/coherence threshold.
 Two layers, one local pipe:
 
 - **Neural gate.** A code-embedder (`mamba-130m` default; `codestral-mamba`,
-  `bge-code`, `unixcoder-base` selectable via `RC_EMBEDDER`) scores an
-  11-dim risk vector per edit (cyclomatic / fan-in / fan-out / depth / churn
-  / coupling / cohesion / novelty / session_centroid_drift / project_fan_in
-  / project_coupling) plus a chord-distance coherence delta on [0, 2].
+  `bge-code`, `unixcoder-base`, `random-mamba` selectable via `RC_EMBEDDER`)
+  scores an 8-dim risk vector per edit (cyclomatic / fan-in / fan-out / depth
+  / churn / coupling / cohesion / novelty) plus a chord-distance
+  `coherence_delta` on [0, 2]. Three additional project/session dims are
+  emitted only when `RC_PROJECT_INDEX=1` and a session baseline is registered.
 - **Symbolic gate.** Optional `.reasoning-core/rules.yaml` with
   `forbid_import` / `forbid_pattern` rules — fail-closed by default, evaluated
-  alongside the neural risk vector.
+  alongside the neural risk vector. When the SSM sidecar times out, the hook
+  falls back to the symbolic gate and emits `signal_source="symbolic_fallback"`.
 
 Both decisions surface through the same exit-2 pipe with top-3 risk
 contributors and a `validate_unified_diff` repair tool for blocked agents.
@@ -69,7 +71,9 @@ On an 8-task eval with 3 runs each, blind-graded by 3 cross-vendor judges:
 - **100% local** — sidecars bind `127.0.0.1` only (loopback, refuses external NIC). Default 130M-param Mamba SSM, ~200MB RAM, sits next to `claude`. No telemetry, no cloud relay — your code stays on your laptop ([engineers asked for exactly this](thoughts/shared/research/2026-06-02-community-pain-points.md#5-demand-for-local--no-cloud-enforcement)).
 - **Repo-scoped** via direnv — leaves every other folder on your machine untouched.
 
-Costs: **+98s wall-clock per run** (the gate plans before editing), and code legibility was a tie.
+Costs (measured with enforcement enabled — Setup B; default installed posture
+is `RC_MODE=advise`): **+98s wall-clock per run** (the gate plans before editing),
+and code legibility was a tie.
 
 Full numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
@@ -102,21 +106,25 @@ are left alone.
 claude       # or: gemini / copilot / vibe — hooks fire from any of them
 ```
 
-### Defaults (effective 2026-06-01)
+### Defaults (Phase 0, honest opt-in)
 
-- **`RC_SHADOW_MODE=0`** — gate enforces blocking decisions.
+- **`RC_MODE=advise`** — gate warns and audits, but never blocks. Modes:
+  `advise` (warn/audit only), `copilot` (block on contract/oracle/rule
+  failures), `autopilot` (block and auto-repair within policy). Flip to
+  `copilot` after reviewing a 48-hour shadow report.
+- **`RC_SHADOW_MODE=1`** — decisions are logged, not enforced. Kept for
+  backward compatibility; `RC_MODE=advise` is the canonical posture.
 - **`RC_PLAN_GROUNDING=1`** — warn (stderr-only) when an Edit drifts from
-  PLAN.md. Set `=0` to silence, `=2` to hard-block. On first contact with
-  a repo missing PLAN.md a stub is auto-scaffolded from README.md
-  (override with `RC_NO_PLAN_SCAFFOLD=1`).
+  `PLAN.md`. Set `=0` to silence, `=2` to hard-block.
 - **`RC_BEST_EFFORT_SPEC=1`** — SessionStart hook injects the iter-3
   spec overlay.
-- **`S2_HARD_CAP_MS=3000`** — hard client-side cap on `/score` POSTs;
-  on timeout the gate falls back to the symbolic layer
-  (`reason="hard_cap_exceeded"`).
-- **`S2_COHERENCE_THRESHOLD=0.09`** — coherence-delta ceiling
-  recalibrated from 0.5 to the empirical 95th percentile (audit
-  2026-06-01 §1.3).
+- **`RC_RULE_ENGINE=1`** — enable `.reasoning-core/rules.yaml` symbolic gate
+  (fail-closed; co-emitted with the neural vector).
+- **`S2_HARD_CAP_MS=1500`** — hard client-side cap on `/score` POSTs;
+  on timeout the hook invokes the symbolic rule engine, lang-lock, and
+  plan-grounding gates and emits `signal_source="symbolic_fallback"`.
+- **`S2_COHERENCE_THRESHOLD=0.09`** — chord-distance ceiling recalibrated
+  to the empirical 95th percentile (audit 2026-06-01 §1.3).
 
 Decisions are always logged to `~/.local/share/reasoning-core/events/`
 regardless of mode. See [`docs/CHANGELOG-2026-06-02.md`](docs/CHANGELOG-2026-06-02.md)
@@ -172,11 +180,13 @@ skips the call; for mission-critical work prefer Claude or Gemini. Detail:
 The generated `.envrc` exposes the knobs you'll touch first:
 
 ```bash
-export RC_SHADOW_MODE=1     # 0 = enforce, 1 = log-only (default)
-export S2_FAIL_CLOSED=0     # 1 = block if sidecar down, 0 = fail open (default)
-export RC_PLAN_BLOCK=0      # 1 = plan-guard warnings escalate to hard block
-# export RC_EMBEDDER=mamba-130m       # mamba-130m | codestral-mamba | bge-code | unixcoder-base
-# export RC_RULE_ENGINE=1             # enable .reasoning-core/rules.yaml symbolic gate
+export RC_MODE=advise       # advise | copilot | autopilot
+export RC_SHADOW_MODE=1     # legacy: 0 = enforce, 1 = log-only
+export S2_FAIL_CLOSED=0     # 1 = block if sidecar down, 0 = fail open
+export RC_PLAN_GROUNDING=1  # 0 = off, 1 = warn, 2 = hard block
+export RC_BEST_EFFORT_SPEC=1# SessionStart iter-3 spec overlay
+export RC_RULE_ENGINE=1     # enable .reasoning-core/rules.yaml symbolic gate
+# export RC_EMBEDDER=mamba-130m       # mamba-130m | codestral-mamba | bge-code | unixcoder-base | random-mamba
 # export RC_PROJECT_INDEX=1           # enable project_fan_in / project_coupling dims
 # export RC_DIFF_AUDIT=1              # post-turn unified-diff structural audit
 ```
@@ -191,9 +201,17 @@ single-shot bypasses:
 rc status                   # sidecar health + threshold posture
 rc explain                  # why the last edit was blocked
 rc bypass-next              # arm one bypass for the next Edit/Write
+rc confirm-next             # confirm the next block was correct (audit ground-truth)
+rc enable-enforcement       # first-run wizard: scaffold PLAN.md and flip to copilot
 rc reasoning-efficiency     # composite north-star metric from audit log
 rc override-survival        # how many operator overrides survived to git HEAD
 ```
+
+`rc bypass-next` and `rc confirm-next` emit explicit `operator_override`
+and `operator_confirmed` audit events so the shadow report can measure
+false positives. `rc enable-enforcement` walks you through a 48-hour
+shadow review, scaffolds `PLAN.md` from `README.md`, and switches the repo
+to `RC_MODE=copilot`.
 
 ---
 
@@ -202,7 +220,7 @@ rc override-survival        # how many operator overrides survived to git HEAD
 - [**docs/INSTALL.md**](docs/INSTALL.md) — manual install, global-everywhere setup, Scaleway-hosted critic, Cato VPN, supervisor/launchd, embedder backends, troubleshooting
 - [**docs/USAGE.md**](docs/USAGE.md) — `rc` CLI, hook layers, rule engine, diff audit, shadow mode, bypass/kill switches, FAQ
 - [**docs/CONFIGURATION.md**](docs/CONFIGURATION.md) — every `RC_*` and `S2_*` env var
-- [**docs/HOW_IT_WORKS.md**](docs/HOW_IT_WORKS.md) — System 1 + System 2 architecture, 11-dim risk vector, chord-distance scoring, rule engine wiring
+- [**docs/HOW_IT_WORKS.md**](docs/HOW_IT_WORKS.md) — System 1 + System 2 architecture, 8-dim risk vector, chord-distance scoring, rule engine wiring
 - [**docs/BENCHMARKS.md**](docs/BENCHMARKS.md) — full eval numbers, per-task verdicts, caveats
 - [**docs/ROADMAP.md**](docs/ROADMAP.md) — what's shipped, what's open
 - [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) — deep technical dive

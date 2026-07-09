@@ -27,6 +27,8 @@ import pre_plan_guard  # type: ignore  # noqa: E402
 def _run(payload, *, env_extra=None, timeout=20):
     env = os.environ.copy()
     env.pop("RC_PLAN_BLOCK", None)
+    env.pop("RC_EMBEDDER", None)
+    env["RC_EMBEDDER"] = "random-mamba"
     if env_extra:
         env.update(env_extra)
     return subprocess.run(

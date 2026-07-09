@@ -208,17 +208,21 @@ pipeline now treats cohesion as undefined for graphs with `< 2` nodes
 
 ### Coherence-delta normalization
 
-`coherence_delta` is the L2 distance between the mean-pooled Mamba embeddings
-of the pre- and post-edit AST-token streams, **normalized by
-`sqrt(hidden_size)`**. The raw L2 of two `hidden_size`-D vectors scales with
-the embedding dimension (a 768-D `mamba-130m` checkpoint produces drift values
-~30–40 on benign edits, while a hypothetical 256-D checkpoint would produce
-~17–23 for the same semantic delta). Dividing by `sqrt(hidden_size)` recasts
-the metric as average per-dimension drift in standard units, making the
-`COHERENCE_DELTA_THRESHOLD = 1.5` constant in `src/s2_core.py` portable across
-checkpoints — swapping `S2_SSM_CHECKPOINT` no longer requires re-tuning the
-regression threshold. The same normalization is applied to `cumulative_drift`
-when a session baseline is registered, so both metrics share one scale.
+`coherence_delta` is the **chord distance** between the L2-normalized
+mean-pooled embeddings of the pre- and post-edit AST-token streams:
+
+```
+coherence_delta = || emb_before/||emb_before|| - emb_after/||emb_after|| ||
+                ∈ [0, 2]
+```
+
+Normalizing each embedding to the unit sphere before differencing removes the
+backbone-specific magnitude scale and the dependence on pooling strategy
+(mean vs CLS) and sequence length. This makes the metric dimension-invariant:
+a 130M Mamba and a 7B Codestral-Mamba produce comparable chord distances for
+the same semantic delta, so `S2_COHERENCE_THRESHOLD` does not need to be
+retuned when swapping embedders. The same chord distance is used for
+`cumulative_drift` when a session baseline is registered.
 
 ## Tree-sitter language support
 

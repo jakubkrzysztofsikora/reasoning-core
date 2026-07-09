@@ -54,7 +54,7 @@
         <key>RC_EMBEDDER</key>
         <string>codestral-mamba-gguf</string>
         <key>RC_CODESTRAL_GGUF_FILE</key>
-        <string>Mamba-Codestral-7B-v0.1-Q4_0.gguf</string>
+        <string>Mamba-Codestral-7B-v0.1-Q2_K.gguf</string>
         <key>RC_GGUF_N_CTX</key>
         <string>2048</string>
         <key>RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION</key>

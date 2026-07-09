@@ -33,7 +33,8 @@
       {
         "hooks": [
           { "type": "command", "command": "python3 <RC_REPO>/src/hooks/session_start_manifest.py", "timeout": 30000 },
-          { "type": "command", "command": "python3 <RC_REPO>/src/hooks/session_resume_inject.py", "timeout": 5000 }
+          { "type": "command", "command": "python3 <RC_REPO>/src/hooks/session_resume_inject.py", "timeout": 5000 },
+          { "type": "command", "command": "python3 <RC_REPO>/src/hooks/session_start_best_effort.py", "timeout": 10000 }
         ]
       }
     ],

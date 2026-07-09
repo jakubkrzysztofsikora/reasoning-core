@@ -100,7 +100,7 @@ The rc CLI tool (bin/rc) provides diagnostics and control:
     \begin{tabular}{lp{10cm}}
         \toprule
         Command & Description \\\n        \midrule
-        rc status & Sidecar health + threshold posture \\\n        rc explain & Explain the most recent block decision \\\n        rc bypass-next & Arm a single-shot bypass \\\n        rc skip-file <path> & Add path to skip list \\\n        rc unskip-file <path> & Remove path from skip list \\\n        \bottomrule
+        rc status & Sidecar health + threshold posture \\\n        rc explain \textless decision-id\textgreater & Full audit row for a decision \\\n        rc bypass-next & Arm a single-shot bypass \\\n        rc confirm-next & Record operator agreement with a block \\\n        rc skip-file \textless path\textgreater & Add path to skip list \\\n        rc unskip-file \textless path\textgreater & Remove path from skip list \\\n        rc enable-enforcement & Scaffold PLAN.md and flip to copilot mode \\\n        rc reasoning-efficiency [--days N] & Audit-log composite metric \\\n        rc override-survival [--days N] & Override survival ratio \\\n        rc audit-history [-n N] [--json] & Label recent commits for calibration feedback \\\n        \bottomrule
     \end{tabular}
 \end{table*}
 

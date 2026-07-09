@@ -7,6 +7,7 @@ fall-back to the symbolic layer on slow sidecars.
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
 import http.server
 import json
 import os
@@ -170,7 +171,9 @@ def test_slow_sidecar_triggers_hard_cap_fail_open(tmp_path):
 
 
 def test_slow_sidecar_with_fail_closed_blocks(tmp_path):
-    """S2_HARD_CAP_MS + S2_FAIL_CLOSED=1 → hook exits 2."""
+    """S2_HARD_CAP_MS + S2_FAIL_CLOSED=1: hard cap now triggers symbolic
+    fallback, so a clean edit no longer blocks. The fail-closed path is
+    reserved for non-timeout sidecar unavailability."""
     src = tmp_path / "x.py"
     src.write_text("def f(): return 1\n", encoding="utf-8")
     with _stub(delay_s=3.0) as stub:
@@ -183,7 +186,105 @@ def test_slow_sidecar_with_fail_closed_blocks(tmp_path):
             },
             timeout=20.0,
         )
+    assert proc.returncode == 0, (proc.returncode, proc.stderr)
+    assert "symbolic fallback engaged" in proc.stderr
+
+
+def test_hard_cap_symbolic_fallback_emits_audit_event(tmp_path):
+    """Hard cap + clean edit emits signal_source=symbolic_fallback audit row."""
+    src = tmp_path / "x.py"
+    src.write_text("def f(): return 1\n", encoding="utf-8")
+    audit_root = tmp_path / "audit"
+    with _stub(delay_s=3.0) as stub:
+        proc = _run_hook(
+            _edit_payload(str(src), "return 1", "return 2"),
+            env={
+                "S2_URL": stub.url(),
+                "S2_HARD_CAP_MS": "500",
+                "RC_AUDIT_ROOT": str(audit_root),
+            },
+            timeout=20.0,
+        )
+    assert proc.returncode == 0, proc.stderr
+    # Find the JSONL file written today.
+    day_dir = audit_root / _dt.date.today().isoformat()
+    jsonl_files = list(day_dir.glob("*.jsonl"))
+    assert jsonl_files, "expected an audit JSONL file"
+    lines = jsonl_files[0].read_text(encoding="utf-8").strip().splitlines()
+    assert lines
+    event = json.loads(lines[-1])
+    assert event.get("signal_source") == "symbolic_fallback"
+    assert event.get("decision") == "allowed"
+    assert event.get("reason") == "symbolic_fallback_clean"
+
+
+def test_hard_cap_symbolic_fallback_blocks_on_rule_violation(tmp_path):
+    """Hard cap + rule-engine deny blocks when RC_MODE=copilot."""
+    rules_dir = tmp_path / ".reasoning-core"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    rules_yaml = rules_dir / "rules.yaml"
+    rules_yaml.write_text(
+        "corpus_version: v1\n"
+        "rules:\n"
+        "  - id: no_os_import\n"
+        "    type: forbid_import\n"
+        "    severity: deny\n"
+        "    language: python\n"
+        "    target: os\n"
+        "    message: os import is forbidden\n",
+        encoding="utf-8",
+    )
+    src = tmp_path / "x.py"
+    src.write_text("# module\n", encoding="utf-8")
+    with _stub(delay_s=3.0) as stub:
+        proc = _run_hook(
+            _edit_payload(str(src), "# module", "import os\n# module"),
+            env={
+                "S2_URL": stub.url(),
+                "S2_HARD_CAP_MS": "500",
+                "RC_RULE_ENGINE": "1",
+                "RC_RULE_ENGINE_ALLOW_BASIC_YAML": "1",
+                "RC_PROJECT_DIR": str(tmp_path),
+                "RC_MODE": "copilot",
+            },
+            timeout=20.0,
+        )
     assert proc.returncode == 2, (proc.returncode, proc.stderr)
+    assert "rule_engine" in proc.stderr.lower() or "os import" in proc.stderr.lower()
+
+
+def test_hard_cap_symbolic_fallback_advise_mode_warns(tmp_path):
+    """Hard cap + rule-engine deny warns when RC_MODE=advise (default)."""
+    rules_dir = tmp_path / ".reasoning-core"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    rules_yaml = rules_dir / "rules.yaml"
+    rules_yaml.write_text(
+        "corpus_version: v1\n"
+        "rules:\n"
+        "  - id: no_os_import\n"
+        "    type: forbid_import\n"
+        "    severity: deny\n"
+        "    language: python\n"
+        "    target: os\n"
+        "    message: os import is forbidden\n",
+        encoding="utf-8",
+    )
+    src = tmp_path / "x.py"
+    src.write_text("# module\n", encoding="utf-8")
+    with _stub(delay_s=3.0) as stub:
+        proc = _run_hook(
+            _edit_payload(str(src), "# module", "import os\n# module"),
+            env={
+                "S2_URL": stub.url(),
+                "S2_HARD_CAP_MS": "500",
+                "RC_RULE_ENGINE": "1",
+                "RC_RULE_ENGINE_ALLOW_BASIC_YAML": "1",
+                "RC_PROJECT_DIR": str(tmp_path),
+            },
+            timeout=20.0,
+        )
+    assert proc.returncode == 0, (proc.returncode, proc.stderr)
+    assert "rule_engine" in proc.stderr.lower() or "os import" in proc.stderr.lower()
 
 
 def test_hard_cap_helpers_isolated():

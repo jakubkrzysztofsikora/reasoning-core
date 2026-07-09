@@ -32,6 +32,12 @@ _FILE_LINE_RE = re.compile(
 
 _BARE_PATH_RE = re.compile(r"`([A-Za-z0-9_./\-]+\.[A-Za-z0-9]{1,8})`")
 
+# Match inline code references like `Circit.Data/Model/Authorisation.cs:11`
+# or bare `src/foo.py:42`.
+_LINE_REF_RE = re.compile(
+    r"`?([A-Za-z0-9_./\-]+\.[A-Za-z0-9]{1,8}):\d+`?"
+)
+
 
 def extract_files_with_loc(content: str) -> List[Tuple[str, int]]:
     """Find file_path + estimated LOC pairs in plan body (bulleted lines)."""
@@ -48,7 +54,12 @@ def extract_files_with_loc(content: str) -> List[Tuple[str, int]]:
 
 
 def distinct_file_paths(content: str) -> set[str]:
-    """Return the union of bulleted-with-LOC and bare-backticked file paths."""
+    """Return file paths mentioned in the plan.
+
+    Combines bulleted-with-LOC lines, bare-backticked paths, and inline
+    ``path:line`` references (common in iter-2/iter-3 plans).
+    """
     paths: set[str] = {p for p, _ in extract_files_with_loc(content)}
     paths.update(_BARE_PATH_RE.findall(content))
+    paths.update(_LINE_REF_RE.findall(content))
     return paths

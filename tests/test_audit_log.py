@@ -164,3 +164,23 @@ def test_gate_id_validation_unknown_stripped(isolated_audit):
 def test_gate_id_omitted_when_none(isolated_audit):
     ev = audit_log.new_event(tool_name="Edit", decision="allowed")
     assert "gate_id" not in ev
+
+
+def test_record_operator_override_writes_event(isolated_audit):
+    audit_log.record_operator_override(reason="test_override")
+    lines = _read_session_lines(isolated_audit)
+    assert len(lines) == 1
+    rec = lines[0]
+    assert rec["tool_name"] == "rc"
+    assert rec["decision"] == "operator_override"
+    assert rec["reason"] == "test_override"
+
+
+def test_record_operator_confirmed_writes_event(isolated_audit):
+    audit_log.record_operator_confirmed(reason="test_confirm")
+    lines = _read_session_lines(isolated_audit)
+    assert len(lines) == 1
+    rec = lines[0]
+    assert rec["tool_name"] == "rc"
+    assert rec["decision"] == "operator_confirmed"
+    assert rec["reason"] == "test_confirm"

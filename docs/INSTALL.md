@@ -46,14 +46,47 @@ Supported backends: `mamba-130m` (default), `codestral-mamba`,
 `bge-code`, `unixcoder-base`, `random-mamba` (in-process control for
 falsifiability tests). See [`CONFIGURATION.md#embedder-backend`](CONFIGURATION.md#embedder-backend).
 
-### 3. Boot the sidecar
+### 3. Boot the stack
+
+Recommended path: install the supervisor LaunchAgent — one command,
+brings up the S2 (Mamba) sidecar AND the gen (Qwen MLX) sidecar under
+single-instance locks + memory watchdogs, auto-restarts on crash, starts
+on every login.
 
 ```bash
-bash scripts/start-sidecar.sh
-curl -fsS http://127.0.0.1:8765/health | jq .model_loaded   # → true
+bash scripts/install-supervisor-launchagent.sh
+# wait ~30s for first boot to load Mamba weights
+curl -fsS http://127.0.0.1:8764/health | jq      # broker: aggregates children
+curl -fsS http://127.0.0.1:8765/health | jq .model_loaded  # S2 (Mamba) → true
+curl -fsS http://127.0.0.1:8766/v1/models | jq   # gen (Qwen MLX)
 ```
 
-First CPU boot is ~30s to load Mamba weights.
+Endpoints:
+
+| Port | Service | Notes |
+|---|---|---|
+| 8764 | supervisor broker `/health` | aggregated child status |
+| 8765 | S2 sidecar (Mamba) | `/score`, `/health` |
+| 8766 | gen sidecar (Qwen MLX) | OpenAI-compatible `/v1/*` |
+
+The gen sidecar is wrapped by `src/gen_sidecar_launcher.py`, which polls
+the child's `phys_footprint` (the value Activity Monitor reports, includes
+MLX / Metal / IOSurface unified-memory) and SIGKILLs it if it exceeds
+`S2_GEN_MEM_LIMIT_GB` (falls back to `S2_MEM_LIMIT_GB`, default 16). The
+2026-06-02 incident showed `ru_maxrss`-based caps were blind to MLX
+allocations; this closes that gap. Plist sets both caps to 25 GB on a
+64 GB host.
+
+For testing without the supervisor you can still run the legacy direct
+scripts:
+
+```bash
+bash scripts/start-sidecar.sh        # S2 only, foreground
+bash scripts/start-gen-sidecar.sh    # gen only, foreground
+```
+
+— but they bypass the single-instance lock and the memory watchdog only
+catches the in-process S2 sidecar, so prefer the supervisor for real use.
 
 ### 4. Activate direnv
 
@@ -119,21 +152,39 @@ Apple-silicon users keep the local path — no changes needed.
 
 ---
 
-## Supervisor (always-on sidecar)
+## Supervisor (always-on stack)
 
-A short-lived `bash scripts/start-sidecar.sh` is fine for testing. For
-real use, daemonize.
+`scripts/install-supervisor-launchagent.sh` is the one-step daemonize
+path. It renders the plist template, copies it to
+`~/Library/LaunchAgents/`, and `launchctl load`s it. The supervisor owns
+both children — S2 (Mamba) and gen (Qwen MLX) — under a single broker.
 
 ### macOS — launchd
 
 ```bash
 bash scripts/install-supervisor-launchagent.sh
-launchctl list | grep reasoning-core      # → com.reasoning-core.supervisor visible
-curl -fsS http://127.0.0.1:8765/health    # → {"status":"ok",...}
-tail -f /tmp/rc-sidecar-supervisor.log
+launchctl list | grep reasoning-core         # → com.reasoning-core.supervisor visible
+curl -fsS http://127.0.0.1:8764/health       # broker aggregator
+curl -fsS http://127.0.0.1:8765/health       # S2 (Mamba)
+curl -fsS http://127.0.0.1:8766/v1/models    # gen (Qwen MLX)
+tail -f /tmp/rc-supervisor.err.log /tmp/rc-mamba.log /tmp/rc-gen.log
 ```
 
 KeepAlive=true → relaunches on crash. RunAtLoad=true → starts on login.
+
+Daily ops:
+
+| Want | Command |
+|---|---|
+| Restart | `launchctl kickstart -k gui/$(id -u)/com.reasoning-core.supervisor` |
+| Stop | `launchctl unload ~/Library/LaunchAgents/com.reasoning-core.supervisor.plist` |
+| Start | `launchctl load -w ~/Library/LaunchAgents/com.reasoning-core.supervisor.plist` |
+
+`kickstart -k` is the command to pick up Python source edits in `src/`
+without a full reload. Edits to `launchd/com.reasoning-core.supervisor.plist`
+(env vars, etc.) require re-running `install-supervisor-launchagent.sh`.
+`.envrc` is NOT read by launchd — env vars meant for the supervisor must
+live in the plist's `EnvironmentVariables` block.
 
 Uninstall:
 

@@ -4,6 +4,9 @@ Subcommands:
     rc status                 — env knobs + sidecar health + last 5 decisions
     rc explain <decision-id>  — full audit row for a decision
     rc bypass-next            — arm a one-shot bypass (consumed on next hook call)
+                              emits an operator_override audit event
+    rc confirm-next           — record operator agreement with a block
+                              emits an operator_confirmed audit event
     rc skip-file <path>       — add file to per-session skip list
     rc unskip-file <path>     — remove file from skip list
 
@@ -22,17 +25,23 @@ _HOOKS_DIR = Path(__file__).resolve().parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
+import _commit_miner as _cm  # type: ignore  # noqa: E402
 import _kill_switches as ks  # type: ignore  # noqa: E402
+import audit_log  # type: ignore  # noqa: E402
 
 _KNOBS = (
     "S2_DEVICE", "S2_TIMEOUT", "S2_FAIL_CLOSED", "S2_PORT",
     "S2_AIS_THRESHOLD", "S2_COHERENCE_THRESHOLD", "S2_RISK_DIM_THRESHOLD",
-    "RC_PLAN_BLOCK", "RC_ALLOW_GUARD_EDIT", "RC_ALLOW_SUBAGENT_GUARD_EDIT",
+    "RC_MODE", "RC_PLAN_BLOCK", "RC_ALLOW_GUARD_EDIT", "RC_ALLOW_SUBAGENT_GUARD_EDIT",
     "RC_LANG_OVERRIDE", "RC_LANG_ALLOW", "RC_DRIFT_OVERRIDE",
     "RC_MOCK_DETECTOR", "RC_PLAN_QUALITY", "RC_LANG_LOCK",
     "RC_SHADOW_MODE", "RC_REASONER_BACKEND", "RC_GEN_BUDGET_MS",
     "RC_GEN_MODEL", "RC_GEN_URL",
     "RC_CALIBRATION_ENABLED", "RC_RECALIBRATE_POLL_S",
+    "RC_BEST_EFFORT_SPEC", "RC_PLAN_GROUNDING", "RC_RULE_ENGINE",
+    "RC_ORACLE_T1", "RC_ORACLE_T2", "RC_ORACLE_BLOCK",
+    "RC_PRM_GATE", "RC_PRM_BLOCK", "RC_PRM_THRESHOLD",
+    "RC_PRM_PROMO_MIN_REPOS", "RC_PRM_PROMO_MIN_EVENTS", "RC_PRM_PROMO_MIN_DAYS",
     "RC_BYPASS_NEXT",
 )
 
@@ -164,7 +173,14 @@ def cmd_explain(args: argparse.Namespace) -> int:
 
 def cmd_bypass_next(_args: argparse.Namespace) -> int:
     ks.set_bypass_next(True)
+    audit_log.record_operator_override(reason="bypass_next_armed")
     sys.stdout.write("bypass_next armed (consumed on next PreToolUse hook call)\n")
+    return 0
+
+
+def cmd_confirm_next(_args: argparse.Namespace) -> int:
+    audit_log.record_operator_confirmed(reason="confirm_next_armed")
+    sys.stdout.write("confirm_next recorded (operator agrees the next block was correct)\n")
     return 0
 
 
@@ -177,6 +193,81 @@ def cmd_skip_file(args: argparse.Namespace) -> int:
 def cmd_unskip_file(args: argparse.Namespace) -> int:
     ks.remove_skip_file(os.path.abspath(args.path))
     sys.stdout.write(f"removed: {os.path.abspath(args.path)}\n")
+    return 0
+
+
+def _project_dir() -> Path:
+    """Resolve the repo/project directory the gate is watching."""
+    return Path(
+        os.environ.get("RC_RUN_DIR")
+        or os.environ.get("CLAUDE_PROJECT_DIR")
+        or os.getcwd()
+    )
+
+
+def _update_envrc_local(project_dir: Path) -> Path:
+    """Idempotently append/patch a reasoning-core enforcement block."""
+    envrc_local = project_dir / ".envrc.local"
+    sentinel_start = "# >>> reasoning-core enforcement >>>"
+    sentinel_end = "# <<< reasoning-core enforcement <<<"
+    block = f"""{sentinel_start}
+# Enabled via `rc enable-enforcement`. Copilot mode: block on
+# contract/oracle/rule failures. Autopilot remains opt-in.
+export RC_MODE=copilot
+export RC_SHADOW_MODE=0
+export RC_PLAN_BLOCK=1
+# Keep plan-grounding warn-only unless you want hard blocks:
+# export RC_PLAN_GROUNDING=2
+{sentinel_end}
+"""
+    existing = ""
+    if envrc_local.exists():
+        existing = envrc_local.read_text(encoding="utf-8")
+        # Strip any previous reasoning-core enforcement block.
+        import re
+        pattern = re.compile(
+            rf"\n?{re.escape(sentinel_start)}.*?{re.escape(sentinel_end)}\n?",
+            re.DOTALL,
+        )
+        existing = pattern.sub("\n", existing).strip("\n")
+        if existing:
+            existing += "\n"
+    envrc_local.write_text(existing + block, encoding="utf-8")
+    return envrc_local
+
+
+def cmd_enable_enforcement(_args: argparse.Namespace) -> int:
+    """First-run wizard: scaffold PLAN.md and flip repo to copilot mode."""
+    project_dir = _project_dir()
+    if not project_dir.is_dir():
+        sys.stderr.write(f"project directory does not exist: {project_dir}\n")
+        return 1
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "hooks"))
+    try:
+        import _plan_scaffold as ps  # type: ignore  # noqa: E402
+    except Exception as exc:
+        sys.stderr.write(f"could not load plan scaffold helper: {exc}\n")
+        return 1
+
+    plan_path = ps.maybe_scaffold_plan(str(project_dir))
+    envrc_local = _update_envrc_local(project_dir)
+
+    sys.stdout.write("== reasoning-core enforcement enabled ==\n\n")
+    if plan_path:
+        sys.stdout.write(f"scaffolded plan: {plan_path}\n")
+    else:
+        sys.stdout.write(
+            "PLAN.md already exists or no README.md found; not scaffolding.\n"
+        )
+    sys.stdout.write(f"wrote enforcement config: {envrc_local}\n\n")
+    sys.stdout.write("modes:\n")
+    sys.stdout.write("  advise    (default) — log/warn only, never block\n")
+    sys.stdout.write("  copilot   — block on contract/oracle/rule failures\n")
+    sys.stdout.write("  autopilot — block + auto-repair within policy (opt-in)\n\n")
+    sys.stdout.write("next:\n")
+    sys.stdout.write("  direnv reload      # or: source .envrc.local\n")
+    sys.stdout.write("  rc status          # confirm RC_MODE=copilot\n")
     return 0
 
 
@@ -359,6 +450,46 @@ def cmd_override_survival(args: argparse.Namespace) -> int:
 
 
 
+def cmd_audit_history(args: argparse.Namespace) -> int:
+    """Mine recent git history and print per-commit quality labels.
+
+    Labels commits as positive/negative based on whether they were followed
+    within 48 hours by a fix/revert/hotfix/patch touching the same files.
+    This is the feedback loop input for Phase-4 calibration.
+    """
+    project_dir = Path(args.project_dir) if args.project_dir else _project_dir()
+    if not project_dir.is_dir():
+        sys.stderr.write(f"project directory does not exist: {project_dir}\n")
+        return 1
+
+    try:
+        commits = _cm.mine(str(project_dir), n=args.n)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"could not mine commits: {exc}\n")
+        return 1
+
+    if not commits:
+        sys.stdout.write(f"no commits mined under {project_dir}\n")
+        return 0
+
+    if args.json:
+        sys.stdout.write(json.dumps([c.to_dict() for c in commits], indent=2) + "\n")
+        return 0
+
+    sys.stdout.write(f"{'label':<9} {'sha':<9} {'date':<20} {'files':>5} {'lines':>5}  {'message'}\n")
+    sys.stdout.write("-" * 80 + "\n")
+    for c in commits:
+        date_str = c.date.strftime("%Y-%m-%d %H:%M") if c.date else ""
+        msg = (c.message or "")[:50]
+        sys.stdout.write(
+            f"{c.label or 'unknown':<9} {c.sha[:7]:<9} {date_str:<20} "
+            f"{len(c.files):>5} {sum(c.diff_stat.values()):>5}  {msg}\n"
+        )
+        if args.reasons and c.label_reason:
+            sys.stdout.write(f"          reason: {c.label_reason}\n")
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -367,6 +498,12 @@ def main(argv: list | None = None) -> int:
     e.add_argument("decision_id")
     e.set_defaults(func=cmd_explain)
     sub.add_parser("bypass-next").set_defaults(func=cmd_bypass_next)
+    sub.add_parser("confirm-next").set_defaults(func=cmd_confirm_next)
+    ee = sub.add_parser(
+        "enable-enforcement",
+        help="scaffold PLAN.md and flip repo to copilot mode",
+    )
+    ee.set_defaults(func=cmd_enable_enforcement)
     s = sub.add_parser("skip-file")
     s.add_argument("path")
     s.set_defaults(func=cmd_skip_file)
@@ -387,6 +524,15 @@ def main(argv: list | None = None) -> int:
     os_cmd.add_argument("--days", type=int, default=30)
     os_cmd.add_argument("--audit-root", default=None)
     os_cmd.set_defaults(func=cmd_override_survival)
+    ah_cmd = sub.add_parser(
+        "audit-history",
+        help="mine recent git history and label commits for calibration feedback",
+    )
+    ah_cmd.add_argument("--project-dir", default=None)
+    ah_cmd.add_argument("-n", type=int, default=50)
+    ah_cmd.add_argument("--json", action="store_true")
+    ah_cmd.add_argument("--reasons", action="store_true")
+    ah_cmd.set_defaults(func=cmd_audit_history)
     args = p.parse_args(argv)
     return args.func(args)
 

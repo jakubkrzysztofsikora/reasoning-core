@@ -11,13 +11,24 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 
 | Command | Purpose |
 |---|---|
-| `rc status` | Sidecar health + threshold posture (shadow mode? fail-closed? per-kind ceilings? active embedder backend?) |
-| `rc explain` | Explain the most recent block decision (top-3 risk contributors + repair hints) |
+| `rc status` | Sidecar health + threshold posture (shadow mode? fail-closed? per-kind ceilings? active embedder backend? RC_MODE?) |
+| `rc explain <decision-id>` | Full audit row for a single decision |
 | `rc bypass-next` | Arm a single-shot bypass for the next Edit/Write — consumed on first guard fire |
+| `rc confirm-next` | Record operator agreement with the next block — emits `operator_confirmed` |
 | `rc skip-file <path>` | Add `<path>` to the per-session skip list (logged) |
 | `rc unskip-file <path>` | Remove `<path>` from the skip list |
+| `rc enable-enforcement` | First-run wizard: scaffold `PLAN.md` from `README.md`, flip `RC_MODE=copilot` |
+| `rc reasoning-efficiency [--days N]` | Audit-log composite north-star metric (drift caught per gate-second) |
+| `rc override-survival [--days N]` | Fraction of operator overrides that survived in the codebase |
+| `rc audit-history [-n N] [--json] [--reasons]` | Mine recent git history and label commits for Phase-4 calibration feedback |
 
-`rc --help` is authoritative.
+`rc enable-enforcement` runs the first-run wizard: it scaffolds `PLAN.md` from
+`README.md`, shows the 48-hour shadow report checklist, and flips the repo to
+`RC_MODE=copilot`.
+
+`rc audit-history` labels the last `n` commits as positive/negative using a
+48-hour follow-up-fix heuristic. Use `--json` for machine-readable output and
+`--reasons` to print why each commit was labelled.
 
 ---
 
@@ -155,15 +166,21 @@ blocked edit comes back as a malformed patch.
 
 ## Shadow mode
 
-The gate ships in **shadow mode** by default (`RC_SHADOW_MODE=1` in the
-generated `.envrc`). Decisions are computed and logged; the hook always
-returns exit 0. This lets you observe what the gate *would* have done on
-your codebase before flipping it on.
+The gate ships in **advise mode** by default (`RC_MODE=advise` and
+`RC_SHADOW_MODE=1` in the generated `.envrc`). Decisions are computed and
+logged; the hook always returns exit 0. This lets you observe what the gate
+*would* have done on your codebase before flipping it on.
 
 Promote to enforcement when ready:
 
 ```bash
-echo 'export RC_SHADOW_MODE=0' >> .envrc.local
+rc enable-enforcement     # wizard: scaffold PLAN.md, review shadow report, flip to copilot
+```
+
+Or manually:
+
+```bash
+echo 'export RC_MODE=copilot' >> .envrc.local
 direnv reload
 ```
 
@@ -178,7 +195,10 @@ In order of preference (least → most invasive):
 - **Per-rule bypass.** `# rc:skip-rule:<id>` / `// rc:skip-rule:<id>` —
   scoped to the rule-engine, doesn't affect the neural gate.
 - **Single-shot, single command.** `rc bypass-next` arms one bypass; the
-  next guard fire consumes it.
+  next guard fire consumes it and emits `operator_override`. `rc
+  confirm-next` arms a confirmation that the next block was correct and
+  emits `operator_confirmed` — the ground-truth signal for false-positive
+  measurement.
 - **Single-shot, fresh session.** `RC_BYPASS_NEXT=1 claude ...` — captured
   at session boot, consumed by the first guard fire.
 - **Per-path session-wide.** `RC_ALLOW_GUARD_EDIT=1` for guarded paths,

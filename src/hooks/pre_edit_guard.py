@@ -41,8 +41,19 @@ import _guard_paths  # type: ignore  # noqa: E402
 import _dispatch  # type: ignore  # noqa: E402
 from _block_format import format_block as _format_block  # type: ignore  # noqa: E402
 
-# Centralized shadow-mode helper. Falls back to None on import error so the
-# hook keeps working in degraded environments.
+# Phase 2 execution-grounded oracles and cumulative patch tracker.
+try:
+    import _oracles  # type: ignore
+except ImportError:
+    _oracles = None  # type: ignore
+
+try:
+    import _patch_tracker  # type: ignore
+except ImportError:
+    _patch_tracker = None  # type: ignore
+
+# Centralized shadow-mode helper (activated by RC_SHADOW_MODE=1). Falls back
+# to None on import error so the hook keeps working in degraded environments.
 try:
     import _shadow_mode  # type: ignore
 except ImportError:
@@ -74,7 +85,7 @@ def _hard_cap_seconds() -> float:
     and audits reason="symbolic_fallback".
     """
     try:
-        cap_ms = int(os.getenv("S2_HARD_CAP_MS", "3000"))
+        cap_ms = int(os.getenv("S2_HARD_CAP_MS", "1500"))
     except ValueError:
         cap_ms = 1500
     return cap_ms / 1000.0
@@ -86,6 +97,17 @@ def _effective_score_timeout() -> float:
 
 def _fail_closed() -> bool:
     return os.getenv("S2_FAIL_CLOSED", "0") == "1"
+
+
+def _project_dir() -> str:
+    """Resolve the project directory the gate is watching."""
+    return str(
+        Path(
+            os.environ.get("RC_RUN_DIR")
+            or os.environ.get("RC_PROJECT_DIR")
+            or os.getcwd()
+        ).resolve()
+    )
 
 
 def _read_payload() -> Optional[Dict[str, Any]]:
@@ -316,6 +338,184 @@ _SIGNAL_SOURCE_TO_GATE_ID: Dict[str, str] = {
 }
 
 
+def _rc_mode() -> str:
+    """Return the active reasoning-core mode.
+
+    - advise   : warn only, never block on contract/oracle/rule failures.
+                 Guard-file self-protection still blocks.
+    - copilot  : block on contract, oracle, and rule failures.
+    - autopilot: block and auto-repair within policy (Phase 0: same
+                 enforcement posture as copilot; auto-repair scaffolding
+                 lands in Phase 2).
+    """
+    mode = os.environ.get("RC_MODE", "advise").strip().lower()
+    if mode in ("copilot", "autopilot"):
+        return mode
+    return "advise"
+
+
+def _apply_mode(outcome: _dispatch.GateOutcome) -> _dispatch.GateOutcome:
+    """Downgrade enforcement outcomes to advisory when RC_MODE=advise."""
+    if _rc_mode() != "advise":
+        return outcome
+    if outcome.action == "exit_block":
+        return _dispatch.GateOutcome(
+            action="stderr_only",
+            code=0,
+            stderr=outcome.stderr,
+            decision="warn",
+            reason=outcome.reason,
+            signal_source=outcome.signal_source,
+            report=outcome.report,
+            audit_extra=outcome.audit_extra,
+        )
+    if outcome.action == "continue_pair":
+        return _dispatch.GateOutcome(
+            action="audit_only",
+            code=0,
+            stderr="",
+            decision="shadow_advisory",
+            reason=outcome.reason,
+            signal_source=outcome.signal_source,
+            report=outcome.report,
+            audit_extra=outcome.audit_extra,
+        )
+    return outcome
+
+
+def _symbolic_fallback(
+    file_path: str,
+    before_src: str,
+    after_src: str,
+    read_before_src,
+) -> _dispatch.GateOutcome:
+    """Run symbolic gates when the SSM sidecar exceeds S2_HARD_CAP_MS.
+
+    Returns the most severe outcome found, tagged with
+    signal_source="symbolic_fallback". A clean result is returned as
+    action="pass" so the orchestrator can emit a fallback audit event.
+    """
+    outcomes: List[_dispatch.GateOutcome] = []
+    outcomes.append(
+        _dispatch.gate_rule_engine(
+            file_path=file_path,
+            before_src=before_src,
+            after_src=after_src,
+            report={},
+        )
+    )
+    outcomes.append(
+        _dispatch.gate_lang_lock(file_path=file_path, read_before_src=read_before_src)
+    )
+    outcomes.append(_dispatch.gate_plan_grounding(file_path=file_path))
+
+    for action in ("exit_block", "continue_pair", "stderr_only", "audit_only"):
+        for o in outcomes:
+            if o.action == action:
+                return _dispatch.GateOutcome(
+                    action=o.action,
+                    code=o.code,
+                    stderr=o.stderr,
+                    decision=o.decision,
+                    reason=o.reason,
+                    signal_source="symbolic_fallback",
+                    report=o.report,
+                    audit_extra=o.audit_extra,
+                )
+    return _dispatch.GateOutcome(action="pass", signal_source="symbolic_fallback")
+
+
+def _handle_prm_outcome(
+    *,
+    tool_name: str,
+    file_path: str,
+    started: float,
+    before_src: str,
+    after_src: str,
+    is_retry: bool,
+) -> bool:
+    """Run the PRM gate, record shadow events, and honor block/warn outcomes.
+
+    Returns True if the outer pair loop should continue (no block), False if
+    the function already emitted the audit and exited/warned.
+    """
+    try:
+        plan_path = _dispatch._resolve_plan_path()
+        plan_text = plan_path.read_text(encoding="utf-8", errors="replace") if plan_path else None
+    except Exception:  # noqa: BLE001
+        plan_text = None
+    outcome = _dispatch.gate_prm(
+        file_path=file_path,
+        before_src=before_src,
+        after_src=after_src,
+        plan_text=plan_text,
+    )
+    if outcome.action == "pass" and not outcome.signal_source:
+        return True
+
+    # Record every scored PRM event for promotion tracking.
+    if outcome.audit_extra and "prm_score" in outcome.audit_extra:
+        try:
+            from _prm_promotion import record_shadow_event  # type: ignore
+
+            record_shadow_event(
+                project_root=_project_dir(),
+                score=outcome.audit_extra["prm_score"],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Apply RC_MODE downgrade to the PRM outcome.
+    outcome = _apply_mode(outcome)
+
+    if outcome.action == "stderr_only":
+        sys.stderr.write(outcome.stderr)
+        _emit_audit(
+            tool_name=tool_name,
+            decision=outcome.decision,
+            file_path=file_path,
+            started=started,
+            before_src=before_src,
+            after_src=after_src,
+            reason=outcome.reason,
+            signal_source=outcome.signal_source,
+            retry_after_block=is_retry,
+            extra={**(outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+        )
+        return True
+    if outcome.action == "exit_block":
+        audit_log.record_block(file_path)
+        _emit_audit(
+            tool_name=tool_name,
+            decision=outcome.decision,
+            file_path=file_path,
+            started=started,
+            before_src=before_src,
+            after_src=after_src,
+            reason=outcome.reason,
+            signal_source=outcome.signal_source,
+            retry_after_block=is_retry,
+            extra={**(outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+        )
+        _exit(outcome.code, outcome.stderr)
+    # audit_only / continue_pair / pass
+    _emit_audit(
+        tool_name=tool_name,
+        decision=outcome.decision,
+        file_path=file_path,
+        started=started,
+        before_src=before_src,
+        after_src=after_src,
+        reason=outcome.reason,
+        signal_source=outcome.signal_source,
+        retry_after_block=is_retry,
+        extra={**(outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+    )
+    return True
+
+
+# Keep the bare _emit_audit name for internal compatibility; new code should
+# pass rc_mode via extra so every audit row carries the active mode.
 def _emit_audit(
     *,
     tool_name: str,
@@ -530,36 +730,57 @@ def main() -> None:
             )
             if mani and not lang_skip and not _session_manifest.is_path_allowed(mani, file_path):
                 shadow = _shadow_mode.is_active() if _shadow_mode else False
-                decision = "shadow_blocked" if shadow else "blocked"
-                _emit_audit(
-                    tool_name=tool_name,
-                    decision=decision,
-                    file_path=file_path,
-                    started=started,
-                    reason="language_fingerprint_violation",
-                    signal_source="lang_lock",
-                )
-                if shadow:
-                    audit_log.record_shadow_block(file_path)
-                else:
-                    audit_log.record_block(file_path)
+                # RC_MODE=advise downgrades the lang-lock block to a warning.
+                if not shadow and _rc_mode() == "advise":
                     declared = mani.get("declared_language")
-                    # Round-2 P3 polyglot fix: list-format declared is fine
-                    # for f-string display ("['csharp', 'javascript']"). Hint
-                    # text helps operators self-unblock without bypassing.
                     file_lang = _session_manifest.language_for_path(file_path)
-                    _exit(
-                        2,
-                        f"[hybrid-reasoner] BLOCKED: language fingerprint violation\n"
+                    _emit_audit(
+                        tool_name=tool_name,
+                        decision="warn",
+                        file_path=file_path,
+                        started=started,
+                        reason="language_fingerprint_violation",
+                        signal_source="lang_lock",
+                        extra={"rc_mode": "advise"},
+                    )
+                    sys.stderr.write(
+                        f"[hybrid-reasoner] WARN: language fingerprint violation\n"
                         f"  file: {file_path}\n"
                         f"  declared: {declared}\n"
                         f"  file_lang: {file_lang}\n"
-                        f"  hint: set RC_LANG_ALLOW=.{file_lang} OR add the file's\n"
-                        f"        top-level dir to RC_LANG_LOCK_PATH_EXEMPT, then\n"
-                        f"        delete the manifest at\n"
-                        f"        ~/.local/state/reasoning-core/sessions/<key>.json\n"
-                        f"        and start a new Claude Code session.",
                     )
+                else:
+                    decision = "shadow_blocked" if shadow else "blocked"
+                    _emit_audit(
+                        tool_name=tool_name,
+                        decision=decision,
+                        file_path=file_path,
+                        started=started,
+                        reason="language_fingerprint_violation",
+                        signal_source="lang_lock",
+                        extra={"rc_mode": _rc_mode()},
+                    )
+                    if shadow:
+                        audit_log.record_shadow_block(file_path)
+                    else:
+                        audit_log.record_block(file_path)
+                        declared = mani.get("declared_language")
+                        # Round-2 P3 polyglot fix: list-format declared is fine
+                        # for f-string display ("['csharp', 'javascript']"). Hint
+                        # text helps operators self-unblock without bypassing.
+                        file_lang = _session_manifest.language_for_path(file_path)
+                        _exit(
+                            2,
+                            f"[hybrid-reasoner] BLOCKED: language fingerprint violation\n"
+                            f"  file: {file_path}\n"
+                            f"  declared: {declared}\n"
+                            f"  file_lang: {file_lang}\n"
+                            f"  hint: set RC_LANG_ALLOW=.{file_lang} OR add the file's\n"
+                            f"        top-level dir to RC_LANG_LOCK_PATH_EXEMPT, then\n"
+                            f"        delete the manifest at\n"
+                            f"        ~/.local/state/reasoning-core/sessions/<key>.json\n"
+                            f"        and start a new Claude Code session.",
+                        )
         except Exception:  # noqa: BLE001
             pass
 
@@ -567,7 +788,7 @@ def main() -> None:
     # Default off. Mode 1 = warn (stderr advisory + audit), mode 2 = hard block.
     # Audit-only path keeps the signal invisible to the agent (no path-stuffing
     # incentive); see thoughts/shared/plans/2026-05-07-iter3-decisive-win.md §3.
-    pg_outcome = _dispatch.gate_plan_grounding(file_path=file_path)
+    pg_outcome = _apply_mode(_dispatch.gate_plan_grounding(file_path=file_path))
     if pg_outcome.action == "stderr_only":
         sys.stderr.write(pg_outcome.stderr)
         _emit_audit(
@@ -577,7 +798,7 @@ def main() -> None:
             started=started,
             reason=pg_outcome.reason,
             signal_source=pg_outcome.signal_source,
-            extra=pg_outcome.audit_extra,
+            extra={**(pg_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
         )
     elif pg_outcome.action == "exit_block":
         audit_log.record_block(file_path)
@@ -588,7 +809,7 @@ def main() -> None:
             started=started,
             reason=pg_outcome.reason,
             signal_source=pg_outcome.signal_source,
-            extra=pg_outcome.audit_extra,
+            extra={**(pg_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
         )
         _exit(pg_outcome.code, pg_outcome.stderr)
     elif pg_outcome.action == "audit_only":
@@ -602,20 +823,235 @@ def main() -> None:
             started=started,
             reason=pg_outcome.reason,
             signal_source=pg_outcome.signal_source,
-            extra=pg_outcome.audit_extra,
+            extra={**(pg_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
         )
 
     pairs = _extract_changes(tool_name, tool_input)
     if not pairs:
         _exit(0)
 
-    # Track whether ANY pair tripped a shadow_blocked decision so we don't
-    # silently emit a final `allowed` row that double-counts a shadow event.
-    shadow_hit = False
+    # Track whether ANY pair already produced an audit row (shadow block,
+    # symbolic fallback decision, etc.) so we don't silently emit a final
+    # `allowed` row that double-counts the event.
+    pair_has_audit_row = False
     for before_src, after_src in pairs:
+        # Phase 1: rich contract checks (imports/invariants) using the
+        # proposed source. Path-level plan grounding was already evaluated
+        # before the pair loop; this call only adds new violations.
+        rich_pg = _apply_mode(
+            _dispatch.gate_plan_grounding(
+                file_path=file_path, after_src=after_src, path_check=False
+            )
+        )
+        if rich_pg.action == "stderr_only":
+            sys.stderr.write(rich_pg.stderr)
+            pair_has_audit_row = True
+            _emit_audit(
+                tool_name=tool_name,
+                decision=rich_pg.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                reason=rich_pg.reason,
+                signal_source=rich_pg.signal_source,
+                retry_after_block=is_retry,
+                extra={**(rich_pg.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+        elif rich_pg.action == "exit_block":
+            audit_log.record_block(file_path)
+            pair_has_audit_row = True
+            _emit_audit(
+                tool_name=tool_name,
+                decision=rich_pg.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                reason=rich_pg.reason,
+                signal_source=rich_pg.signal_source,
+                retry_after_block=is_retry,
+                extra={**(rich_pg.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+            _exit(rich_pg.code, rich_pg.stderr)
+        elif rich_pg.action == "audit_only":
+            pair_has_audit_row = True
+            _emit_audit(
+                tool_name=tool_name,
+                decision=rich_pg.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                reason=rich_pg.reason,
+                signal_source=rich_pg.signal_source,
+                retry_after_block=is_retry,
+                extra={**(rich_pg.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+
+        # Phase 2: execution-grounded oracles. Track the cumulative patch and
+        # run fast T1/T2 checks before the expensive sidecar call.
+        if _patch_tracker is not None:
+            try:
+                _patch_tracker.append_edit(
+                    project_root=_project_dir(),
+                    file_path=file_path,
+                    before_src=before_src,
+                    after_src=after_src,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        if _oracles is not None:
+            try:
+                oracle_report = _oracles.run_oracles(
+                    file_path=file_path,
+                    after_src=after_src,
+                    enable_t1=os.environ.get("RC_ORACLE_T1", "1") == "1",
+                    enable_t2=os.environ.get("RC_ORACLE_T2", "1") == "1",
+                )
+            except Exception:  # noqa: BLE001
+                oracle_report = None
+
+            if oracle_report and not oracle_report.clean:
+                first = oracle_report.first_error() or oracle_report.annotations[0]
+                oracle_msg = (
+                    f"[reasoning-core] {'BLOCKED' if _rc_mode() != 'advise' else 'WARN'}: "
+                    f"oracle failure ({first.tool})\n"
+                    f"  file: {first.file_path}\n"
+                    f"  line: {first.line}\n"
+                    f"  reason: {first.message}\n"
+                )
+                oracle_reason = f"oracle_failure:{first.tool}:{first.severity}"
+                oracle_extra = {
+                    "oracle_elapsed_ms": oracle_report.elapsed_ms,
+                    "oracle_annotations": [
+                        {
+                            "tool": a.tool,
+                            "file_path": a.file_path,
+                            "line": a.line,
+                            "column": a.column,
+                            "message": a.message,
+                            "severity": a.severity,
+                        }
+                        for a in oracle_report.annotations
+                    ],
+                    "rc_mode": _rc_mode(),
+                }
+                if (
+                    _rc_mode() != "advise"
+                    and os.environ.get("RC_ORACLE_BLOCK") == "1"
+                ):
+                    audit_log.record_block(file_path)
+                    pair_has_audit_row = True
+                    _emit_audit(
+                        tool_name=tool_name,
+                        decision="blocked",
+                        file_path=file_path,
+                        started=started,
+                        before_src=before_src,
+                        after_src=after_src,
+                        reason=oracle_reason,
+                        signal_source="oracle",
+                        retry_after_block=is_retry,
+                        extra=oracle_extra,
+                    )
+                    _exit(2, oracle_msg)
+                else:
+                    # Advisory mode: emit a warning and continue.
+                    sys.stderr.write(oracle_msg)
+                    pair_has_audit_row = True
+                    _emit_audit(
+                        tool_name=tool_name,
+                        decision="warn",
+                        file_path=file_path,
+                        started=started,
+                        before_src=before_src,
+                        after_src=after_src,
+                        reason=oracle_reason,
+                        signal_source="oracle",
+                        retry_after_block=is_retry,
+                        extra=oracle_extra,
+                    )
+
         try:
             report = _post_score(file_path, before_src, after_src)
         except SidecarUnavailable as exc:
+            reason_str = str(exc)
+            # Phase 0: real symbolic fallback on hard cap. Do not silently
+            # fail-open; run the symbolic gate chain and honor RC_MODE.
+            if reason_str.startswith("hard_cap_exceeded"):
+                fb = _apply_mode(
+                    _symbolic_fallback(
+                        file_path=file_path,
+                        before_src=before_src,
+                        after_src=after_src,
+                        read_before_src=_read_before_src,
+                    )
+                )
+                if fb.action == "exit_block":
+                    audit_log.record_block(file_path)
+                    _emit_audit(
+                        tool_name=tool_name,
+                        decision=fb.decision,
+                        file_path=file_path,
+                        started=started,
+                        before_src=before_src,
+                        after_src=after_src,
+                        reason=fb.reason,
+                        signal_source="symbolic_fallback",
+                        retry_after_block=is_retry,
+                        extra={**(fb.audit_extra or {}), "rc_mode": _rc_mode()},
+                    )
+                    _exit(2, fb.stderr)
+                if fb.action == "stderr_only":
+                    sys.stderr.write(fb.stderr)
+                    pair_has_audit_row = True
+                    _emit_audit(
+                        tool_name=tool_name,
+                        decision=fb.decision,
+                        file_path=file_path,
+                        started=started,
+                        before_src=before_src,
+                        after_src=after_src,
+                        reason=fb.reason,
+                        signal_source="symbolic_fallback",
+                        retry_after_block=is_retry,
+                        extra={**(fb.audit_extra or {}), "rc_mode": _rc_mode()},
+                    )
+                    continue
+                if fb.action in ("audit_only", "continue_pair"):
+                    pair_has_audit_row = True
+                    if fb.action == "continue_pair":
+                        audit_log.record_shadow_block(file_path)
+                    _emit_audit(
+                        tool_name=tool_name,
+                        decision=fb.decision,
+                        file_path=file_path,
+                        started=started,
+                        before_src=before_src,
+                        after_src=after_src,
+                        reason=fb.reason,
+                        signal_source="symbolic_fallback",
+                        retry_after_block=is_retry,
+                        extra={**(fb.audit_extra or {}), "rc_mode": _rc_mode()},
+                    )
+                    continue
+                # Clean symbolic fallback.
+                pair_has_audit_row = True
+                _emit_audit(
+                    tool_name=tool_name,
+                    decision="allowed",
+                    file_path=file_path,
+                    started=started,
+                    before_src=before_src,
+                    after_src=after_src,
+                    reason="symbolic_fallback_clean",
+                    signal_source="symbolic_fallback",
+                    retry_after_block=is_retry,
+                    extra={"rc_mode": _rc_mode()},
+                )
+                continue
             # SHADOW=1 honored at sidecar-unavailable too. Calibration window
             # must not produce hard-blocks on infra flake. (Reviewer #7.)
             if _fail_closed() and not (_shadow_mode.is_active() if _shadow_mode else False):
@@ -712,165 +1148,239 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             pass
 
-        # P3 Invariant 2: cumulative_drift gate. Sidecar emits the value but
-        # nothing previously gated on it.
-        #
-        # PLACEHOLDER THRESHOLDS: 4.0 (warn) / 6.0 (deny) are reviewer-tuned,
-        # NOT data-driven. P7 recalibrates from synthetic CUSUM injections at
-        # 5% type-I error rate. Until then operators flipping RC_SHADOW_MODE=0
-        # block at thresholds whose statistical meaning is undefined.
-        # See deferred tracker #19 + #21.
-        # Override: RC_DRIFT_OVERRIDE=1 (hard-denied in pre_bash_guard so
-        # agent cannot self-arm via Bash command-line prefix).
-        if (
-            isinstance(report, dict)
-            and os.environ.get("RC_DRIFT_OVERRIDE") != "1"
-        ):
-            try:
-                drift = report.get("cumulative_drift")
-                if isinstance(drift, (int, float)):
-                    drift_warn = float(os.environ.get("RC_DRIFT_WARN", "4.0"))
-                    drift_deny = float(os.environ.get("RC_DRIFT_DENY", "6.0"))
-                    if drift > drift_deny and not isinstance(report, dict):
-                        pass  # unreachable; type guard
-                    if drift > drift_deny:
-                        if _shadow_mode.is_active() if _shadow_mode else False:
-                            shadow_hit = True
-                            audit_log.record_shadow_block(file_path)
-                            _emit_audit(
-                                tool_name=tool_name,
-                                decision="shadow_blocked",
-                                file_path=file_path,
-                                started=started,
-                                before_src=before_src,
-                                after_src=after_src,
-                                report=report,
-                                reason=f"cumulative_drift_exceeds:{drift:.2f}>{drift_deny}",
-                                signal_source="drift_gate",
-                            )
-                            continue
-                        audit_log.record_block(file_path)
-                        _emit_audit(
-                            tool_name=tool_name,
-                            decision="blocked",
-                            file_path=file_path,
-                            started=started,
-                            before_src=before_src,
-                            after_src=after_src,
-                            report=report,
-                            reason=f"cumulative_drift_exceeds:{drift:.2f}>{drift_deny}",
-                            signal_source="drift_gate",
-                        )
-                        _exit(
-                            2,
-                            f"[hybrid-reasoner] BLOCKED: cumulative_drift {drift:.2f} "
-                            f"exceeds threshold {drift_deny:.2f}",
-                        )
-                        return  # pragma: no cover
-                    elif drift > drift_warn:
-                        sys.stderr.write(
-                            f"[hybrid-reasoner] WARN: cumulative_drift {drift:.2f} "
-                            f"exceeds warn threshold {drift_warn:.2f}\n"
-                        )
-            except (TypeError, ValueError):
-                pass
-
-        # P7: Mahalanobis calibration gate (RC_CALIBRATION_ENABLED=1).
-        # Default OFF — wired DARK until P4 benign corpus exists. When on,
-        # scores the risk_vector through a per-kind CalibrationModel and
-        # logs the result alongside the existing per-dim signals so
-        # operators can compare both rules during the shadow window.
-        calibration_result: Optional[Dict[str, Any]] = None
-        if (
-            _calibration_gate is not None
-            and isinstance(report, dict)
-            and _calibration_gate.is_enabled()
-        ):
-            try:
-                rv = report.get("risk_vector") or []
-                fk = report.get("file_kind")
-                calibration_result = _calibration_gate.evaluate(rv, file_kind=fk)
-            except Exception:  # noqa: BLE001
-                calibration_result = None
-            if calibration_result is not None:
-                # Surface on the report so audit row + downstream consumers
-                # see calibration score next to per-dim scores.
-                report = dict(report)
-                report["calibration"] = calibration_result
-                if calibration_result.get("anomaly") and not report.get("regression_detected"):
-                    # Calibration disagrees with the per-dim rule. Treat as
-                    # advisory anomaly — enforce per existing shadow posture.
-                    if _shadow_mode is not None and _shadow_mode.is_active():
-                        shadow_hit = True
-                        audit_log.record_shadow_block(file_path)
-                        _emit_audit(
-                            tool_name=tool_name,
-                            decision="shadow_blocked",
-                            file_path=file_path,
-                            started=started,
-                            before_src=before_src,
-                            after_src=after_src,
-                            report=report,
-                            reason=(
-                                f"calibration_anomaly:score={calibration_result['score']:.2f}"
-                                f">thr={calibration_result['threshold']:.2f}"
-                                f":kind={calibration_result['kind_used']}"
-                            ),
-                            signal_source="calibration",
-                        )
-                        continue
-                    # Shadow OFF: log advisory but do NOT block (P7 dark
-                    # rollout — calibration is in a comparison window, not
-                    # an enforcement role yet).
-                    sys.stderr.write(
-                        f"[hybrid-reasoner] calibration anomaly "
-                        f"(score={calibration_result['score']:.2f} > "
-                        f"thr={calibration_result['threshold']:.2f}, "
-                        f"kind={calibration_result['kind_used']}) — advisory only\n"
-                    )
-
-        if report.get("regression_detected") is True:
-            # RC_SHADOW_MODE=1: log decision but DO NOT enforce. Used during
-            # P4 calibration window so shadow-FPR can be measured before
-            # promoting any P1-P3 invariant to enforcement.
-            if _shadow_mode.is_active() if _shadow_mode else False:
-                shadow_hit = True
-                # Record into shadow-marker namespace, NOT the main retry
-                # marker. Otherwise legit operator retries after a shadow
-                # block get tagged retry_after_block=True misclassifying
-                # audit data. Reviewer-flagged shadow retry-misfire fix.
-                audit_log.record_shadow_block(file_path)
-                _emit_audit(
-                    tool_name=tool_name,
-                    decision="shadow_blocked",
-                    file_path=file_path,
-                    started=started,
-                    before_src=before_src,
-                    after_src=after_src,
-                    report=report,
-                    reason="regression_detected_shadow",
-                    retry_after_block=is_retry,
-                )
-                continue  # log only; do not enforce
+        # Architectural rule engine (RC_RULE_ENGINE=1). Evaluates edits against
+        # .reasoning-core/rules.yaml. Under RC_MODE=advise deny hits become
+        # warnings; under copilot/autopilot they block.
+        re_outcome = _apply_mode(
+            _dispatch.gate_rule_engine(
+                file_path=file_path,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+            )
+        )
+        if re_outcome.report is not None:
+            report = re_outcome.report
+        if re_outcome.action == "exit_block":
             audit_log.record_block(file_path)
             _emit_audit(
                 tool_name=tool_name,
-                decision="blocked",
+                decision=re_outcome.decision,
                 file_path=file_path,
                 started=started,
                 before_src=before_src,
                 after_src=after_src,
                 report=report,
-                reason="regression_detected",
+                reason=re_outcome.reason,
+                signal_source="rule_engine",
                 retry_after_block=is_retry,
+                extra={**(re_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
             )
-            _exit(2, _format_block(file_path, report, is_retry=is_retry))
+            _exit(2, re_outcome.stderr)
+        elif re_outcome.action == "stderr_only":
+            sys.stderr.write(re_outcome.stderr)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=re_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=re_outcome.reason,
+                signal_source="rule_engine",
+                retry_after_block=is_retry,
+                extra={**(re_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+        elif re_outcome.action in ("continue_pair", "audit_only"):
+            if re_outcome.action == "continue_pair":
+                pair_has_audit_row = True
+                audit_log.record_shadow_block(file_path)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=re_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=re_outcome.reason,
+                signal_source="rule_engine",
+                retry_after_block=is_retry,
+                extra={**(re_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+            continue
+
+        # P3 Invariant 2: cumulative_drift gate. Uses RC_DRIFT_WARN and
+        # RC_DRIFT_DENY thresholds; emits reason="cumulative_drift_exceeds:..."
+        # and signal_source="drift_gate". Honors RC_MODE.
+        drift_outcome = _apply_mode(_dispatch.gate_drift(report=report))
+        if drift_outcome.report is not None:
+            report = drift_outcome.report
+        if drift_outcome.action == "exit_block":
+            audit_log.record_block(file_path)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=drift_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=drift_outcome.reason,
+                signal_source="drift_gate",
+                retry_after_block=is_retry,
+                extra={**(drift_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+            _exit(2, drift_outcome.stderr)
+        elif drift_outcome.action == "stderr_only":
+            sys.stderr.write(drift_outcome.stderr)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=drift_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=drift_outcome.reason,
+                signal_source="drift_gate",
+                retry_after_block=is_retry,
+                extra={**(drift_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+        elif drift_outcome.action in ("continue_pair", "audit_only"):
+            if drift_outcome.action == "continue_pair":
+                pair_has_audit_row = True
+                audit_log.record_shadow_block(file_path)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=drift_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=drift_outcome.reason,
+                signal_source="drift_gate",
+                retry_after_block=is_retry,
+                extra={**(drift_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+            continue
+
+        # P7: Mahalanobis calibration gate (RC_CALIBRATION_ENABLED=1).
+        # Default OFF. Use the tested _dispatch helper; RC_MODE=advise turns
+        # the shadow anomaly into a non-blocking audit event.
+        cal_outcome = _apply_mode(_dispatch.gate_calibration(report=report))
+        if cal_outcome.report is not None:
+            report = cal_outcome.report
+        if cal_outcome.action == "stderr_only":
+            sys.stderr.write(cal_outcome.stderr)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=cal_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=cal_outcome.reason,
+                signal_source="calibration",
+                retry_after_block=is_retry,
+                extra={**(cal_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+        elif cal_outcome.action in ("continue_pair", "audit_only"):
+            if cal_outcome.action == "continue_pair":
+                pair_has_audit_row = True
+                audit_log.record_shadow_block(file_path)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=cal_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=cal_outcome.reason,
+                signal_source="calibration",
+                retry_after_block=is_retry,
+                extra={**(cal_outcome.audit_extra or {}), "rc_mode": _rc_mode()},
+            )
+            continue
+
+        # PRM gate (RC_PRM_GATE=1). Shadow by default; blocks only after
+        # promotion criteria are met and RC_PRM_BLOCK=1.
+        if not _handle_prm_outcome(
+            tool_name=tool_name,
+            file_path=file_path,
+            started=started,
+            before_src=before_src,
+            after_src=after_src,
+            is_retry=is_retry,
+        ):
+            continue
+
+        # Final SSM/aggregate regression gate. Honor RC_MODE: advise warns,
+        # copilot/autopilot block.
+        reg_outcome = _apply_mode(
+            _dispatch.gate_regression(
+                report=report, file_path=file_path, is_retry=is_retry
+            )
+        )
+        if reg_outcome.action == "exit_block":
+            audit_log.record_block(file_path)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=reg_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=reg_outcome.reason,
+                retry_after_block=is_retry,
+                extra={"rc_mode": _rc_mode()},
+            )
+            _exit(2, reg_outcome.stderr)
             return  # pragma: no cover
+        if reg_outcome.action == "stderr_only":
+            sys.stderr.write(reg_outcome.stderr)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=reg_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=reg_outcome.reason,
+                retry_after_block=is_retry,
+                extra={"rc_mode": _rc_mode()},
+            )
+            continue
+        if reg_outcome.action in ("continue_pair", "audit_only"):
+            if reg_outcome.action == "continue_pair":
+                pair_has_audit_row = True
+                audit_log.record_shadow_block(file_path)
+            _emit_audit(
+                tool_name=tool_name,
+                decision=reg_outcome.decision,
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=report,
+                reason=reg_outcome.reason,
+                retry_after_block=is_retry,
+                extra={"rc_mode": _rc_mode()},
+            )
+            continue
+
 
     # All edits cleared.
-    # If any pair landed shadow_blocked, the shadow row has already been
-    # emitted — do NOT also emit `allowed` for the same edit (double-count).
-    if shadow_hit:
+    # If any pair landed shadow_blocked or was handled by symbolic fallback,
+    # the decision row has already been emitted — do NOT also emit `allowed`
+    # for the same edit (double-count).
+    if pair_has_audit_row:
         _exit(0)
     _emit_audit(
         tool_name=tool_name,
@@ -882,6 +1392,7 @@ def main() -> None:
         report=report if 'report' in locals() else None,
         reason="ok",
         retry_after_block=is_retry,
+        extra={"rc_mode": _rc_mode()},
     )
     _exit(0)
 

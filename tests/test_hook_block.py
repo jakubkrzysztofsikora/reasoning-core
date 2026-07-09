@@ -224,9 +224,37 @@ def test_regressing_edit_exits_two(stub_sidecar, tmp_path):
         "def f(n):\n    if not n:\n        return 0\n    return n + f(n - 1)\n",
         "def f(n):\n    return n + f(n + 1)\n",
     )
-    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
+    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url(), "RC_MODE": "copilot"})
     assert result.returncode == 2, f"expected exit 2, got {result.returncode}; stderr={result.stderr!r}"
     assert result.stderr.strip(), "expected non-empty stderr reason"
+
+
+def test_regressing_edit_advise_mode_warns(stub_sidecar, tmp_path):
+    """RC_MODE=advise (default) downgrades a regression block to a warning."""
+    stub_sidecar.set_response(200, {
+        "architectural_impact_score": 0.1,
+        "coherence_delta": 2.5,
+        "risk_vector": [0.95, 0.5, 0.5, 0.4, 0.3, 0.2, 0.1, 0.7],
+        "risk_labels": [
+            "cyclomatic", "fan_in", "fan_out", "depth",
+            "churn", "coupling", "cohesion", "novelty",
+        ],
+        "regression_detected": True,
+        "human_summary": "guard removed; unbounded recursion",
+    })
+    src_file = tmp_path / "regressing.py"
+    src_file.write_text(
+        "def f(n):\n    if not n:\n        return 0\n    return n + f(n - 1)\n",
+        encoding="utf-8",
+    )
+    payload = _edit_payload(
+        str(src_file),
+        "def f(n):\n    if not n:\n        return 0\n    return n + f(n - 1)\n",
+        "def f(n):\n    return n + f(n + 1)\n",
+    )
+    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url(), "RC_MODE": "advise"})
+    assert result.returncode == 0, f"expected warn exit 0, got {result.returncode}; stderr={result.stderr!r}"
+    assert "regression" in result.stderr.lower() or "blocked" in result.stderr.lower()
 
 
 def test_unsupported_language_exits_zero_with_note(stub_sidecar, tmp_path):
@@ -318,7 +346,7 @@ def test_multiedit_first_regression_blocks(stub_sidecar, tmp_path):
             ],
         },
     }
-    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
+    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url(), "RC_MODE": "copilot"})
     assert result.returncode == 2, f"stderr={result.stderr!r}"
 
 
@@ -437,6 +465,7 @@ def test_plan_grounding_block_at_level_2(stub_sidecar, tmp_path):
         "S2_URL": stub_sidecar.url(),
         "RC_PLAN_GROUNDING": "2",
         "RC_RUN_DIR": str(tmp_path),
+        "RC_MODE": "copilot",
     })
     assert result.returncode == 2, (
         f"expected exit 2, got {result.returncode}; stderr={result.stderr!r}"
