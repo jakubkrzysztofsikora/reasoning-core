@@ -40,6 +40,9 @@ eval/calibrated/
 # Per-machine Cato VPN CA bundle, built by direnv on demand.
 ca-bundle.pem
 
+# Antigravity CLI per-machine project symlinks.
+.antigravitycli/
+
 # >>> reasoning-core >>>
 .envrc.local
 .claude/settings.local.json
