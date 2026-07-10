@@ -192,6 +192,41 @@ positive-label re-mining).
 Run `rc benchmark` for a one-command Markdown report from your local audit
 log, or `rc reasoning-efficiency` to see today's composite north-star score.
 
+## Multi-machine deployment
+
+The default install writes an **advise-mode** `.envrc` (log/warn only). To
+promote a repo to **copilot** enforcement on this or another machine, append
+the enforcement block to that repo's `.envrc.local`:
+
+```bash
+# >>> reasoning-core enforcement pilot (2026-07-10) >>>
+# Activate intentionally with: direnv reload
+# Promotes the repo from advise (log/warn) to copilot (block) and turns
+# plan-grounding drift into a hard block (RC_PLAN_GROUNDING=2).
+# .envrc.local is gitignored and machine-specific — do not commit it.
+export RC_MODE=copilot
+export RC_SHADOW_MODE=0
+export RC_PLAN_BLOCK=1
+export RC_PLAN_GROUNDING=2
+export RC_ORACLE_BLOCK=1
+export RC_RULE_ENGINE=1
+export S2_FAIL_CLOSED=1
+# <<< reasoning-core enforcement pilot (2026-07-10) <<<
+```
+
+`.envrc.local` is **gitignored** and loaded last by `.envrc`, so
+machine-specific overrides such as `RC_EMBEDDER`, `S2_DEVICE`, or
+`S2_MEM_LIMIT_GB` stay intact. After editing, activate the change with:
+
+```bash
+direnv reload
+```
+
+To replicate the same posture on another machine, pull `reasoning-core`,
+re-run `install.sh` in each gated repo (or copy the block into its
+`.envrc.local`), and restart the sidecar/supervisor. The enforcement block
+never needs to be committed.
+
 ## Uninstall
 
 ```bash

@@ -362,6 +362,45 @@ rc status
 
 ---
 
+## Multi-machine deployment
+
+The default `.envrc` installed by `install.sh` is in **advise mode** (log and
+warn, never block). To promote a repo to **copilot** enforcement on this
+machine or another, add the same block to that repo's `.envrc.local`:
+
+```bash
+# >>> reasoning-core enforcement pilot (2026-07-10) >>>
+# Activate intentionally with: direnv reload
+# Promotes the repo from advise (log/warn) to copilot (block) and turns
+# plan-grounding drift into a hard block (RC_PLAN_GROUNDING=2).
+# .envrc.local is gitignored and machine-specific — do not commit it.
+export RC_MODE=copilot
+export RC_SHADOW_MODE=0
+export RC_PLAN_BLOCK=1
+export RC_PLAN_GROUNDING=2
+export RC_ORACLE_BLOCK=1
+export RC_RULE_ENGINE=1
+export S2_FAIL_CLOSED=1
+# <<< reasoning-core enforcement pilot (2026-07-10) <<<
+```
+
+`.envrc.local` is **gitignored** and sourced last, so any pre-existing
+machine-specific overrides (for example `RC_EMBEDDER`, `S2_DEVICE`, or
+`S2_MEM_LIMIT_GB`) are preserved. After editing the file, reload the
+environment with:
+
+```bash
+direnv reload
+```
+
+On a second machine the workflow is: pull the latest `reasoning-core` clone,
+re-run `install.sh` in each gated repo (or hand-copy the block into its
+`.envrc.local`), preserve that machine's overrides, and restart the
+sidecar/supervisor. Because `.envrc.local` is ignored by git, the enforcement
+block is never part of a commit.
+
+---
+
 ## Cato VPN / corporate TLS-MITM
 
 Cato Networks (and Zscaler etc.) injects its own root CA into TLS chains;
