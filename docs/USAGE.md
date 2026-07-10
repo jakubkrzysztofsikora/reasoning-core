@@ -18,6 +18,7 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | `rc skip-file <path>` | Add `<path>` to the per-session skip list (logged) |
 | `rc unskip-file <path>` | Remove `<path>` from the skip list |
 | `rc enable-enforcement` | First-run wizard: scaffold `PLAN.md` from `README.md`, flip `RC_MODE=copilot` |
+| `rc score-pr --base-ref <ref> [--head-ref <ref>] [--mode symbolic|sidecar]` | Score changed files between two git refs (CI dry-run / local pre-push check) |
 | `rc reasoning-efficiency [--days N]` | Audit-log composite north-star metric (drift caught per gate-second) |
 | `rc override-survival [--days N]` | Fraction of operator overrides that survived in the codebase |
 | `rc audit-history [-n N] [--json] [--reasons]` | Mine recent git history and label commits for Phase-4 calibration feedback |

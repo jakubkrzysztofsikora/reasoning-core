@@ -1,0 +1,182 @@
+name: "Reasoning Core PR Score"
+description: |
+  Score the files changed in a PR/MR with reasoning-core.
+  Runs the local symbolic gate by default (no GPU / no model download).
+  Optionally boots the SSM sidecar for neural scoring.
+
+inputs:
+  base-ref:
+    description: "Base git ref (e.g. origin/main)."
+    required: true
+  head-ref:
+    description: "Head git ref (default: HEAD)."
+    default: "HEAD"
+  mode:
+    description: "Scoring backend: symbolic (default) or sidecar."
+    default: "symbolic"
+  include:
+    description: "Comma-separated file-extension globs to score (omit for default source-file list)."
+    default: ""
+  fail-on-block:
+    description: "Exit non-zero when at least one changed file is blocked."
+    default: "false"
+  sidecar:
+    description: "Boot the SSM sidecar before scoring (requires Python deps + model weights)."
+    default: "false"
+  post-comment:
+    description: "Post the Markdown report as a PR comment."
+    default: "true"
+  github-token:
+    description: "Token used to post the PR comment."
+    default: ${{ github.token }}
+  reasoning-core-repo:
+    description: "Repository that hosts reasoning-core (owner/repo)."
+    default: "jakubkrzysztofsikora/reasoning-core"
+  reasoning-core-ref:
+    description: "Branch/tag of reasoning-core to checkout."
+    default: "main"
+
+outputs:
+  report:
+    description: "Path to the generated Markdown report."
+    value: ${{ steps.score.outputs.report }}
+  json:
+    description: "Path to the generated JSON report."
+    value: ${{ steps.score.outputs.json }}
+  blocked:
+    description: "'true' if at least one file was blocked."
+    value: ${{ steps.score.outputs.blocked }}
+
+runs:
+  using: composite
+  steps:
+    - name: Locate reasoning-core tool
+      id: tool
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -f "${GITHUB_WORKSPACE}/scripts/score_pr.py" ]; then
+          echo "root=${GITHUB_WORKSPACE}" >> "$GITHUB_OUTPUT"
+          echo "self-hosted=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "root=${GITHUB_WORKSPACE}/.reasoning-core-tool" >> "$GITHUB_OUTPUT"
+          echo "self-hosted=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Checkout reasoning-core
+      if: steps.tool.outputs.self-hosted == 'false'
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.reasoning-core-repo }}
+        ref: ${{ inputs.reasoning-core-ref }}
+        path: .reasoning-core-tool
+
+    - name: Set up Python
+      if: inputs.sidecar == 'true'
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Cache pip wheels
+      if: inputs.sidecar == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-py311-${{ hashFiles(format('{0}/requirements.txt', steps.tool.outputs.root)) }}
+        restore-keys: |
+          pip-${{ runner.os }}-py311-
+
+    - name: Cache Hugging Face checkpoint
+      if: inputs.sidecar == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/.cache/huggingface
+        key: mamba-130m-${{ hashFiles(format('{0}/requirements.txt', steps.tool.outputs.root)) }}
+        restore-keys: |
+          mamba-130m-
+
+    - name: Install reasoning-core dependencies
+      if: inputs.sidecar == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -m pip install --upgrade pip
+        python3 -m pip install -r "${{ steps.tool.outputs.root }}/requirements.txt"
+
+    - name: Boot SSM sidecar
+      if: inputs.sidecar == 'true'
+      shell: bash
+      env:
+        BACKGROUND: "1"
+        S2_LOG_FILE: /tmp/reasoning-core-sidecar.log
+      run: |
+        set -euo pipefail
+        bash "${{ steps.tool.outputs.root }}/scripts/start-sidecar.sh"
+
+    - name: Score changed files
+      id: score
+      shell: bash
+      env:
+        RC_SCORE_MODE: ${{ inputs.mode }}
+        S2_FAIL_CLOSED: "0"
+      run: |
+        set -euo pipefail
+        REPORT="reasoning-core-pr-report.md"
+        JSON="reasoning-core-pr-report.json"
+        ARGS=(
+          --base-ref "${{ inputs.base-ref }}"
+          --head-ref "${{ inputs.head-ref }}"
+          --mode "${{ inputs.mode }}"
+          --output "$REPORT"
+          --json "$JSON"
+        )
+        if [ -n "${{ inputs.include }}" ]; then
+          ARGS+=(--include "${{ inputs.include }}")
+        fi
+        if [ "${{ inputs.fail-on-block }}" = "true" ]; then
+          ARGS+=(--fail-on-block)
+        fi
+
+        set +e
+        python3 "${{ steps.tool.outputs.root }}/scripts/score_pr.py" "${ARGS[@]}"
+        EXIT_CODE=$?
+        set -e
+
+        echo "report=${GITHUB_WORKSPACE}/${REPORT}" >> "$GITHUB_OUTPUT"
+        echo "json=${GITHUB_WORKSPACE}/${JSON}" >> "$GITHUB_OUTPUT"
+        if [ "$EXIT_CODE" -ne 0 ]; then
+          echo "blocked=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "blocked=false" >> "$GITHUB_OUTPUT"
+        fi
+        exit "$EXIT_CODE"
+
+    - name: Upload report artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: reasoning-core-pr-report
+        path: |
+          reasoning-core-pr-report.md
+          reasoning-core-pr-report.json
+        if-no-files-found: warn
+
+    - name: Post PR comment
+      if: inputs.post-comment == 'true' && github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          const reportPath = 'reasoning-core-pr-report.md';
+          if (!fs.existsSync(reportPath)) {
+            core.warning('No reasoning-core PR report found to post.');
+            return;
+          }
+          const report = fs.readFileSync(reportPath, 'utf8');
+          const body = '### reasoning-core PR score\n\n' + report.slice(0, 60000);
+          await github.rest.issues.createComment({
+            ...context.repo,
+            issue_number: context.issue.number,
+            body,
+          });

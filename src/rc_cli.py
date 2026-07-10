@@ -9,6 +9,7 @@ Subcommands:
                               emits an operator_confirmed audit event
     rc skip-file <path>       — add file to per-session skip list
     rc unskip-file <path>     — remove file from skip list
+    rc score-pr               — score changed files in a PR/MR (CI helper)
 
 Reads the same kill-switch file as src/hooks/_kill_switches.py.
 """
@@ -17,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -194,6 +196,38 @@ def cmd_unskip_file(args: argparse.Namespace) -> int:
     ks.remove_skip_file(os.path.abspath(args.path))
     sys.stdout.write(f"removed: {os.path.abspath(args.path)}\n")
     return 0
+
+
+def cmd_score_pr(args: argparse.Namespace) -> int:
+    """Score the files changed between two git refs using scripts/score_pr.py.
+
+    This is the local / CI entry point for the PR scorer. It shells out to
+    ``scripts/score_pr.py`` so the same implementation runs everywhere.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    script = repo_root / "scripts" / "score_pr.py"
+    if not script.is_file():
+        sys.stderr.write(f"score_pr.py not found at {script}\n")
+        return 1
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--base-ref", args.base_ref,
+        "--head-ref", args.head_ref,
+        "--mode", args.mode,
+    ]
+    if args.include:
+        cmd += ["--include", args.include]
+    if args.output:
+        cmd += ["--output", args.output]
+    if args.json:
+        cmd += ["--json", args.json]
+    if args.fail_on_block:
+        cmd += ["--fail-on-block"]
+
+    result = subprocess.run(cmd, cwd=str(repo_root), check=False)
+    return result.returncode
 
 
 def _project_dir() -> Path:
@@ -510,6 +544,18 @@ def main(argv: list | None = None) -> int:
     u = sub.add_parser("unskip-file")
     u.add_argument("path")
     u.set_defaults(func=cmd_unskip_file)
+    sp_cmd = sub.add_parser(
+        "score-pr",
+        help="score changed files between two git refs (CI / local dry-run)",
+    )
+    sp_cmd.add_argument("--base-ref", required=True, help="base git ref")
+    sp_cmd.add_argument("--head-ref", default="HEAD", help="head git ref")
+    sp_cmd.add_argument("--mode", default="symbolic", choices=["sidecar", "symbolic"], help="scoring backend")
+    sp_cmd.add_argument("--include", default=None, help="comma-separated extension globs (default: common source files)")
+    sp_cmd.add_argument("--output", default=None, help="Markdown report path")
+    sp_cmd.add_argument("--json", default=None, help="optional JSON output path")
+    sp_cmd.add_argument("--fail-on-block", action="store_true", help="exit non-zero if any file is blocked")
+    sp_cmd.set_defaults(func=cmd_score_pr)
     re_cmd = sub.add_parser(
         "reasoning-efficiency",
         help="audit-log composite metric (audit 2026-06-01 §7)",

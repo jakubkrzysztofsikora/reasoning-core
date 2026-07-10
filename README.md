@@ -23,6 +23,9 @@
   <a href="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml">
     <img src="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/eval.yml/badge.svg" alt="eval">
   </a>
+  <a href="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/reasoning-core-pr-score.yml">
+    <img src="https://github.com/jakubkrzysztofsikora/reasoning-core/actions/workflows/reasoning-core-pr-score.yml/badge.svg" alt="PR score">
+  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
   </a>
@@ -252,6 +255,7 @@ rc explain                  # why the last edit was blocked
 rc bypass-next              # arm one bypass for the next Edit/Write
 rc confirm-next             # confirm the next block was correct (audit ground-truth)
 rc enable-enforcement       # first-run wizard: scaffold PLAN.md and flip to copilot
+rc score-pr                 # score a PR's changed files (CI dry-run / local check)
 rc reasoning-efficiency     # composite north-star metric from audit log
 rc override-survival        # how many operator overrides survived to git HEAD
 rc audit-history            # label recent commits for calibration feedback
@@ -267,6 +271,7 @@ to `RC_MODE=copilot`.
 
 ## Documentation
 
+- [**docs/CI_INTEGRATION.md**](docs/CI_INTEGRATION.md) — GitHub Actions and Azure DevOps PR scoring
 - [**docs/INSTALL.md**](docs/INSTALL.md) — manual install, global-everywhere setup, Scaleway-hosted critic, Cato VPN, supervisor/launchd, embedder backends, troubleshooting
 - [**docs/USAGE.md**](docs/USAGE.md) — `rc` CLI, hook layers, rule engine, diff audit, shadow mode, bypass/kill switches, FAQ
 - [**docs/CONFIGURATION.md**](docs/CONFIGURATION.md) — every `RC_*` and `S2_*` env var

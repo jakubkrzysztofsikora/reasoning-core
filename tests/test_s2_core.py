@@ -254,6 +254,7 @@ def test_score_change_regression_detected(s2_core_module, loaded_backbone):
     assert len(report.human_summary) > 0
 
 
+@pytest.mark.timeout(300)
 def test_score_change_determinism(s2_core_module, loaded_backbone):
     _require_grammar("python")
     a = s2_core_module.score_change("/tmp/det.py", PY_GOOD, PY_BAD)

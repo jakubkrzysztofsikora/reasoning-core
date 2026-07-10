@@ -1,0 +1,190 @@
+# Azure DevOps pipeline for reasoning-core PR scoring.
+#
+# Add this file as a pipeline in your repo, or reference it as a template:
+#
+#   resources:
+#     repositories:
+#       - repository: reasoningCore
+#         type: github
+#         endpoint: <your-github-service-connection>
+#         name: jakubkrzysztofsikora/reasoning-core
+#   steps:
+#     - template: azure-pipelines-reasoning-core.yml@reasoningCore
+#
+# Default mode is symbolic (no GPU / no model download). Set sidecar=true for
+# neural scoring; the pipeline will install Python deps and boot the sidecar.
+
+parameters:
+  - name: baseRef
+    displayName: Base git ref
+    type: string
+    default: origin/main
+  - name: headRef
+    displayName: Head git ref
+    type: string
+    default: HEAD
+  - name: mode
+    displayName: Scoring mode
+    type: string
+    default: symbolic
+    values:
+      - symbolic
+      - sidecar
+  - name: include
+    displayName: File extension globs (comma-separated)
+    type: string
+    default: ""
+  - name: failOnBlock
+    displayName: Fail if any file is blocked
+    type: boolean
+    default: false
+  - name: sidecar
+    displayName: Boot SSM sidecar
+    type: boolean
+    default: false
+  - name: postComment
+    displayName: Post report as PR comment
+    type: boolean
+    default: true
+  - name: reasoningCoreRepo
+    displayName: reasoning-core git URL
+    type: string
+    default: https://github.com/jakubkrzysztofsikora/reasoning-core.git
+  - name: reasoningCoreRef
+    displayName: reasoning-core ref
+    type: string
+    default: main
+
+variables:
+  - name: REPORT_FILE
+    value: reasoning-core-pr-report.md
+  - name: JSON_FILE
+    value: reasoning-core-pr-report.json
+  - name: PYTHON_VERSION
+    value: "3.11"
+
+jobs:
+  - job: score_pr
+    displayName: Score PR with reasoning-core
+    pool:
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 10
+    steps:
+      - checkout: self
+        fetchDepth: 0
+
+      - task: UsePythonVersion@0
+        condition: eq(${{ parameters.sidecar }}, true)
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+        displayName: Use Python $(PYTHON_VERSION)
+
+      - task: Cache@2
+        condition: eq(${{ parameters.sidecar }}, true)
+        inputs:
+          key: 'pip | "$(PYTHON_VERSION)" | "$(Agent.OS)" | requirements.txt'
+          restoreKeys: |
+            pip | "$(PYTHON_VERSION)" | "$(Agent.OS)"
+          path: $(Pipeline.Workspace)/.pip
+        displayName: Cache pip wheels
+
+      - bash: |
+          set -euo pipefail
+          REPO_ROOT="$(Build.SourcesDirectory)"
+          if [ -f "$REPO_ROOT/scripts/score_pr.py" ]; then
+            echo "##vso[task.setvariable variable=RC_TOOL_ROOT]$REPO_ROOT"
+            echo "Found reasoning-core at repo root"
+          else
+            TOOL_ROOT="$REPO_ROOT/.reasoning-core-tool"
+            rm -rf "$TOOL_ROOT"
+            git clone --depth 1 --branch ${{ parameters.reasoningCoreRef }} \
+              "${{ parameters.reasoningCoreRepo }}" "$TOOL_ROOT"
+            echo "##vso[task.setvariable variable=RC_TOOL_ROOT]$TOOL_ROOT"
+          fi
+        displayName: Locate reasoning-core tool
+
+      - bash: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r "$(RC_TOOL_ROOT)/requirements.txt"
+        condition: eq(${{ parameters.sidecar }}, true)
+        displayName: Install reasoning-core dependencies
+
+      - bash: |
+          set -euo pipefail
+          export BACKGROUND=1
+          export S2_LOG_FILE=/tmp/reasoning-core-sidecar.log
+          bash "$(RC_TOOL_ROOT)/scripts/start-sidecar.sh"
+        condition: eq(${{ parameters.sidecar }}, true)
+        displayName: Boot SSM sidecar
+
+      - bash: |
+          set -euo pipefail
+          ARGS=(
+            --base-ref "${{ parameters.baseRef }}"
+            --head-ref "${{ parameters.headRef }}"
+            --mode "${{ parameters.mode }}"
+            --output "$(REPORT_FILE)"
+            --json "$(JSON_FILE)"
+          )
+          if [ -n "${{ parameters.include }}" ]; then
+            ARGS+=(--include "${{ parameters.include }}")
+          fi
+          if [ "${{ parameters.failOnBlock }}" = "True" ]; then
+            ARGS+=(--fail-on-block)
+          fi
+          export RC_SCORE_MODE="${{ parameters.mode }}"
+          export S2_FAIL_CLOSED=0
+          python3 "$(RC_TOOL_ROOT)/scripts/score_pr.py" "${ARGS[@]}"
+        displayName: Score changed files
+
+      - bash: |
+          set -euo pipefail
+          mkdir -p "$(Build.ArtifactStagingDirectory)/reasoning-core-pr-report"
+          cp "$(Build.SourcesDirectory)/$(REPORT_FILE)" "$(Build.ArtifactStagingDirectory)/reasoning-core-pr-report/" || true
+          cp "$(Build.SourcesDirectory)/$(JSON_FILE)" "$(Build.ArtifactStagingDirectory)/reasoning-core-pr-report/" || true
+        condition: always()
+        displayName: Stage report files
+
+      - task: PublishPipelineArtifact@1
+        condition: always()
+        inputs:
+          targetPath: "$(Build.ArtifactStagingDirectory)/reasoning-core-pr-report"
+          artifactName: reasoning-core-pr-report
+        displayName: Publish report artifact
+
+      - bash: |
+          set -euo pipefail
+          REPORT="$(Build.SourcesDirectory)/$(REPORT_FILE)"
+          if [ -f "$REPORT" ]; then
+            echo "##vso[task.uploadsummary]$REPORT"
+          fi
+        condition: always()
+        displayName: Add report to build summary
+
+      - bash: |
+          set -euo pipefail
+          if [ "${{ parameters.postComment }}" != "True" ]; then
+            echo "postComment disabled; skipping PR comment."
+            exit 0
+          fi
+          PR_ID="$(System.PullRequest.PullRequestId)"
+          if [ -z "$PR_ID" ]; then
+            echo "Not a pull-request build; skipping PR comment."
+            exit 0
+          fi
+          REPORT="$(Build.SourcesDirectory)/$(REPORT_FILE)"
+          if [ ! -f "$REPORT" ]; then
+            echo "No report to post."
+            exit 0
+          fi
+          BODY="$(sed 's/"/\\"/g' "$REPORT" | sed ':a;N;$!ba;s/\n/\\n/g')"
+          JSON=$(printf '{"comments":[{"contentType":"markdown","content":"%s"}],"status":1}' "$BODY")
+          URL="$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_apis/git/repositories/$(Build.Repository.Name)/pullRequests/$PR_ID/threads?api-version=7.1"
+          echo "Posting comment to $URL"
+          curl -fsS -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $(System.AccessToken)" \
+            -d "$JSON"
+        condition: and(always(), eq(variables['Build.Reason'], 'PullRequest'))
+        displayName: Post PR comment
