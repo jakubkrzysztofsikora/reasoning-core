@@ -1,8 +1,13 @@
 name: "Reasoning Core PR Score"
+author: "Jakub Sikora"
 description: |
-  Score the files changed in a PR/MR with reasoning-core.
-  Runs the local symbolic gate by default (no GPU / no model download).
-  Optionally boots the SSM sidecar for neural scoring.
+  Score the files changed in a pull request with reasoning-core.
+  Runs a fast local symbolic gate by default (no GPU / no model download)
+  and can optionally use the SSM sidecar for neural scoring.
+
+branding:
+  icon: shield
+  color: gray-dark
 
 inputs:
   base-ref:
@@ -21,7 +26,7 @@ inputs:
     description: "Exit non-zero when at least one changed file is blocked."
     default: "false"
   sidecar:
-    description: "Boot the SSM sidecar before scoring (requires Python deps + model weights)."
+    description: "Boot the SSM sidecar before scoring (requires heavy deps)."
     default: "false"
   post-comment:
     description: "Post the Markdown report as a PR comment."
@@ -29,12 +34,6 @@ inputs:
   github-token:
     description: "Token used to post the PR comment."
     default: ${{ github.token }}
-  reasoning-core-repo:
-    description: "Repository that hosts reasoning-core (owner/repo)."
-    default: "jakubkrzysztofsikora/reasoning-core"
-  reasoning-core-ref:
-    description: "Branch/tag of reasoning-core to checkout."
-    default: "main"
 
 outputs:
   report:
@@ -50,27 +49,6 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Locate reasoning-core tool
-      id: tool
-      shell: bash
-      run: |
-        set -euo pipefail
-        if [ -f "${GITHUB_WORKSPACE}/scripts/score_pr.py" ]; then
-          echo "root=${GITHUB_WORKSPACE}" >> "$GITHUB_OUTPUT"
-          echo "self-hosted=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "root=${GITHUB_WORKSPACE}/.reasoning-core-tool" >> "$GITHUB_OUTPUT"
-          echo "self-hosted=false" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Checkout reasoning-core
-      if: steps.tool.outputs.self-hosted == 'false'
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ inputs.reasoning-core-repo }}
-        ref: ${{ inputs.reasoning-core-ref }}
-        path: .reasoning-core-tool
-
     - name: Set up Python
       if: inputs.sidecar == 'true'
       uses: actions/setup-python@v5
@@ -82,7 +60,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-py311-${{ hashFiles(format('{0}/requirements.txt', steps.tool.outputs.root)) }}
+        key: pip-${{ runner.os }}-py311-${{ hashFiles(format('{0}/requirements.txt', github.action_path)) }}
         restore-keys: |
           pip-${{ runner.os }}-py311-
 
@@ -91,7 +69,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ github.workspace }}/.cache/huggingface
-        key: mamba-130m-${{ hashFiles(format('{0}/requirements.txt', steps.tool.outputs.root)) }}
+        key: mamba-130m-${{ hashFiles(format('{0}/requirements.txt', github.action_path)) }}
         restore-keys: |
           mamba-130m-
 
@@ -101,7 +79,7 @@ runs:
       run: |
         set -euo pipefail
         python3 -m pip install --upgrade pip
-        python3 -m pip install -r "${{ steps.tool.outputs.root }}/requirements.txt"
+        python3 -m pip install -r "${{ github.action_path }}/requirements.txt"
 
     - name: Boot SSM sidecar
       if: inputs.sidecar == 'true'
@@ -111,7 +89,7 @@ runs:
         S2_LOG_FILE: /tmp/reasoning-core-sidecar.log
       run: |
         set -euo pipefail
-        bash "${{ steps.tool.outputs.root }}/scripts/start-sidecar.sh"
+        bash "${{ github.action_path }}/scripts/start-sidecar.sh"
 
     - name: Score changed files
       id: score
@@ -138,7 +116,7 @@ runs:
         fi
 
         set +e
-        python3 "${{ steps.tool.outputs.root }}/scripts/score_pr.py" "${ARGS[@]}"
+        python3 "${{ github.action_path }}/scripts/score_pr.py" "${ARGS[@]}"
         EXIT_CODE=$?
         set -e
 

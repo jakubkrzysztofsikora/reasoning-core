@@ -35,11 +35,11 @@ jobs:
 The workflow scores the PR and posts a comment. It never fails the build unless
 you override `fail-on-block: true`.
 
-### Option B — composite action (drop it into an existing job)
+### Option B — Marketplace action (drop it into an existing job)
 
 ```yaml
 - name: Score PR with reasoning-core
-  uses: jakubkrzysztofsikora/reasoning-core/.github/actions/reasoning-core-score@main
+  uses: jakubkrzysztofsikora/reasoning-core@main
   with:
     base-ref: origin/main
     mode: symbolic
@@ -51,7 +51,7 @@ you override `fail-on-block: true`.
 
 | Input | Default | Description |
 |---|---|---|
-| `base-ref` | `origin/main` | Base git ref for the diff |
+| `base-ref` | required | Base git ref for the diff |
 | `head-ref` | `HEAD` | Head git ref |
 | `mode` | `symbolic` | `symbolic` (fast, local) or `sidecar` (neural scorer) |
 | `include` | *(all source extensions)* | Comma-separated extension globs, e.g. `*.py,*.ts` |
@@ -108,6 +108,59 @@ The report is published as a build artifact and added to the build summary.
 
 ---
 
+## Publishing to marketplaces
+
+### GitHub Actions Marketplace
+
+This repo already exposes a Marketplace-ready action via `action.yml` at the
+repository root.
+
+To publish it:
+
+1. Ensure the `name` in `action.yml` is unique on the Marketplace.
+2. Verify `action.yml` includes `author` and `branding`.
+3. Accept the GitHub Marketplace Developer Agreement (repo owner/org owner).
+4. On GitHub, go to **Releases** → **Draft a new release**.
+5. Check **Publish this Action to the GitHub Marketplace**.
+6. Choose a primary category (e.g. *Code quality* or *Security*).
+7. Tag the release with a semantic version, e.g. `v1.0.0`.
+8. Publish the release.
+
+After publishing, users can pin to a version:
+
+```yaml
+- uses: jakubkrzysztofsikora/reasoning-core@v1.0.0
+```
+
+For a cleaner separation between the framework and the Marketplace listing, you
+can also create a dedicated repo (e.g. `reasoning-core-score-action`) that
+contains only `action.yml`, `README.md`, and the scripts it needs. That repo can
+mirror releases from the main repo via a small publishing workflow.
+
+### Azure DevOps Marketplace
+
+The Azure DevOps YAML template is **not** a Marketplace task. It is referenced as
+a repo resource, which is the idiomatic way to share reusable pipeline templates
+in Azure DevOps.
+
+To appear on the Visual Studio Marketplace as a first-class pipeline task, you
+need to wrap the scorer in an Azure DevOps extension:
+
+1. Create a new directory/extension repo.
+2. Write the task logic (Node.js/TypeScript or PowerShell) that calls
+   `scripts/score_pr.py` from a cloned `reasoning-core` checkout.
+3. Add `task.json` with inputs matching the template parameters.
+4. Add `vss-extension.json` with `categories: ["Azure Pipelines"]` and your
+   publisher ID.
+5. Install `tfx-cli` and package: `tfx extension create --manifest-globs vss-extension.json`.
+6. Create a Marketplace publisher at https://marketplace.visualstudio.com/manage.
+7. Upload the `.vsix`, or run `tfx extension publish --share-with yourOrg`.
+
+See Microsoft's docs for the full task-extension walkthrough:
+[Integrate custom build pipeline tasks with extensions](https://learn.microsoft.com/en-us/azure/devops/extend/develop/add-build-task).
+
+---
+
 ## Scoring modes
 
 - **symbolic** — evaluates `PLAN.md` path contracts and `.reasoning-core/rules.yaml`
@@ -154,5 +207,6 @@ rc score-pr --base-ref origin/main --head-ref HEAD --mode symbolic
 
 - Default symbolic mode does **not** send code anywhere. It runs inside the CI runner.
 - Sidecar mode binds `127.0.0.1` only; the scorer talks to the loopback address.
-- The action/workflow clones reasoning-core into `.reasoning-core-tool` inside the
+- The GitHub Action is delivered as the published action repo; no extra clone step is needed.
+- The Azure DevOps template clones reasoning-core into `.reasoning-core-tool` inside the
   runner workspace and leaves no state in your repo.

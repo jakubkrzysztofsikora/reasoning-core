@@ -9,11 +9,10 @@
 #       uses: jakubkrzysztofsikora/reasoning-core/.github/workflows/reasoning-core-pr-score.yml@main
 #       secrets: inherit
 #
-# Or use the composite action for finer control:
-#   - uses: jakubkrzysztofsikora/reasoning-core/.github/actions/reasoning-core-score@main
+# Or use the Marketplace action directly:
+#   - uses: jakubkrzysztofsikora/reasoning-core@main
 #     with:
 #       base-ref: origin/main
-#       mode: symbolic
 
 name: reasoning-core PR score
 
@@ -50,14 +49,6 @@ on:
         description: "Post the report as a PR comment"
         type: boolean
         default: true
-      reasoning-core-repo:
-        description: "Owner/repo of reasoning-core"
-        type: string
-        default: "jakubkrzysztofsikora/reasoning-core"
-      reasoning-core-ref:
-        description: "Branch/tag of reasoning-core"
-        type: string
-        default: "main"
 
 permissions:
   contents: read
@@ -86,119 +77,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Locate reasoning-core tool
-        id: tool
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f "${GITHUB_WORKSPACE}/scripts/score_pr.py" ]; then
-            echo "root=${GITHUB_WORKSPACE}" >> "$GITHUB_OUTPUT"
-            echo "self-hosted=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "root=${GITHUB_WORKSPACE}/.reasoning-core-tool" >> "$GITHUB_OUTPUT"
-            echo "self-hosted=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout reasoning-core
-        if: steps.tool.outputs.self-hosted == 'false'
-        uses: actions/checkout@v4
+      - name: Score with reasoning-core
+        uses: ./
         with:
-          repository: ${{ inputs.reasoning-core-repo || 'jakubkrzysztofsikora/reasoning-core' }}
-          ref: ${{ inputs.reasoning-core-ref || 'main' }}
-          path: .reasoning-core-tool
-
-      - name: Set up Python
-        if: env.RC_SCORE_SIDECAR == 'true'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Cache pip wheels
-        if: env.RC_SCORE_SIDECAR == 'true'
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-py311-${{ hashFiles(format('{0}/requirements.txt', steps.tool.outputs.root)) }}
-          restore-keys: |
-            pip-${{ runner.os }}-py311-
-
-      - name: Cache Hugging Face checkpoint
-        if: env.RC_SCORE_SIDECAR == 'true'
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.cache/huggingface
-          key: mamba-130m-${{ hashFiles(format('{0}/requirements.txt', steps.tool.outputs.root)) }}
-          restore-keys: |
-            mamba-130m-
-
-      - name: Install reasoning-core dependencies
-        if: env.RC_SCORE_SIDECAR == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r "${{ steps.tool.outputs.root }}/requirements.txt"
-
-      - name: Boot SSM sidecar
-        if: env.RC_SCORE_SIDECAR == 'true'
-        shell: bash
-        env:
-          BACKGROUND: "1"
-          S2_LOG_FILE: /tmp/reasoning-core-sidecar.log
-        run: |
-          set -euo pipefail
-          bash "${{ steps.tool.outputs.root }}/scripts/start-sidecar.sh"
-
-      - name: Score changed files
-        id: score
-        shell: bash
-        env:
-          S2_FAIL_CLOSED: "0"
-        run: |
-          set -euo pipefail
-          REPORT="reasoning-core-pr-report.md"
-          JSON="reasoning-core-pr-report.json"
-          ARGS=(
-            --base-ref "${{ env.RC_SCORE_BASE_REF }}"
-            --head-ref "${{ env.RC_SCORE_HEAD_REF }}"
-            --mode "${{ env.RC_SCORE_MODE }}"
-            --output "$REPORT"
-            --json "$JSON"
-          )
-          if [ -n "${{ env.RC_SCORE_INCLUDE }}" ]; then
-            ARGS+=(--include "${{ env.RC_SCORE_INCLUDE }}")
-          fi
-          if [ "${{ env.RC_SCORE_FAIL_ON_BLOCK }}" = "true" ]; then
-            ARGS+=(--fail-on-block)
-          fi
-
-          python3 "${{ steps.tool.outputs.root }}/scripts/score_pr.py" "${ARGS[@]}"
-
-      - name: Upload report artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: reasoning-core-pr-report
-          path: |
-            reasoning-core-pr-report.md
-            reasoning-core-pr-report.json
-          if-no-files-found: warn
-
-      - name: Post PR comment
-        if: env.RC_SCORE_POST_COMMENT == 'true' && github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const reportPath = 'reasoning-core-pr-report.md';
-            if (!fs.existsSync(reportPath)) {
-              core.warning('No reasoning-core PR report found to post.');
-              return;
-            }
-            const report = fs.readFileSync(reportPath, 'utf8');
-            const body = '### reasoning-core PR score\n\n' + report.slice(0, 60000);
-            await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: context.issue.number,
-              body,
-            });
+          base-ref: ${{ env.RC_SCORE_BASE_REF }}
+          head-ref: ${{ env.RC_SCORE_HEAD_REF }}
+          mode: ${{ env.RC_SCORE_MODE }}
+          include: ${{ env.RC_SCORE_INCLUDE }}
+          fail-on-block: ${{ env.RC_SCORE_FAIL_ON_BLOCK }}
+          sidecar: ${{ env.RC_SCORE_SIDECAR }}
+          post-comment: ${{ env.RC_SCORE_POST_COMMENT }}
