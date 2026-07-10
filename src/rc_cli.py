@@ -420,26 +420,30 @@ def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
 
 
 
-def cmd_override_survival(args: argparse.Namespace) -> int:
-    '''Compute override survival ratio from audit log git_head fields.'''
-    audit_root = Path(args.audit_root or _audit_root())
-    survived = 0
-    reverted = 0
-    unknown = 0
-    import subprocess
-
-    repo_root = None
+def _git_repo_root() -> Path | None:
+    """Best-effort current git repo root. Returns None outside a repo."""
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=2,
         )
         if r.returncode == 0 and r.stdout.strip():
-            repo_root = Path(r.stdout.strip())
+            return Path(r.stdout.strip())
     except Exception:
         pass
+    return None
 
-    for ev in _walk_audit_events(audit_root, args.days):
+
+def _override_survival_counts(audit_root: Path, days: int, repo_root: Path | None) -> tuple[int, int, int]:
+    """Return (survived, reverted, unknown) for allowed_via_override events.
+
+    Shared by ``cmd_override_survival`` and ``cmd_benchmark`` so the survival
+    calculation stays consistent and the repo-root guard is not duplicated.
+    """
+    survived = 0
+    reverted = 0
+    unknown = 0
+    for ev in _walk_audit_events(audit_root, days):
         if ev.get("decision") != "allowed_via_override":
             continue
         extra = ev.get("extra")
@@ -448,28 +452,38 @@ def cmd_override_survival(args: argparse.Namespace) -> int:
         if not git_head or not fp:
             unknown += 1
             continue
-        if repo_root:
-            try:
-                r = subprocess.run(
-                    ["git", "show", f"{git_head}:{fp}"],
-                    capture_output=True, text=True, timeout=5, cwd=str(repo_root),
-                )
-                content_at_override = r.stdout if r.returncode == 0 else None
-            except Exception:
-                content_at_override = None
-            fpath = repo_root / fp
-            try:
-                content_current = fpath.read_text(encoding="utf-8", errors="replace") if fpath.is_file() else None
-            except OSError:
-                content_current = None
-            if content_at_override is not None and content_current is not None:
-                if content_at_override == content_current:
-                    survived += 1
-                else:
-                    reverted += 1
-                continue
-        unknown += 1
+        if repo_root is None:
+            unknown += 1
+            continue
+        try:
+            r = subprocess.run(
+                ["git", "show", f"{git_head}:{fp}"],
+                capture_output=True, text=True, timeout=5, cwd=str(repo_root),
+            )
+            content_at_override = r.stdout if r.returncode == 0 else None
+        except Exception:
+            content_at_override = None
+        fpath = repo_root / fp
+        try:
+            content_current = fpath.read_text(encoding="utf-8", errors="replace") if fpath.is_file() else None
+        except OSError:
+            content_current = None
+        if content_at_override is not None and content_current is not None:
+            if content_at_override == content_current:
+                survived += 1
+            else:
+                reverted += 1
+        else:
+            unknown += 1
+    return survived, reverted, unknown
 
+
+def cmd_override_survival(args: argparse.Namespace) -> int:
+    '''Compute override survival ratio from audit log git_head fields.'''
+    audit_root = Path(args.audit_root or _audit_root())
+
+    repo_root = _git_repo_root()
+    survived, reverted, unknown = _override_survival_counts(audit_root, args.days, repo_root)
     total = survived + reverted + unknown
     if total == 0:
         print(f"no override events with git_head in last {args.days} days under {audit_root}")
@@ -521,6 +535,318 @@ def cmd_audit_history(args: argparse.Namespace) -> int:
         )
         if args.reasons and c.label_reason:
             sys.stdout.write(f"          reason: {c.label_reason}\n")
+    return 0
+
+
+# --- benchmark (audit schema v4 measurement foundation) ----------------------
+
+
+def _classify_severity(reason: str, decision: str, gate_id: str | None) -> str:
+    """Map an audit event to a severity/layer class for the benchmark report."""
+    if not isinstance(reason, str):
+        reason = ""
+    reason_l = reason.lower()
+    decision_l = str(decision).lower()
+
+    if decision_l == "fail-open":
+        return "fail_open"
+    if decision_l == "shadow_blocked":
+        return "shadow"
+    if decision_l in ("operator_override", "allowed_via_override"):
+        return "override"
+
+    if "contract_violation" in reason_l:
+        return "contract"
+    if reason_l.startswith("oracle_") or "oracle" in reason_l:
+        return "oracle"
+    if reason_l.startswith("rule_engine:"):
+        return "rule_engine"
+    if reason_l == "plan_impl_drift":
+        return "plan_grounding"
+    if reason_l in ("shell_escape", "guard_file_locked", "language_fingerprint_violation"):
+        return "self_protection"
+    if reason_l.startswith("kill_switch") or reason_l.startswith("magic_comment"):
+        return "self_protection"
+    if gate_id == "plan_grounding" or "plan" in reason_l:
+        return "plan_grounding"
+    if gate_id == "rules":
+        return "rule_engine"
+
+    return "other"
+
+
+def _token_cost_proxy(metrics: dict) -> float:
+    """Rough proxy: every scored event costs a base prompt turn; blocks and
+    overrides cost an extra retry turn.  This is intentionally conservative
+    and uses fixed coefficients so the number is comparable week-over-week
+    rather than an absolute dollar estimate.
+    """
+    base = metrics.get("total_events", 0) * 1.0
+    retry = (
+        metrics.get("blocked", 0)
+        + metrics.get("warn", 0)
+        + metrics.get("shadow_blocked", 0)
+        + metrics.get("allowed_via_override", 0)
+    ) * 1.5
+    return round(base + retry, 1)
+
+
+def _percentile(values: list[float], p: float) -> float | None:
+    if not values:
+        return None
+    s = sorted(values)
+    k = (len(s) - 1) * (p / 100.0)
+    f = int(k)
+    c = min(f + 1, len(s) - 1)
+    if f == c:
+        return float(s[f])
+    return float(s[f] + (s[c] - s[f]) * (k - f))
+
+
+def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: str | None) -> dict:
+    """Aggregate audit events into benchmark metrics."""
+    total_events = 0
+    decisions: dict[str, int] = {}
+    severity: dict[str, int] = {}
+    latencies: list[int] = []
+    block_latencies: list[int] = []
+    retry_after_block = 0
+    scope_creep = 0
+    operator_overrides = 0
+    operator_confirmed = 0
+    allowed_via_override = 0
+    signal_sources: dict[str, int] = {}
+
+    for ev in _walk_audit_events(audit_root, days):
+        ts = ev.get("ts")
+        if before or after:
+            if not isinstance(ts, str) or not ts:
+                # Date-filtered windows require a timestamp; skip untimestamped
+                # events so they don't contaminate both sides of a comparison.
+                continue
+            if before and ts[:10] >= before:
+                continue
+            if after and ts[:10] < after:
+                continue
+
+        total_events += 1
+        decision = str(ev.get("decision") or "unknown")
+        reason = str(ev.get("reason") or "")
+        gate_id = ev.get("gate_id")
+        decisions[decision] = decisions.get(decision, 0) + 1
+        # Class counts only non-allowed decisions; otherwise "allowed" events
+        # dominate the table and conflate blocked/non-blocked signals.
+        if decision != "allowed":
+            cls = _classify_severity(reason, decision, gate_id)
+            severity[cls] = severity.get(cls, 0) + 1
+
+        latency = ev.get("latency_ms")
+        if isinstance(latency, int):
+            latencies.append(latency)
+            if decision == "blocked":
+                block_latencies.append(latency)
+
+        if decision == "blocked" and ev.get("retry_after_block") is True:
+            retry_after_block += 1
+
+        if reason == "plan_impl_drift" or "contract_violation" in reason.lower():
+            scope_creep += 1
+
+        if decision == "operator_override":
+            operator_overrides += 1
+        if decision == "operator_confirmed":
+            operator_confirmed += 1
+        if decision == "allowed_via_override":
+            allowed_via_override += 1
+
+        signal_source = ev.get("signal_source")
+        if isinstance(signal_source, str):
+            signal_sources[signal_source] = signal_sources.get(signal_source, 0) + 1
+
+    median_latency = _percentile(latencies, 50)
+    p95_latency = _percentile(latencies, 95)
+    median_block_latency = _percentile(block_latencies, 50)
+
+    metrics = {
+        "total_events": total_events,
+        "blocked": decisions.get("blocked", 0),
+        "warn": decisions.get("warn", 0),
+        "shadow_blocked": decisions.get("shadow_blocked", 0),
+        "fail_open": decisions.get("fail-open", 0),
+        "allowed": decisions.get("allowed", 0),
+        "allowed_via_override": allowed_via_override,
+        "operator_override": operator_overrides,
+        "operator_confirmed": operator_confirmed,
+        "retry_after_block": retry_after_block,
+        "scope_creep_catches": scope_creep,
+        "severity": severity,
+        "signal_sources": signal_sources,
+        "median_latency_ms": int(median_latency) if median_latency is not None else None,
+        "p95_latency_ms": int(p95_latency) if p95_latency is not None else None,
+        "median_block_latency_ms": int(median_block_latency) if median_block_latency is not None else None,
+        "token_cost_proxy": _token_cost_proxy({
+            "total_events": total_events,
+            "blocked": decisions.get("blocked", 0),
+            "warn": decisions.get("warn", 0),
+            "shadow_blocked": decisions.get("shadow_blocked", 0),
+            "allowed_via_override": allowed_via_override,
+        }),
+    }
+
+    # False-positive proxy: count outcome signals (retries + overrides) over
+    # blocking decisions.  operator_override is the arming event, not the
+    # outcome, so it is intentionally excluded to avoid double-counting the
+    # same incident. Clamp to 1.0 so the headline number stays interpretable
+    # even when the same incident appears in both counts.
+    fp_denominator = max(1, metrics["blocked"] + metrics["warn"] + metrics["shadow_blocked"])
+    metrics["false_positive_proxy"] = min(
+        1.0,
+        round((retry_after_block + allowed_via_override) / fp_denominator, 3),
+    )
+
+    # Override survival summary (best-effort; full calc uses shared helper).
+    metrics["override_survival_ratio"] = None  # computed separately if repo available
+    return metrics
+
+
+def _fmt_latency(value: int | None) -> str:
+    return str(value) if value is not None else "n/a"
+
+
+def _fmt_benchmark_markdown(metrics: dict, title: str = "reasoning-core benchmark") -> str:
+    lines = [
+        f"# {title}",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
+        f"| Total events | {metrics['total_events']} |",
+        f"| Allowed | {metrics['allowed']} |",
+        f"| Blocked | {metrics['blocked']} |",
+        f"| Warn | {metrics['warn']} |",
+        f"| Shadow blocked | {metrics['shadow_blocked']} |",
+        f"| Fail-open | {metrics['fail_open']} |",
+        f"| Allowed via override | {metrics['allowed_via_override']} |",
+        f"| Operator overrides | {metrics['operator_override']} |",
+        f"| Operator confirmed | {metrics['operator_confirmed']} |",
+        f"| Scope-creep catches | {metrics['scope_creep_catches']} |",
+        f"| Retry-after-block proxy | {metrics['retry_after_block']} |",
+        f"| False-positive proxy | {metrics['false_positive_proxy']:.3f} |",
+        f"| Median latency (ms) | {_fmt_latency(metrics['median_latency_ms'])} |",
+        f"| p95 latency (ms) | {_fmt_latency(metrics['p95_latency_ms'])} |",
+        f"| Median block latency (ms) | {_fmt_latency(metrics['median_block_latency_ms'])} |",
+        f"| Token-cost proxy | {metrics['token_cost_proxy']} |",
+        "",
+        "## Events by class",
+        "",
+        "| Class | Count |",
+        "|---|---|",
+    ]
+    for cls in sorted(metrics["severity"].keys(), key=lambda k: -metrics["severity"][k]):
+        lines.append(f"| {cls} | {metrics['severity'][cls]} |")
+
+    if metrics["signal_sources"]:
+        lines.extend([
+            "",
+            "## Signal source decomposition",
+            "",
+            "| Source | Count |",
+            "|---|---|",
+        ])
+        for src in sorted(metrics["signal_sources"].keys(), key=lambda k: -metrics["signal_sources"][k]):
+            lines.append(f"| {src} | {metrics['signal_sources'][src]} |")
+
+    if metrics.get("override_survival_ratio") is not None:
+        lines.extend([
+            "",
+            "## Override survival",
+            "",
+            f"- Survival ratio: {metrics['override_survival_ratio']:.2%}",
+        ])
+
+    lines.extend([
+        "",
+        "_Notes: token-cost proxy is a synthetic unit for week-over-week comparison, not a dollar estimate. False-positive proxy is capped at 1.0 and counts retries-after-block plus allowed-via-override outcomes over blocking decisions; the same incident may appear in both counts._",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _override_survival_ratio(audit_root: Path, days: int) -> float | None:
+    """Compute a lightweight override survival ratio for the benchmark report."""
+    repo_root = _git_repo_root()
+    if repo_root is None:
+        return None
+
+    survived, reverted, _unknown = _override_survival_counts(audit_root, days, repo_root)
+    total = survived + reverted
+    if total == 0:
+        return None
+    return survived / total
+
+
+def cmd_benchmark(args: argparse.Namespace) -> int:
+    """One-command benchmark runner from the local audit log.
+
+    Produces a Markdown report with blocked-edit counts by severity class,
+    override survival, median latency, a token-cost proxy, and a false-positive
+    proxy.  Supports --before / --after date windows for week-over-week
+    comparison.
+    """
+    import datetime as _dt
+
+    audit_root = Path(args.audit_root or _audit_root())
+    before = args.before
+    after = args.after
+    days = args.days
+
+    if before:
+        try:
+            _dt.datetime.strptime(before, "%Y-%m-%d")
+        except ValueError:
+            sys.stderr.write(f"--before must be YYYY-MM-DD, got {before}\n")
+            return 1
+    if after:
+        try:
+            after_dt = _dt.datetime.strptime(after, "%Y-%m-%d")
+        except ValueError:
+            sys.stderr.write(f"--after must be YYYY-MM-DD, got {after}\n")
+            return 1
+        # Ensure _walk_audit_events covers the requested window even when it is
+        # older than the default --days value.
+        days = max(days, (_dt.datetime.now() - after_dt).days + 1)
+
+    # Warn when a --before-only window may be truncated by the default --days.
+    if before and not after and days == args.days:
+        sys.stderr.write(
+            f"note: --before window is bounded by --days {days}; "
+            "pass a larger --days or an explicit --after to widen the window\n"
+        )
+
+    metrics = _compute_benchmark(audit_root, days, before, after)
+    # Override survival compares against the current working tree, so it is only
+    # meaningful for the trailing --days window. Skip it for historical windows.
+    if before or after:
+        metrics["override_survival_ratio"] = None
+    else:
+        metrics["override_survival_ratio"] = _override_survival_ratio(audit_root, days)
+
+    if args.json:
+        out_path = Path(args.json)
+        try:
+            out_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            sys.stderr.write(f"failed to write JSON: {exc}\n")
+            return 1
+
+    report = _fmt_benchmark_markdown(metrics, title="reasoning-core benchmark")
+    if args.output:
+        try:
+            Path(args.output).write_text(report + "\n", encoding="utf-8")
+        except OSError as exc:
+            sys.stderr.write(f"failed to write report: {exc}\n")
+            return 1
+    else:
+        sys.stdout.write(report + "\n")
     return 0
 
 
@@ -579,6 +905,17 @@ def main(argv: list | None = None) -> int:
     ah_cmd.add_argument("--json", action="store_true")
     ah_cmd.add_argument("--reasons", action="store_true")
     ah_cmd.set_defaults(func=cmd_audit_history)
+    bench_cmd = sub.add_parser(
+        "benchmark",
+        help="one-command benchmark report from the local audit log",
+    )
+    bench_cmd.add_argument("--days", type=int, default=30)
+    bench_cmd.add_argument("--audit-root", default=None)
+    bench_cmd.add_argument("--before", default=None, help="include events strictly before this date (YYYY-MM-DD)")
+    bench_cmd.add_argument("--after", default=None, help="include events on or after this date (YYYY-MM-DD)")
+    bench_cmd.add_argument("--output", default=None, help="Markdown report output path")
+    bench_cmd.add_argument("--json", default=None, help="optional JSON metrics output path")
+    bench_cmd.set_defaults(func=cmd_benchmark)
     args = p.parse_args(argv)
     return args.func(args)
 

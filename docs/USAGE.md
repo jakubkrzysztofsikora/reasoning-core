@@ -22,6 +22,7 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | `rc reasoning-efficiency [--days N]` | Audit-log composite north-star metric (drift caught per gate-second) |
 | `rc override-survival [--days N]` | Fraction of operator overrides that survived in the codebase |
 | `rc audit-history [-n N] [--json] [--reasons]` | Mine recent git history and label commits for Phase-4 calibration feedback |
+| `rc benchmark [--days N] [--before DATE] [--after DATE] [--output PATH] [--json PATH]` | One-command benchmark report from the local audit log |
 
 `rc enable-enforcement` runs the first-run wizard: it scaffolds `PLAN.md` from
 `README.md`, shows the 48-hour shadow report checklist, and flips the repo to
@@ -30,6 +31,13 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 `rc audit-history` labels the last `n` commits as positive/negative using a
 48-hour follow-up-fix heuristic. Use `--json` for machine-readable output and
 `--reasons` to print why each commit was labelled.
+
+`rc benchmark` produces a Markdown report from the local audit log. It reports
+total decisions, blocked edits, warnings, shadow blocks, fail-opens, events by
+class, a false-positive proxy, a token-cost proxy, median/p95 latency, and an
+override-survival ratio. Use `--before` / `--after` to compare two time windows,
+`--output` to save the Markdown report, and `--json` to emit machine-readable
+metrics for CI.
 
 ---
 
