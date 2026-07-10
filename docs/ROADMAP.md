@@ -73,6 +73,9 @@ Source of truth: [`PLAN.md`](PLAN.md) +
 - **Supply-chain hardening** — loopback-only sidecar (`S2_ALLOW_REMOTE=1`
   to opt out), allowlisted Bearer-auth hosts (`RC_GEN_ALLOWED_HOSTS`),
   path-allowlisted fallback log, SHA-pinned HF revisions.
+- **`rc benchmark`** — one-command audit-log benchmark report with blocked edits
+  by class, latency percentiles, false-positive proxy, token-cost proxy, and
+  override survival (`2c70c2e`).
 
 ---
 

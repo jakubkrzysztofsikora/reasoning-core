@@ -112,9 +112,10 @@ That labeled feedback loop recalibrates thresholds so the gate gets tighter
 where you actually make mistakes and looser where you don't.
 
 **5. You get an operator dashboard, not a black box.**  
-`rc status`, `rc explain`, `rc reasoning-efficiency`, `rc override-survival`,
-and `rc audit-history` turn gate behavior into numbers you can reason about.
-You can see whether the gate is helping or just getting in the way.
+`rc status`, `rc explain`, `rc benchmark`, `rc reasoning-efficiency`,
+`rc override-survival`, and `rc audit-history` turn gate behavior into numbers
+you can reason about. You can see whether the gate is helping or just getting
+in the way.
 
 **6. It travels across agents.**  
 The same contract/oracle/PRM/commit-miner stack runs under Claude Code,
@@ -188,8 +189,8 @@ for migration notes and
 queued follow-ups (PRM training, Phase-2-dim verification, periodic
 positive-label re-mining).
 
-Run `rc reasoning-efficiency` to see today's composite north-star
-score from your local audit log.
+Run `rc benchmark` for a one-command Markdown report from your local audit
+log, or `rc reasoning-efficiency` to see today's composite north-star score.
 
 ## Uninstall
 
@@ -256,6 +257,7 @@ rc bypass-next              # arm one bypass for the next Edit/Write
 rc confirm-next             # confirm the next block was correct (audit ground-truth)
 rc enable-enforcement       # first-run wizard: scaffold PLAN.md and flip to copilot
 rc score-pr                 # score a PR's changed files (CI dry-run / local check)
+rc benchmark                # one-command benchmark report from the audit log
 rc reasoning-efficiency     # composite north-star metric from audit log
 rc override-survival        # how many operator overrides survived to git HEAD
 rc audit-history            # label recent commits for calibration feedback

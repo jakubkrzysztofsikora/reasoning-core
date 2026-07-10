@@ -212,6 +212,12 @@ commit touching the same files, and prints a table (or JSON with `--json`).
 These labels provide the feedback signal for recalibrating neural and symbolic
 thresholds without manual labeling.
 
+The `rc benchmark` subcommand aggregates the local audit log into a Markdown
+report (and optional JSON via `--json PATH`). It reports decisions by outcome,
+blocked events by class, scope-creep catches, latency percentiles, a
+token-cost proxy, a false-positive proxy, and an override-survival ratio. Use
+`--before` / `--after` for week-over-week comparisons.
+
 ## Bypass / kill switches
 
 | Env var | Default | Purpose |
