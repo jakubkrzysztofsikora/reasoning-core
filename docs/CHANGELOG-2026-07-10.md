@@ -47,3 +47,36 @@ measurement report.
 - Adversarial review identified and resolved issues around repo-root guard,
   date-window/days interplay, false-positive double-counting, duplicate
   survival logic, table labelling, and non-string timestamps.
+
+---
+
+## Daily benchmark trend service
+
+New `scripts/daily-benchmark.sh` + `scripts/install-daily-benchmark-launchagent.sh`
+keep a rolling trend line of `rc benchmark` reports.
+
+### Behavior
+
+- Runs `rc benchmark --days 1` and `rc benchmark --days 7` every day at 06:17
+  local time via a launchd LaunchAgent.
+- Stores dated reports under `~/.local/share/reasoning-core/benchmarks/YYYY-MM-DD/`.
+- Writes `benchmark-day.{json,md}`, `benchmark-week.{json,md}`, and `trend.md`
+  with day-over-day deltas when a previous day's JSON exists.
+- Symlinks `~/.local/share/reasoning-core/benchmarks/latest` to the most recent
+  run for quick inspection.
+
+### Code changes
+
+- `scripts/daily-benchmark.sh` — idempotent runner; safe to invoke by hand.
+- `launchd/com.reasoning-core.daily-benchmark.plist` — LaunchAgent template.
+- `scripts/install-daily-benchmark-launchagent.sh` — installs, validates, and
+  loads the plist.
+- `README.md` §"Daily benchmark trend service" — user-facing docs.
+- `docs/PILOT_2026_07_10.md` — measurement plan now references the automated
+  daily service.
+
+### Verification
+
+- Installed and loaded locally; manual `launchctl start` produces the expected
+  dated output directory and symlink.
+

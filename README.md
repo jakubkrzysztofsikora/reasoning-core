@@ -227,6 +227,40 @@ re-run `install.sh` in each gated repo (or copy the block into its
 `.envrc.local`), and restart the sidecar/supervisor. The enforcement block
 never needs to be committed.
 
+### Daily benchmark trend service
+
+A one-shot report is useful; a daily trend line is better. reasoning-core ships
+a launchd LaunchAgent that runs `rc benchmark` every morning and stores dated
+reports so you can compare sessions over time:
+
+```bash
+bash scripts/install-daily-benchmark-launchagent.sh   # macOS only
+```
+
+This writes `~/Library/LaunchAgents/com.reasoning-core.daily-benchmark.plist`,
+which runs `scripts/daily-benchmark.sh` at 06:17 local time each day. Outputs:
+
+```text
+~/.local/share/reasoning-core/benchmarks/
+  2026-07-10/
+    benchmark-day.json       # last 24 h
+    benchmark-day.md         # human-readable daily report
+    benchmark-week.json      # last 7 days
+    benchmark-week.md        # human-readable weekly report
+    trend.md                 # day-over-day deltas
+  latest -> 2026-07-10       # symlink to the most recent run
+```
+
+Run it by hand at any time:
+
+```bash
+bash scripts/daily-benchmark.sh
+```
+
+The service is intentionally simple: one audit root, one machine, one trend
+line per day. To compare across machines, sync the dated directories or point
+each machine's `rc benchmark` output at the same shared path.
+
 ## Uninstall
 
 ```bash
