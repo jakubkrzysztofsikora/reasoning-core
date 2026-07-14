@@ -41,19 +41,22 @@
 
 ## What it does
 
-Claude (or Gemini / Copilot / Vibe) proposes an Edit → a local scorer reads
-the diff, checks it against your repo's structural fingerprint, and **blocks
-the edit before it lands** if it drifts off-plan, invents helpers you already
-have, or violates a coupling/coherence threshold.
+Claude / Codex / Gemini / Copilot / Kimi / Vibe proposes an Edit → a local
+scorer reads the diff, checks it against your repo's structural fingerprint,
+and **blocks the edit before it lands** if it drifts off-plan, invents helpers
+you already have, or violates a coupling/coherence threshold.
 
 Two layers, one local pipe:
 
 - **Neural gate.** A code-embedder (`mamba-130m` default; `codestral-mamba`,
-  `bge-code`, `unixcoder-base`, `random-mamba` selectable via `RC_EMBEDDER`)
-  scores an 8-dim risk vector per edit (cyclomatic / fan-in / fan-out / depth
-  / churn / coupling / cohesion / novelty) plus a chord-distance
-  `coherence_delta` on [0, 2]. Three additional project/session dims are
-  emitted only when `RC_PROJECT_INDEX=1` and a session baseline is registered.
+  `codestral-mamba-gguf`, `bge-code`, `unixcoder-base`, `random-mamba`
+  selectable via `RC_EMBEDDER`) scores an 11-dim risk vector per edit
+  (cyclomatic / fan_in / fan_out / depth / churn / coupling / cohesion /
+  novelty / session_centroid_drift / project_fan_in / project_coupling) plus
+  a chord-distance `coherence_delta` on [0, 2]. The 8 base dims are
+  always-on; the last 3 are zero when their preconditions aren't met
+  (`session_centroid_drift` needs a registered session baseline;
+  `project_fan_in` / `project_coupling` need `RC_PROJECT_INDEX=1`).
 - **Symbolic gate.** Optional `.reasoning-core/rules.yaml` with
   `forbid_import` / `forbid_pattern` rules — fail-closed by default, evaluated
   alongside the neural risk vector. When the SSM sidecar times out, the hook
@@ -82,11 +85,11 @@ Full numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 ---
 
-## What this means if you live in Claude Code / Codex / OpenCode
+## What this means if you live in Claude Code / Codex / Kimi / OpenCode
 
 Think of reasoning-core as a **local, private governance layer** that sits
-between you and the AI agent. It doesn't replace Claude, Codex, or OpenCode —
-it makes them prove their work before the edit lands in your repo.
+between you and the AI agent. It doesn't replace Claude, Codex, Kimi, or
+OpenCode — it makes them prove their work before the edit lands in your repo.
 
 **1. The plan is no longer just vibes.**  
 `PLAN.md` is compiled into a machine-readable contract. If the agent tries to
@@ -119,13 +122,20 @@ in the way.
 
 **6. It travels across agents.**  
 The same contract/oracle/PRM/commit-miner stack runs under Claude Code,
-Codex, Gemini, OpenCode, or any other host that speaks the hook protocol. As
-the agent market fragments, your safety layer comes with you.
+Codex, Gemini, Kimi, OpenCode, or any other host that speaks the hook
+protocol. As the agent market fragments, your safety layer comes with you.
 
 **7. The audit log doesn't lie.**  
 An honesty baseline distinguishes verified signals from unverified ones. When
 you're debugging why something was blocked — or why something *wasn't* — the
 log tells you exactly what the gate actually checked.
+
+**8. Every block ships with a Decision ID and a one-command follow-up.**  
+An `exit-2` block always ends with `Decision ID: <hex>` plus a footer
+(`Inspect: rc explain <id>` and `Override: rc bypass-next`) so the operator
+can either drill into the verdict or arm a single bypass without leaving the
+terminal. The audit event and the operator action are linked by the same
+ID, so shadow reports and override-survival stats stay trustworthy.
 
 Bottom line: fewer broken commits, less silent drift, and a measurable answer
 to the question "is this AI actually making me faster, or just busier?"
@@ -150,13 +160,13 @@ cd /path/to/your-repo
 bash ~/path/to/reasoning-core/install.sh
 ```
 
-Step 3 writes `.envrc`, `.claude/settings.local.json`, `.gemini/settings.json`,
-`.copilot/*`, and `.vibe/*` in the current repo. It auto-installs `direnv` if
-it's missing and runs `direnv allow .`. Re-running is safe — existing files
-are left alone.
+Step 3 writes `.envrc`, `.claude/settings.local.json`, `.codex/settings.json`,
+`.gemini/settings.json`, `.copilot/*`, `.kimi/settings.json`, and `.vibe/*` in
+the current repo. It auto-installs `direnv` if it's missing and runs
+`direnv allow .`. Re-running is safe — existing files are left alone.
 
 ```bash
-claude       # or: gemini / copilot / vibe — hooks fire from any of them
+claude       # or: codex / gemini / copilot / kimi / vibe — hooks fire from any of them
 ```
 
 ### Defaults (Phase 0, honest opt-in)
@@ -178,6 +188,8 @@ claude       # or: gemini / copilot / vibe — hooks fire from any of them
   plan-grounding gates and emits `signal_source="symbolic_fallback"`.
 - **`S2_COHERENCE_THRESHOLD=0.09`** — chord-distance ceiling recalibrated
   to the empirical 95th percentile (audit 2026-06-01 §1.3).
+- **`S2_TIMEOUT=30`** — server-side request timeout (seconds) on the
+  `/score` endpoint; pairs with `S2_HARD_CAP_MS` as belt-and-suspenders.
 
 Decisions are always logged to `~/.local/share/reasoning-core/events/`
 regardless of mode. See [`docs/CHANGELOG-2026-06-02.md`](docs/CHANGELOG-2026-06-02.md)
@@ -276,24 +288,35 @@ Python deps are untouched.
 
 ## Supported CLIs
 
-Same sidecar, four hosts:
+Same sidecar, six hosts:
 
 | CLI | Gate enforcement | Tier |
 |---|---|---|
 | Claude Code | Runtime PreToolUse hook | Tier 1 |
+| OpenAI Codex CLI | Runtime PreToolUse hook | Tier 1 |
 | Gemini CLI (≥0.37.1) | Runtime PreToolUse hook | Tier 1 |
 | GitHub Copilot CLI (≥1.0.29) | MCP tool `gate_edit` + post-turn audit | Tier 2 |
+| Moonshot Kimi CLI | Runtime PreToolUse hook | Tier 1 |
 | Mistral Vibe CLI (≥2.9.4) | MCP tool + `post-agent-turn` hook | Tier 2 |
 
-The MCP server (`hybrid-reasoner`) exposes two tools across all hosts:
-`gate_edit` (the synthetic PreToolUse gate for Tier-2 hosts) and
-`validate_unified_diff` (structural patch validator + best-effort repair for
-agents emitting malformed diffs).
+The MCP server (`hybrid-reasoner`) exposes four tools across all hosts:
+
+- `reason_over_edit` — the primary scoring tool (rich impact report, top-3
+  risk contributors, structural fingerprint, optional `validate_unified_diff`
+  repair hint).
+- `validate_unified_diff` — structural patch validator + best-effort repair
+  for agents emitting malformed diffs.
+- `validate_imports` — resolve `import` lines against the project index and
+  flag unknown / forbidden / non-existent-on-PyPI names. Wired into the
+  rule engine.
+- `gate_edit` — synthetic PreToolUse gate for Tier-2 hosts that don't speak
+  the Claude hook protocol; returns the same scoring dict the runtime hook
+  would have.
 
 Tier-2 means the gate runs at the model layer — the LLM is instructed to
 call `gate_edit` before every write. Under context pressure it sometimes
-skips the call; for mission-critical work prefer Claude or Gemini. Detail:
-[`docs/CLI_PARITY.md`](docs/CLI_PARITY.md).
+skips the call; for mission-critical work prefer Claude, Codex, Gemini, or
+Kimi. Detail: [`docs/CLI_PARITY.md`](docs/CLI_PARITY.md).
 
 ---
 
@@ -305,10 +328,11 @@ The generated `.envrc` exposes the knobs you'll touch first:
 export RC_MODE=advise       # advise | copilot | autopilot
 export RC_SHADOW_MODE=1     # legacy: 0 = enforce, 1 = log-only
 export S2_FAIL_CLOSED=0     # 1 = block if sidecar down, 0 = fail open
+export S2_TIMEOUT=30        # server-side /score timeout (seconds)
 export RC_PLAN_GROUNDING=1  # 0 = off, 1 = warn, 2 = hard block
 export RC_BEST_EFFORT_SPEC=1# SessionStart iter-3 spec overlay
 export RC_RULE_ENGINE=1     # enable .reasoning-core/rules.yaml symbolic gate
-# export RC_EMBEDDER=mamba-130m       # mamba-130m | codestral-mamba | bge-code | unixcoder-base | random-mamba
+# export RC_EMBEDDER=mamba-130m       # mamba-130m | codestral-mamba | codestral-mamba-gguf | bge-code | unixcoder-base | random-mamba
 # export RC_PROJECT_INDEX=1           # enable project_fan_in / project_coupling dims
 # export RC_DIFF_AUDIT=1              # post-turn unified-diff structural audit
 ```
@@ -334,9 +358,12 @@ rc audit-history            # label recent commits for calibration feedback
 
 `rc bypass-next` and `rc confirm-next` emit explicit `operator_override`
 and `operator_confirmed` audit events so the shadow report can measure
-false positives. `rc enable-enforcement` walks you through a 48-hour
-shadow review, scaffolds `PLAN.md` from `README.md`, and switches the repo
-to `RC_MODE=copilot`.
+false positives. `rc enable-enforcement` is a one-shot wizard: it scaffolds
+`PLAN.md` from `README.md` and writes the copilot enforcement block into
+`.envrc.local` (flipping `RC_MODE=copilot`, `S2_FAIL_CLOSED=1`, etc.). It
+does not run the 48-hour shadow review itself — that loop is on you: let
+the gate run in `advise` mode for ~48h, read the audit log, and only then
+promote.
 
 ---
 
@@ -346,7 +373,7 @@ to `RC_MODE=copilot`.
 - [**docs/INSTALL.md**](docs/INSTALL.md) — manual install, global-everywhere setup, Scaleway-hosted critic, Cato VPN, supervisor/launchd, embedder backends, troubleshooting
 - [**docs/USAGE.md**](docs/USAGE.md) — `rc` CLI, hook layers, rule engine, diff audit, shadow mode, bypass/kill switches, FAQ
 - [**docs/CONFIGURATION.md**](docs/CONFIGURATION.md) — every `RC_*` and `S2_*` env var
-- [**docs/HOW_IT_WORKS.md**](docs/HOW_IT_WORKS.md) — System 1 + System 2 architecture, 8-dim risk vector, chord-distance scoring, rule engine wiring
+- [**docs/HOW_IT_WORKS.md**](docs/HOW_IT_WORKS.md) — System 1 + System 2 architecture, 11-dim risk vector, chord-distance scoring, rule engine wiring
 - [**docs/BENCHMARKS.md**](docs/BENCHMARKS.md) — full eval numbers, per-task verdicts, caveats
 - [**docs/ROADMAP.md**](docs/ROADMAP.md) — what's shipped, what's open
 - [**docs/ARCHITECTURE.md**](docs/ARCHITECTURE.md) — deep technical dive
@@ -377,10 +404,10 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 ## Contributing
 
 Yes please. Spec first (update [`docs/PLAN.md`](docs/PLAN.md)), add a kanban
-entry, self-verify (`pytest -m "not live"` green, `bash -n scripts/*.sh`
-clean, `python3 -c "import json; json.load(open('.claude/settings.json'))"`
-passes). Don't break the public contracts: HTTP `/score`, `ImpactReport` JSON,
-MCP tool signatures.
+entry, self-verify (`pytest -m "not live"` green, `bash -n scripts/*.sh
+install.sh uninstall.sh` clean, `python3 -c "import json; json.load(open(
+'.claude/settings.json'))"` passes). Don't break the public contracts: HTTP
+`/score`, `ImpactReport` JSON, MCP tool signatures.
 
 ---
 
@@ -390,7 +417,7 @@ MCP tool signatures.
 - [Mamba-Codestral](https://huggingface.co/mistralai/Mamba-Codestral-7B-v0.1) — Mistral AI.
 - [Tree-sitter](https://tree-sitter.github.io/) — Max Brunsfeld.
 - [Model Context Protocol](https://modelcontextprotocol.io/) — Anthropic.
-- [FastMCP](https://github.com/jlowin/fastmcp) — Jeremiah Lowin.
+- [FastMCP](https://github.com/modelcontextprotocol/python-sdk/tree/main/src/mcp/server/fastmcp) — `mcp.server.fastmcp`, lives in the official Anthropic SDK (originally `jlowin/fastmcp`).
 - [direnv](https://direnv.net) — repo-scoped env without leaking into other shells.
 
 [MIT](LICENSE) © Jakub Sikora — use it, fork it, ship something better.
