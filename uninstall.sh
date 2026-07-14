@@ -67,9 +67,12 @@ for entry in entries:
     print(f"  {GREEN}✓{RESET} removed {entry}")
 PYEOF
 
-# Tidy empty parent dirs (.claude, .gemini, .copilot, .vibe). `find -depth`
-# processes children before parents so an empty tree collapses bottom-up.
-for root in .claude .gemini .copilot .vibe; do
+# Tidy empty parent dirs (.claude, .codex, .gemini, .copilot, .kimi, .vibe).
+# `find -depth` processes children before parents so an empty tree collapses
+# bottom-up. Keep this list in sync with the per-CLI directories install.sh
+# `mkdir -p`s; missing any one of them leaves an empty dir on disk and trips
+# the multi-cli smoke gate.
+for root in .claude .codex .gemini .copilot .kimi .vibe; do
   [[ -d "$root" ]] && find "$root" -depth -type d -empty -delete 2>/dev/null || true
 done
 

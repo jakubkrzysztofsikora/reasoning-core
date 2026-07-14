@@ -230,18 +230,12 @@ def set_memory_limit_gb(
 
     limit_bytes = int(gb * (1024 ** 3))
 
-    # Best-effort RLIMIT_AS (Linux honors it; macOS rejects).
-    try:
-        _, hard = resource.getrlimit(resource.RLIMIT_AS)
-        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, hard))
-        logger.info("RLIMIT_AS set to %.1f GB", gb)
-    except (ValueError, OSError) as exc:
-        logger.info(
-            "RLIMIT_AS not enforceable on this platform (%s); "
-            "using RSS watchdog instead", exc,
-        )
-
-    # Watchdog: the actual enforcement on macOS, belt-and-suspenders elsewhere.
+    # Start the watchdog FIRST. On Linux, setrlimit(RLIMIT_AS) is enforced
+    # immediately; if we applied the cap first, a cap below the interpreter's
+    # own footprint (test uses 1 MB) would make pthread_create fail with
+    # "can't start new thread" and we'd never reach os._exit(75). The
+    # watchdog is the actual enforcer on macOS and belt-and-suspenders
+    # elsewhere -- it must be alive before the cap is applied.
     if _WATCHDOG_THREAD is None or not _WATCHDOG_THREAD.is_alive():
         _WATCHDOG_THREAD = threading.Thread(
             target=_watchdog_loop,
@@ -252,6 +246,17 @@ def set_memory_limit_gb(
         _WATCHDOG_THREAD.start()
         logger.info(
             "memory watchdog started: cap=%.1f GB poll=%.1fs", gb, poll_s,
+        )
+
+    # Best-effort RLIMIT_AS (Linux honors it; macOS rejects).
+    try:
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, hard))
+        logger.info("RLIMIT_AS set to %.1f GB", gb)
+    except (ValueError, OSError) as exc:
+        logger.info(
+            "RLIMIT_AS not enforceable on this platform (%s); "
+            "using RSS watchdog instead", exc,
         )
 
     return limit_bytes
