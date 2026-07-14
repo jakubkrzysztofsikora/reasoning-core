@@ -173,7 +173,14 @@ def _t2_ruff(
 
     In worktree mode, ``file_path`` is resolved inside the worktree. In
     source-only mode, a temp file is created and ruff is invoked on it.
+
+    Ruff is a Python linter; running it on a non-Python file (``.sh``,
+    ``.md``, ``.ts``, etc.) makes it parse the content as Python and emit
+    a parse error -- a guaranteed false positive that hard-blocks edits.
+    Mirror the T1 oracles and skip anything that isn't a Python file.
     """
+    if not file_path.endswith(".py"):
+        return
     if not shutil.which("ruff"):
         return
 

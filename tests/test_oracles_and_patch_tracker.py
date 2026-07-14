@@ -59,6 +59,39 @@ def test_oracles_skip_non_python():
     assert report.clean is True
 
 
+def test_ruff_oracle_skips_bash(tmp_path):
+    """Regression: ruff is a Python linter and must not parse .sh files.
+
+    2026-07-14 incident -- the pre_edit_guard ran ruff on a bash hook
+    script (e.g. client/hooks/hive-inbox-inject.sh), ruff treated the
+    content as Python, emitted a parse error ("Simple statements must
+    be separated by newlines or semicolons"), and the gate hard-blocked
+    the edit. The fix is to mirror the T1 oracles and skip any non-".py"
+    file in _t2_ruff.
+
+    Only run if ruff is on PATH -- this test still passes without it
+    because the early return is the same code path, but we mark skip
+    so the CI signal is unambiguous.
+    """
+    import shutil
+
+    if not shutil.which("ruff"):
+        pytest.skip("ruff not on PATH; oracle is a no-op anyway")
+
+    report = _oracles.run_oracles(
+        "client/hooks/hive-inbox-inject.sh",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'echo "hello"\n',
+        enable_t1=True,
+        enable_t2=True,
+    )
+    assert report.clean is True, (
+        f"ruff oracle must skip .sh; got annotations={report.annotations}"
+    )
+    assert not any(a.tool == "ruff" for a in report.annotations)
+
+
 def test_oracle_report_summary():
     report = _oracles.OracleReport()
     assert report.summary() == "oracles passed"
