@@ -136,3 +136,120 @@ def test_dedup_when_path_appears_in_both_forms():
     paths = _plan_paths.distinct_file_paths(content)
     assert paths == {"src/foo.py", "src/bar.ts"}
     assert len(paths) == 2  # explicit cardinality lock
+
+
+# ---------------------------------------------------------------------------
+# Extension-less filenames + dotfiles (2026-07-15)
+# ---------------------------------------------------------------------------
+
+
+def test_extensionless_filenames_extracted_from_bulleted_loc():
+    """Regression (2026-07-15): Dockerfile/Makefile/LICENSE/README were
+    invisible to plan-grounding because the original regex required ``.ext``.
+    The pre_edit_guard then hard-blocked any edit to these files because
+    the contract's allowed_paths never contained them. Allowlist + word-
+    boundary lookarounds fix it without false-matching substrings.
+    """
+    content = (
+        "# Plan: add Node build stage\n"
+        "- Dockerfile — ~30 LOC\n"
+        "- Makefile — ~10 LOC\n"
+        "- LICENSE — ~5 LOC\n"
+        "- README.md — ~10 LOC\n"
+        "- src/server.ts — ~50 LOC\n"
+        "- docker-compose.yml — ~20 LOC\n"
+    )
+    paths = _plan_paths.distinct_file_paths(content)
+    assert "Dockerfile" in paths
+    assert "Makefile" in paths
+    assert "LICENSE" in paths
+    assert "README.md" in paths
+    assert "src/server.ts" in paths
+    assert "docker-compose.yml" in paths
+
+
+def test_extensionless_filename_backticked():
+    """`` `Dockerfile` `` in prose should be picked up by the extension-less
+    allowlist when the user references the file inline."""
+    content = (
+        "The build image is defined in `Dockerfile` and orchestrated by "
+        "`docker-compose.yml`."
+    )
+    paths = _plan_paths.distinct_file_paths(content)
+    assert "Dockerfile" in paths
+    assert "docker-compose.yml" in paths
+
+
+def test_extensionless_substring_is_not_matched():
+    """Word-boundary lookarounds must block ``MyDockerfile`` even though
+    the inner token is the same letters. Critical for false-positive
+    protection once the regex is permissive enough to match extension-less
+    tokens at all."""
+    content = (
+        "- MyDockerfile — ~5 LOC\n"
+        "- MyMakefile is not a real file\n"
+        "- the docker is not a file\n"
+        "- ..gitignore is invalid\n"
+    )
+    paths = _plan_paths.distinct_file_paths(content)
+    assert "MyDockerfile" not in paths
+    assert "MyMakefile" not in paths
+    assert "docker" not in paths
+    assert "..gitignore" not in paths
+
+
+def test_extensionless_filename_in_subpath():
+    """A token mid-path (``src/Dockerfile``) must still match. The
+    lookarounds deliberately exclude ``/`` from the boundary charset."""
+    content = "- src/Dockerfile — ~5 LOC\n- ops/.envrc — ~3 LOC\n"
+    paths = _plan_paths.distinct_file_paths(content)
+    assert "src/Dockerfile" in paths
+    assert "ops/.envrc" in paths
+
+
+def test_dotfile_allowlist_longest_first():
+    """``.env.example`` must win over ``.env`` when both could match --
+    critical so a plan referencing ".env.example" doesn't get truncated
+    to ".env" and have the override scope widened silently."""
+    content = "- .env.example — ~5 LOC\n- .env — ~3 LOC\n- .eslintrc.js — ~10 LOC\n"
+    paths = _plan_paths.distinct_file_paths(content)
+    assert ".env.example" in paths
+    assert ".env" in paths
+    assert ".eslintrc.js" in paths
+    assert ".eslintrc" not in paths  # not mentioned as a bare token
+    assert ".env.example.bak" not in paths  # not in the allowlist
+
+
+def test_dotfile_in_prose():
+    """`` `.gitignore` `` in prose (no LOC annotation) is picked up by
+    the dotfile allowlist, not by the existing bare-path regex (which
+    requires ``.ext``)."""
+    content = "Add `node_modules` to `.gitignore` and `.dockerignore`."
+    paths = _plan_paths.distinct_file_paths(content)
+    assert ".gitignore" in paths
+    assert ".dockerignore" in paths
+
+
+def test_distinct_file_paths_parity_with_pre_plan_guard():
+    """Iter-3 contract: pre_plan_guard._count_distinct_file_paths must
+    stay byte-for-byte equal to len(_plan_paths.distinct_file_paths).
+    New extension-less allowlists must not break this invariant."""
+    plans = [
+        # Plan with only extension-less files.
+        "- Dockerfile — ~30 LOC\n- Makefile — ~10 LOC\n",
+        # Plan with only dotfiles.
+        "- .gitignore — ~3 LOC\n- .dockerignore — ~3 LOC\n",
+        # Plan with mixed content + prose.
+        (
+            "Build in `Dockerfile`, lint via `.eslintrc.js`, "
+            "ship via `src/server.ts:42`.\n"
+            "- LICENSE — ~5 LOC\n"
+        ),
+    ]
+    for plan in plans:
+        shared = _plan_paths.distinct_file_paths(plan)
+        legacy = pre_plan_guard._count_distinct_file_paths(plan)
+        assert legacy == len(shared), (
+            f"parity broken for plan:\n{plan!r}\n"
+            f"shared={shared}\nlegacy={legacy}"
+        )
