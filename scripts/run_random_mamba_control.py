@@ -34,13 +34,7 @@ sys.path.insert(0, str(REPO_ROOT / "src" / "hooks"))
 
 
 def _resolve_embedder(name: str) -> str:
-    """Resolve the concrete checkpoint for codestral-mamba so random-mamba
-    comparison is against the same architecture family."""
-    if name == "codestral-mamba":
-        gguf = os.environ.get("RC_CODESTRAL_GGUF_FILE")
-        if gguf:
-            return "codestral-mamba-gguf"
-        return "codestral-mamba"
+    """Return the embedder name as-is; codestral-mamba now uses fp16 HF."""
     return name
 
 
@@ -80,7 +74,7 @@ def score_one(
 def run_control(pairs: list[dict[str, str]]) -> dict[str, Any]:
     """Score all pairs with both real and random embedder."""
     real_backend = _resolve_embedder(
-        os.environ.get("RC_EMBEDDER", "codestral-mamba")
+        os.environ.get("RC_EMBEDDER", "mamba-130m")
     )
     results: dict[str, Any] = {
         "real_backend": real_backend,

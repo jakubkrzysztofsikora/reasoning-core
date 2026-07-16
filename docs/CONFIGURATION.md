@@ -12,9 +12,8 @@ works for the `mamba-130m` backend only.
 
 | Backend | Checkpoint | Params | Hidden | Pool | Notes |
 |---|---|---|---|---|---|
-| `mamba-130m` (default) | `state-spaces/mamba-130m-hf` | 130M | 768 | mean | SHA-pinned, ships out of the box |
-| `codestral-mamba` | `mistralai/Mamba-Codestral-7B-v0.1` | 7B | 4096 | mean | Apache 2.0, code-pretrained Mamba-2; **defaults to fp16** (~14 GB RAM) — override with `RC_EMBEDDER_DTYPE`; **needs `RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char SHA>`** |
-| `codestral-mamba-gguf` | `gabriellarson/Mamba-Codestral-7B-v0.1-GGUF` | 7B (quantized) | 4096 | mean | Apache 2.0, **same code-pretrained Codestral** loaded via `llama-cpp-python`; default file `Mamba-Codestral-7B-v0.1-Q2_K.gguf` (~2.5 GB) — override with `RC_CODESTRAL_GGUF_FILE`. **Needs `RC_GABRIELLARSON_MAMBA_CODESTRAL_7B_V0_1_GGUF_REVISION=<40-char SHA>` and `pip install llama-cpp-python`.** |
+| `mamba-130m` (default) | `state-spaces/mamba-130m-hf` | 130M | 768 | mean | SHA-pinned, ships out of the box, ~250 MB RAM |
+| `codestral-mamba` | `mistralai/Mamba-Codestral-7B-v0.1` | 7B | 4096 | mean | Apache 2.0, code-pretrained Mamba-2; **defaults to fp16** (~14 GB RAM) — override with `RC_EMBEDDER_DTYPE`; **needs `RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char SHA>`** and **CUDA host** — CPU-only naive fallback is unusably slow for the 7B model |
 | `bge-code` | `BAAI/bge-code-v1` | ~4GB | 768 | cls | Code-specialised transformer; **needs SHA pin** |
 | `unixcoder-base` | `microsoft/unixcoder-base` | small | 768 | cls | MIT-licensed baseline; **needs SHA pin** |
 | `random-mamba` | _in-process control_ | 130M | 768 | mean | Random-init Mamba-2 for falsifiability tests |
@@ -36,15 +35,32 @@ provides a pinned SHA via `RC_<REPO_SLUG>_REVISION` (uppercase, non-alpha
 | `S2_HARD_CAP_MS` | `1500` | Client-side hard cap on `/score` POSTs. On timeout the hook invokes the symbolic gates and emits `signal_source="symbolic_fallback"`. |
 | `S2_FAIL_CLOSED` | `0` | `1` blocks edits when sidecar unreachable; `0` (default in code) fails open |
 | `S2_HEALTH_TIMEOUT` | `120` | Sidecar boot wait for `model_loaded:true` (seconds) |
+| `S2_MAMBA_STARTUP_GRACE_S` | `1800` | Supervisor ignores mamba health failures during this post-spawn window (multi-GB model download/load). |
 | `S2_LOG_LEVEL` | `INFO` | Sidecar log level |
 | `S2_LOG_FILE` | `/tmp/reasoning-core-sidecar.log` | When `BACKGROUND=1`, redirect sidecar logs here |
 | `S2_SSM_CHECKPOINT` | _unset_ | Legacy override; only honoured when `RC_EMBEDDER` is unset |
+| `S2_FAILURE_THRESHOLD` | `5` | Consecutive failed health polls before circuit-break |
+| `S2_HEALTH_GRACE_S` | `30` | Ignore health failures for this long after the last success; covers transient inference latency |
 | `HF_HOME` | `$HOME/.cache/huggingface` | HF cache (shared with sibling repos / eval worktrees) |
+| `HF_HUB_ENABLE_HF_TRANSFER` | _unset_ | `1` enables `hf-transfer` for HF downloads. Set to `0` to use standard HTTP. |
+| `HF_HUB_DISABLE_XET` | _unset_ | `1` disables the Xet storage protocol; set when standard HTTP is faster or Xet is unavailable. |
+| `MLX_DEFAULT_DEVICE` | _unset_ | MLX device selection (e.g. `cpu` or `gpu`). Default is unforced; on macOS Metal this lets the gen sidecar use the GPU, which changes memory footprint. Set `cpu` to keep it CPU-only. |
 | `RC_<REPO_SLUG>_REVISION` | _unset_ | 40-char hex SHA override for `RC_EMBEDDER` backends with `revision="main"` |
 | `RC_EMBEDDER_DTYPE` | _unset_ | `float32` \| `float16` \| `bfloat16` \| `auto`. When unset, `codestral-mamba` defaults to `float16` (memory-saver on the 7B model, ~14 GB vs ~28 GB at fp32); other backends use transformers' native dtype (fp32). Invalid values rejected at load time. `low_cpu_mem_usage=True` is always passed to `from_pretrained` |
-| `RC_CODESTRAL_GGUF_FILE` | `Mamba-Codestral-7B-v0.1-Q2_K.gguf` | Filename to pull from `gabriellarson/Mamba-Codestral-7B-v0.1-GGUF` when `RC_EMBEDDER=codestral-mamba-gguf`. Pick a larger quant (e.g. `Q4_K_M.gguf` ~4 GB) for better quality, or a smaller quant for tighter RAM. |
-| `RC_GGUF_THREADS` | _unset_ (= all cores) | Thread count for llama.cpp inference; matches CPU count by default. |
 | `S2_MEM_LOG_INTERVAL_S` | `30` | Sidecar memory sampler interval (seconds). `0` disables. Logs process RSS / VSS, system memory %, swap usage — useful for diagnosing delayed OOM kills under codestral-mamba. |
+
+## Deprecated / opt-in backends
+
+These are not defaults and are not recommended on Mac-Studio CPU.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_CODESTRAL_GGUF_FILE` | `Mamba-Codestral-7B-v0.1-Q2_K.gguf` | GGUF filename inside `gabriellarson/Mamba-Codestral-7B-v0.1-GGUF` |
+| `RC_GABRIELLARSON_MAMBA_CODESTRAL_7B_V0_1_GGUF_REVISION` | _unset_ | 40-char hex SHA pin for the GGUF repo |
+| `RC_GGUF_N_CTX` | `8192` | llama.cpp context size |
+| `RC_GGUF_N_BATCH` | `128` | llama.cpp batch size |
+| `RC_GGUF_N_UBATCH` | `min(n_batch, 64)` | llama.cpp micro-batch size |
+| `RC_GGUF_THREADS` | `0` | llama.cpp thread count (0 = auto) |
 
 ## Source-code thresholds
 

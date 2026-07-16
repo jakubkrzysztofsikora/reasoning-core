@@ -131,7 +131,8 @@ and are fail-closed until you supply a pinned SHA:
 
 ```bash
 # Use codestral-mamba (7B, code-pretrained, hidden=4096)
-# Defaults to fp16 (~14 GB RAM). Override with RC_EMBEDDER_DTYPE if needed.
+# Defaults to fp16 (~14 GB RAM). Needs a CUDA host with mamba-ssm installed;
+# CPU-only naive fallback is unusably slow for the 7B model.
 export RC_EMBEDDER=codestral-mamba
 export RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char hex SHA>
 
@@ -145,9 +146,12 @@ Slug rule: uppercase the HuggingFace repo id, replace non-alphanumeric with
 tags) are rejected — supply-chain hardening.
 
 The 7B Codestral-Mamba is meaningfully better at code-similarity but
-materially slower on CPU. Loads at fp16 by default to stay inside ~14 GB
-RAM on a laptop (`RC_EMBEDDER_DTYPE=float32` to force fp32 at ~28 GB).
-Use it on machines with CUDA or MLX when you can.
+materially slower on CPU and needs a CUDA host with `mamba-ssm` installed
+(CPU-only naive fallback is unusably slow for the 7B model). Loads at fp16
+by default to stay inside ~14 GB RAM on a laptop
+(`RC_EMBEDDER_DTYPE=float32` to force fp32 at ~28 GB). The GGUF
+(`codestral-mamba-gguf`) backend is deprecated on this host: the Q2_K file
+expands to ~35 GB resident at runtime under `llama-cpp-python`.
 
 ---
 
