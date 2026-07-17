@@ -1041,11 +1041,26 @@ def score_change(
         except Exception:
             logger.debug("Project index lookup failed for %s", path, exc_info=True)
 
-    risk_vector = risk_vector_8 + [
-        float(session_centroid_drift),
-        float(project_fan_in),
-        float(project_coupling),
-    ]
+    risk_vector = list(risk_vector_8)
+    risk_labels = list(RISK_LABELS[:8])
+
+    has_session_baseline = (
+        session_id is not None
+        and baseline_vec is not None
+    )
+    has_project_index = (
+        session_id is not None
+        and os.environ.get("RC_PROJECT_INDEX") == "1"
+        and pidx is not None
+    )
+
+    if has_session_baseline and has_project_index:
+        risk_vector.append(float(session_centroid_drift))
+        risk_labels.append("session_centroid_drift")
+        risk_vector.append(float(project_fan_in))
+        risk_labels.append("project_fan_in")
+        risk_vector.append(float(project_coupling))
+        risk_labels.append("project_coupling")
 
     # ---- Honest fired-conditions attribution --------------------------------
 
@@ -1090,6 +1105,7 @@ def score_change(
         architectural_impact_score=float(ais),
         coherence_delta=float(coherence_delta),
         risk_vector=risk_vector,
+        risk_labels=risk_labels,
         regression_detected=bool(regression),
         human_summary=summary,
         risk_labels_version=RISK_LABELS_VERSION,

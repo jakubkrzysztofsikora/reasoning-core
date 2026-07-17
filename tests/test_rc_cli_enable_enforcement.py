@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -41,9 +43,19 @@ def isolated_project(tmp_path, monkeypatch):
     return project_dir, rc_cli
 
 
-def _auth_env(monkeypatch):
-    """Simulate authenticated operator environment."""
-    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "operator-token")
+def _auth_env(monkeypatch, token: str = "operator-secret-token-12345678"):
+    """Simulate authenticated operator environment with keychain match."""
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", token)
+    # Mock the security command to return the same token
+    def fake_security(*args, **kwargs):
+        result = subprocess.CompletedProcess(
+            args=["security"],
+            returncode=0,
+            stdout=token,
+            stderr="",
+        )
+        return result
+    monkeypatch.setattr(subprocess, "run", fake_security)
 
 
 def test_enable_enforcement_requires_authentication(isolated_project, monkeypatch):
@@ -52,6 +64,30 @@ def test_enable_enforcement_requires_authentication(isolated_project, monkeypatc
     rc = rc_cli.main(["enable-enforcement"])
     assert rc == 1
     assert not (project_dir / ".envrc.local").exists()
+
+
+def test_enable_enforcement_requires_long_token(isolated_project, monkeypatch):
+    project_dir, rc_cli = isolated_project
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "short")  # < 16 chars
+    rc = rc_cli.main(["enable-enforcement"])
+    assert rc == 1
+    assert not (project_dir / ".envrc.local").exists()
+
+
+def test_enable_enforcement_rejects_wrong_token(isolated_project, monkeypatch):
+    project_dir, rc_cli = isolated_project
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "wrong-token-but-long-enough")
+    # Mock keychain to return a different token
+    def fake_security(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=["security"],
+            returncode=0,
+            stdout="different-stored-secret",
+            stderr="",
+        )
+    monkeypatch.setattr(subprocess, "run", fake_security)
+    rc = rc_cli.main(["enable-enforcement"])
+    assert rc == 1
 
 
 def test_enable_enforcement_writes_staged_profile(isolated_project, monkeypatch):

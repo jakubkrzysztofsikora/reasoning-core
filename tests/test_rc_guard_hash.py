@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -108,3 +109,44 @@ def test_guard_hash_returns_false_when_file_missing(fresh_rc_cli, tmp_path, monk
 
     result = fresh_rc_cli._verify_guard_hash(str(tmp_path / "nonexistent.py"))
     assert result is False
+
+
+def test_init_warns_on_corrupt_store_and_backs_up(fresh_rc_cli, tmp_path, monkeypatch):
+    """Corrupt store must be backed up, not silently clobbered."""
+    guard = tmp_path / "pre_edit_guard.py"
+    guard.write_text("# original", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+
+    store = state_dir / "guard_hashes.json"
+    store.write_text("not json {{{", encoding="utf-8")
+
+    status, warnings = fresh_rc_cli._init_guard_hashes([str(guard)])
+    assert status == 0
+    assert any("corrupt" in w for w in warnings)
+    # Backup file should exist
+    assert store.with_suffix(".jsonl.corrupt").exists()
+    # New store should have the hash
+    data = json.loads(store.read_text(encoding="utf-8"))
+    assert str(guard.resolve()) in data
+
+
+def test_init_preserves_existing_records(fresh_rc_cli, tmp_path, monkeypatch):
+    """Init must not erase existing records not in the current call."""
+    guard1 = tmp_path / "guard1.py"
+    guard1.write_text("# 1", encoding="utf-8")
+    guard2 = tmp_path / "guard2.py"
+    guard2.write_text("# 2", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+
+    # First init with guard1
+    fresh_rc_cli._init_guard_hashes([str(guard1)])
+    # Second init with guard2 — guard1 must survive
+    status, warnings = fresh_rc_cli._init_guard_hashes([str(guard2)])
+    assert status == 0
+    data = json.loads((state_dir / "guard_hashes.json").read_text(encoding="utf-8"))
+    assert str(guard1.resolve()) in data
+    assert str(guard2.resolve()) in data

@@ -20,7 +20,7 @@ def _init_repo(project_dir: Path) -> None:
     subprocess.run(["git", "config", "user.name", "Test"], cwd=str(project_dir), check=True, capture_output=True)
 
 
-def _run_hook(project_dir: Path, env_extra: dict) -> subprocess.CompletedProcess:
+def _run_hook(project_dir: Path, env_extra: dict, payload: dict | None = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     for var in (
         "RC_AUDIT_ROOT", "RC_PROJECT_DIR", "RC_RUN_DIR",
@@ -31,9 +31,10 @@ def _run_hook(project_dir: Path, env_extra: dict) -> subprocess.CompletedProcess
     env["RC_PROJECT_DIR"] = str(project_dir)
     env["RC_RUN_DIR"] = str(project_dir)
     env["RC_AUDIT_ROOT"] = str(project_dir / "_audit")
+    stdin_payload = json.dumps(payload or {})
     return subprocess.run(
         [sys.executable, HOOK_PATH],
-        input="{}",
+        input=stdin_payload,
         capture_output=True,
         text=True,
         env=env,
@@ -44,7 +45,6 @@ def _run_hook(project_dir: Path, env_extra: dict) -> subprocess.CompletedProcess
 def test_stop_hook_advisory_when_clean(tmp_path):
     project = tmp_path / "repo"
     _init_repo(project)
-    # No files changed
     proc = _run_hook(project, {"RC_MODE": "advise"})
     assert proc.returncode == 0, proc.stderr
 
@@ -52,22 +52,61 @@ def test_stop_hook_advisory_when_clean(tmp_path):
 def test_stop_hook_advisory_when_mcp_skip(tmp_path):
     project = tmp_path / "repo"
     _init_repo(project)
-    # Write a file that was not gated (MCP-skip)
     (project / "orphan.py").write_text("print('hi')", encoding="utf-8")
 
     proc = _run_hook(project, {"RC_MODE": "advise", "RC_SESSION_ID": "test"})
-    # Advisory mode: exit 0, just warn
+    # Advisory mode: exit 0, just warn to stderr
     assert proc.returncode == 0, proc.stderr
-    assert "MCP-SKIP" in proc.stderr or "mcp-skip" in proc.stderr.lower() or "advisory" in proc.stderr.lower()
+    assert "MCP-skip" in proc.stderr or "advisory" in proc.stderr.lower()
 
 
-def test_stop_hook_copilot_blocks_mcp_skip(tmp_path):
+def test_stop_hook_copilot_emits_json_block(tmp_path):
     project = tmp_path / "repo"
     _init_repo(project)
-    # Write a file that was not gated (MCP-skip)
     (project / "orphan.py").write_text("print('hi')", encoding="utf-8")
 
     proc = _run_hook(project, {"RC_MODE": "copilot", "RC_SESSION_ID": "test"})
-    # Copilot mode: exit 2
+    # Copilot mode: exit 2 with structured JSON decision on stdout
     assert proc.returncode == 2, proc.stderr
-    assert "MCP-SKIP" in proc.stderr
+    decision = json.loads(proc.stdout.strip())
+    assert decision["decision"] == "block"
+    assert "MCP-SKIP" in decision["reason"]
+    assert "orphan.py" in decision["reason"]
+
+
+def test_stop_hook_stop_hook_active_approves(tmp_path):
+    """stop_hook_active=True means this is a retry — must approve to avoid loop."""
+    project = tmp_path / "repo"
+    _init_repo(project)
+    (project / "orphan.py").write_text("print('hi')", encoding="utf-8")
+
+    proc = _run_hook(
+        project,
+        {"RC_MODE": "copilot", "RC_SESSION_ID": "test"},
+        payload={"stop_hook_active": True},
+    )
+    # Must approve on retry, even in copilot mode
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_stop_hook_uses_payload_cwd(tmp_path):
+    """When payload provides cwd, it takes precedence over env."""
+    project = tmp_path / "repo"
+    _init_repo(project)
+    # No orphan file
+    proc = _run_hook(
+        project,
+        {"RC_MODE": "copilot", "RC_SESSION_ID": "test", "RC_PROJECT_DIR": "/nonexistent", "RC_RUN_DIR": "/nonexistent"},
+        payload={"cwd": str(project)},
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_stop_hook_infrastructure_error_does_not_block(tmp_path):
+    """If rc reconcile fails for infra reasons, log to stderr but don't block."""
+    project = tmp_path / "no_git"
+    project.mkdir()
+    # No .git directory
+    proc = _run_hook(project, {"RC_MODE": "copilot", "RC_SESSION_ID": "test"})
+    # Non-git dir → reconcile returns empty → no MCP-skip → exit 0
+    assert proc.returncode == 0, proc.stderr

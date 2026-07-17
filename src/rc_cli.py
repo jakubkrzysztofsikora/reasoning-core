@@ -65,27 +65,64 @@ def _guard_hash_store_path() -> Path:
     return Path(os.environ.get("RC_STATE_DIR", os.path.expanduser("~/.local/state/reasoning-core"))) / "guard_hashes.json"
 
 
-def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> int:
+def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> tuple[int, list[str]]:
     """Initialize the guard-hash store with the current hashes of the given files.
 
     This is the only path that can add entries to the store. Called by the
     operator explicitly via `rc guard-hash --init`.
+
+    Returns (status, warnings):
+      status: 0 on success, 1 on partial success, 2 on failure
+      warnings: list of human-readable warnings about recovered/skipped entries
     """
     store = Path(store_path) if store_path else _guard_hash_store_path()
     store.parent.mkdir(parents=True, exist_ok=True)
     records: dict[str, str] = {}
-    if store.exists():
+    warnings: list[str] = []
+
+    if store.is_file():
         try:
-            records = json.loads(store.read_text(encoding="utf-8"))
-            if not isinstance(records, dict):
-                records = {}
-        except (OSError, ValueError):
-            records = {}
+            existing = json.loads(store.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                records = existing
+            else:
+                warnings.append(
+                    f"existing store at {store} had unexpected type "
+                    f"{type(existing).__name__}; backing up and starting fresh"
+                )
+                store.rename(store.with_suffix(".jsonl.corrupt"))
+        except json.JSONDecodeError as exc:
+            warnings.append(
+                f"existing store at {store} was corrupt ({exc}); "
+                f"backing up to {store.with_suffix('.jsonl.corrupt')} and starting fresh"
+            )
+            store.rename(store.with_suffix(".jsonl.corrupt"))
+        except OSError as exc:
+            warnings.append(f"could not read existing store at {store}: {exc}")
+
+    added = 0
+    skipped = 0
     for fp in file_paths:
         path = Path(fp).resolve()
-        records[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except (OSError, PermissionError) as exc:
+            warnings.append(f"could not hash {path}: {exc}")
+            skipped += 1
+            continue
+        records[str(path)] = digest
+        added += 1
+
+    if added == 0 and not records:
+        sys.stderr.write(
+            f"no guard files registered; store not written to {store}\n"
+        )
+        for w in warnings:
+            sys.stderr.write(f"  warning: {w}\n")
+        return (2, warnings)
+
     store.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
-    return 0
+    return (0, warnings)
 
 
 def _verify_guard_hash(file_path: str, store_path: str | None = None) -> bool:
@@ -115,13 +152,23 @@ def _verify_guard_hash(file_path: str, store_path: str | None = None) -> bool:
 
 
 def cmd_guard_hash(args: argparse.Namespace) -> int:
-    """Verify guard files and the enforcement config against stored hashes."""
+    """Verify guard files and the enforcement config against stored hashes.
+
+    Excludes `rc_cli.py` itself from its own guard list to avoid the
+    self-referential chicken-and-egg problem where editing the CLI flags
+    the CLI as TAMPERED and the only fix is to re-init via the very CLI
+    being edited.
+    """
     project_dir = _project_dir()
     repo_root = Path(__file__).resolve().parent.parent
     guard_files = [
         repo_root / "src" / "hooks" / "pre_edit_guard.py",
         repo_root / "src" / "hooks" / "_dispatch.py",
-        repo_root / "src" / "rc_cli.py",
+        repo_root / "src" / "hooks" / "_guard_paths.py",
+        repo_root / "src" / "hooks" / "_kill_switches.py",
+        repo_root / "src" / "hooks" / "_magic_comments.py",
+        repo_root / "src" / "hooks" / "_rule_engine.py",
+        repo_root / "src" / "hooks" / "audit_log.py",
     ]
     envrc_local = project_dir / ".envrc.local"
     plan_md = project_dir / "PLAN.md"
@@ -135,9 +182,11 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
         for f in all_files:
             if Path(f).is_file():
                 existing.append(f)
-        _init_guard_hashes(existing)
-        sys.stdout.write(f"registered {len(existing)} guard files\n")
-        return 0
+        status, warnings = _init_guard_hashes(existing)
+        for w in warnings:
+            sys.stderr.write(f"  warning: {w}\n")
+        sys.stdout.write(f"registered hashes for {len(existing)} guard files\n")
+        return status
 
     store = _guard_hash_store_path()
     if not store.is_file():
@@ -387,28 +436,83 @@ export S2_FAIL_CLOSED=1
 """
 
 
+_AUTH_MIN_TOKEN_LEN = 16
+
+
 def _operator_authenticated() -> bool:
     """Return True if the operator has authenticated for enforcement changes.
 
     Authentication requires one of:
-      1. `RC_ENFORCEMENT_TOKEN` env var matching a non-empty operator token
-         (the agent should not have access to the operator's shell secrets).
+      1. `RC_ENFORCEMENT_TOKEN` env var matches the keychain-stored token
+         (compared in constant time). This is the cross-platform escape hatch
+         for headless / CI usage. The env var must be ≥16 chars.
       2. macOS keychain contains a stored reasoning-core enforcement token
          (best-effort; failures fall back to deny).
 
     TTY presence is NOT sufficient — the agent can allocate a pty.
+    Just having `RC_ENFORCEMENT_TOKEN` set to any non-empty string is NOT
+    sufficient — an agent can set env vars in its own shell. The token must
+    match the operator's stored secret.
     """
-    if os.environ.get("RC_ENFORCEMENT_TOKEN"):
-        return True
+    token = os.environ.get("RC_ENFORCEMENT_TOKEN", "")
+    if len(token) >= _AUTH_MIN_TOKEN_LEN:
+        try:
+            r = subprocess.run(
+                ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                stored = r.stdout.strip()
+                if _constant_time_eq(token, stored):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _constant_time_eq(a: str, b: str) -> bool:
+    """Constant-time string comparison to prevent timing attacks."""
+    import hmac
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write text to path atomically: write to temp file, fsync, rename."""
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
     try:
-        r = subprocess.run(
-            ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return True
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, str(path))
     except Exception:
-        pass
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_unlink(path: Path) -> bool:
+    """Unlink path, refusing to follow symlinks. Returns True if removed."""
+    if not path.exists():
+        return False
+    if path.is_symlink():
+        # Don't follow symlinks — could be a symlink to a critical file
+        path.unlink()
+        return True
+    if path.is_file():
+        path.unlink()
+        return True
     return False
 
 
@@ -417,7 +521,7 @@ def _update_envrc_local(project_dir: Path, hard: bool = False) -> Path:
     envrc_local = project_dir / ".envrc.local"
     block = _ENFORCEMENT_BLOCK_STAGE2 if hard else _ENFORCEMENT_BLOCK_STAGE1
     existing = ""
-    if envrc_local.exists():
+    if envrc_local.is_file() and not envrc_local.is_symlink():
         existing = envrc_local.read_text(encoding="utf-8")
         import re
         pattern = re.compile(
@@ -427,27 +531,39 @@ def _update_envrc_local(project_dir: Path, hard: bool = False) -> Path:
         existing = pattern.sub("\n", existing).strip("\n")
         if existing:
             existing += "\n"
-    envrc_local.write_text(existing + block, encoding="utf-8")
+    _atomic_write_text(envrc_local, existing + block)
+
+    # Post-condition verification: sentinel must be present in written file
+    written = envrc_local.read_text(encoding="utf-8")
+    if _SENTINEL_START not in written or _SENTINEL_END not in written:
+        raise RuntimeError(
+            f"post-condition failed: sentinel markers not found in {envrc_local} after write"
+        )
     return envrc_local
 
 
-def _remove_envrc_local_block(project_dir: Path) -> Path:
-    """Remove only the fenced reasoning-core enforcement block."""
+def _remove_envrc_local_block(project_dir: Path) -> tuple[Path, bool]:
+    """Remove only the fenced reasoning-core enforcement block.
+
+    Returns (path, removed) where removed indicates whether a sentinel block
+    was actually present and removed.
+    """
     envrc_local = project_dir / ".envrc.local"
-    if not envrc_local.exists():
-        return envrc_local
+    if not envrc_local.is_file() or envrc_local.is_symlink():
+        return (envrc_local, False)
     existing = envrc_local.read_text(encoding="utf-8")
     import re
     pattern = re.compile(
         rf"\n?{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}\n?",
         re.DOTALL,
     )
+    had_block = _SENTINEL_START in existing
     cleaned = pattern.sub("\n", existing).strip("\n")
     if cleaned:
-        envrc_local.write_text(cleaned + "\n", encoding="utf-8")
+        _atomic_write_text(envrc_local, cleaned + "\n")
     else:
-        envrc_local.unlink()
-    return envrc_local
+        _atomic_unlink(envrc_local)
+    return (envrc_local, had_block)
 
 
 def cmd_enable_enforcement(args: argparse.Namespace) -> int:
@@ -499,9 +615,11 @@ def cmd_disable_enforcement(_args: argparse.Namespace) -> int:
         )
         return 1
 
-    envrc_local = _remove_envrc_local_block(project_dir)
-    if envrc_local.exists():
+    envrc_local, removed = _remove_envrc_local_block(project_dir)
+    if removed:
         sys.stdout.write(f"removed enforcement block from {envrc_local}\n")
+    elif envrc_local.exists():
+        sys.stdout.write(f"no enforcement block found in {envrc_local}\n")
     else:
         sys.stdout.write("no enforcement block found; nothing to remove\n")
     sys.stdout.write("next: direnv reload  # or: source .envrc.local\n")
@@ -706,7 +824,8 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
 
     Returns a list of file paths (relative to repo root) that were modified
     on disk but lack a corresponding gate_edit audit row in the current
-    session.
+    session. Scans yesterday + today to handle sessions that span midnight.
+    Includes `.jsonl.gz` rotated logs.
     """
     import datetime as _dt
     import subprocess
@@ -741,37 +860,49 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
 
     gated: set[str] = set()
     root = Path(audit_root)
-    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
-    day_dir = root / today
-    if day_dir.is_dir():
-        for log in day_dir.glob("*.jsonl"):
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    # Scan yesterday and today to handle sessions that span midnight.
+    scan_days = [today - _dt.timedelta(days=1), today]
+    for day in scan_days:
+        day_str = day.strftime("%Y-%m-%d")
+        day_dir = root / day_str
+        if not day_dir.is_dir():
+            continue
+        log_paths = list(day_dir.glob("*.jsonl")) + list(day_dir.glob("*.jsonl.gz"))
+        for log_path in log_paths:
             try:
-                for line in log.read_text(encoding="utf-8").splitlines():
-                    if not line:
-                        continue
-                    try:
-                        ev = json.loads(line)
-                    except ValueError:
-                        continue
-                    if ev.get("session_id") == session_id and ev.get("decision") in (
-                        "allowed", "blocked", "warn", "shadow_blocked", "allowed_via_override",
-                    ):
-                        fp = ev.get("file_path")
-                        if isinstance(fp, str) and fp:
-                            fp_path = Path(fp)
-                            if fp_path.is_absolute():
-                                try:
-                                    fp = str(fp_path.relative_to(repo_root_path))
-                                except ValueError:
-                                    pass
-                            gated.add(fp)
+                if log_path.suffix == ".gz":
+                    import gzip
+                    fh = gzip.open(log_path, "rt", encoding="utf-8")
+                else:
+                    fh = log_path.open("r", encoding="utf-8")
+                with fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except ValueError:
+                            continue
+                        if ev.get("session_id") == session_id and ev.get("decision") in (
+                            "allowed", "blocked", "warn", "shadow_blocked", "allowed_via_override",
+                        ):
+                            fp = ev.get("file_path")
+                            if isinstance(fp, str) and fp:
+                                fp_path = Path(fp)
+                                if fp_path.is_absolute():
+                                    try:
+                                        fp = str(fp_path.relative_to(repo_root_path))
+                                    except ValueError:
+                                        pass
+                                gated.add(fp)
             except OSError:
                 continue
 
     return sorted(changed - gated)
 
 
-def cmd_reconcile(_args: argparse.Namespace) -> int:
+def cmd_reconcile(args: argparse.Namespace) -> int:
     """Post-session safety net: flag files written without a gate_edit call."""
     project_dir = _project_dir()
     if not project_dir.is_dir():
@@ -780,6 +911,11 @@ def cmd_reconcile(_args: argparse.Namespace) -> int:
 
     sid = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("RC_SESSION_ID") or "default"
     missing = _reconcile_missing_gate_events(str(project_dir), str(_audit_root()), sid)
+
+    if getattr(args, "json", False):
+        sys.stdout.write(json.dumps({"missing": missing, "session_id": sid}) + "\n")
+        return 0 if not missing else 1
+
     if not missing:
         sys.stdout.write("rc reconcile: all changed files have a gate_edit audit row.\n")
         return 0
@@ -1236,10 +1372,12 @@ def main(argv: list | None = None) -> int:
     os_cmd.add_argument("--days", type=int, default=30)
     os_cmd.add_argument("--audit-root", default=None)
     os_cmd.set_defaults(func=cmd_override_survival)
-    sub.add_parser(
+    r = sub.add_parser(
         "reconcile",
         help="diff git working tree against gate_edit audit rows for this session",
-    ).set_defaults(func=cmd_reconcile)
+    )
+    r.add_argument("--json", action="store_true", help="emit JSON output for hook parsing")
+    r.set_defaults(func=cmd_reconcile)
     ah_cmd = sub.add_parser(
         "audit-history",
         help="mine recent git history and label commits for calibration feedback",

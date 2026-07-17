@@ -13,9 +13,11 @@
 <p align="center">
   Audit and warn on AI edits that drift off-plan, import what's banned, or break invariants — before they hit disk.
   <br/>
-  Opt-in enforcement mode can block these edits. Local-only by default.
+  Opt-in enforcement mode can block these edits.
   <br/>
-  Loopback only. No telemetry. No cloud relay.
+  At runtime: loopback-only sidecar, no telemetry, no cloud relay.
+  <br/>
+  One-time model download from HuggingFace is required for the default SSM embedder.
 </p>
 
 <p align="center">
