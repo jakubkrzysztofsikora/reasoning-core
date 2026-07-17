@@ -1031,6 +1031,142 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_label(args: argparse.Namespace) -> int:
+    """Label an audit decision for the training set.
+
+    Without --random, takes a decision_id argument. With --random, picks
+    one unlabeled decision from recent audit (last 7 days by default).
+
+    Interactive flow (no --yes): shows file, before/after snippet, and asks
+    for the 5 labels (y/n each).
+
+    Non-interactive (--yes): reads labels from --labels flag as
+    "scope_drift=yes,plan_violation=no,..." or from a JSON file with --from-file.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "hooks"))
+    try:
+        import _training_set as ts
+    except ImportError as exc:
+        sys.stderr.write(f"could not load training_set module: {exc}\n")
+        return 1
+
+    if args.random:
+        candidate = ts.pick_random_unlabeled(days=args.days)
+        if not candidate:
+            sys.stderr.write(f"no unlabeled decisions found in last {args.days} days\n")
+            return 1
+        decision_id = candidate["decision_id"]
+        sys.stdout.write(f"picked random unlabeled decision: {decision_id}\n")
+        sys.stdout.write(f"  file:     {candidate.get('file_path', '?')}\n")
+        sys.stdout.write(f"  decision: {candidate.get('decision', '?')}\n")
+        sys.stdout.write(f"  source:   {candidate.get('signal_source', '?')}\n\n")
+    else:
+        decision_id = args.decision_id
+        if not decision_id:
+            sys.stderr.write("usage: rc label <decision-id> [--random]\n")
+            return 1
+
+    if ts.already_labeled(decision_id):
+        sys.stderr.write(f"decision {decision_id} is already labeled\n")
+        return 1
+
+    audit_row = ts._lookup_audit_row(decision_id)
+    if not audit_row:
+        sys.stderr.write(f"warning: decision_id {decision_id} not found in audit log\n")
+
+    file_path = audit_row.get("file_path", "?")
+    sys.stdout.write("=" * 60 + "\n")
+    sys.stdout.write(f"decision_id: {decision_id}\n")
+    sys.stdout.write(f"file:        {file_path}\n")
+    sys.stdout.write(f"decision:    {audit_row.get('decision', '?')}\n")
+    sys.stdout.write(f"signal:      {audit_row.get('signal_source', '?')}\n")
+    sys.stdout.write("=" * 60 + "\n")
+    before_src = (audit_row.get("before_src") or "")[:500]
+    after_src = (audit_row.get("after_src") or "")[:500]
+    if before_src or after_src:
+        sys.stdout.write("--- before ---\n")
+        sys.stdout.write(before_src + "\n")
+        sys.stdout.write("--- after ---\n")
+        sys.stdout.write(after_src + "\n")
+        sys.stdout.write("=" * 60 + "\n")
+
+    labels: dict[str, bool] = {}
+    if args.from_file:
+        try:
+            data = json.loads(Path(args.from_file).read_text(encoding="utf-8"))
+            labels = {k: bool(v) for k, v in data.items() if k in ts._LABELS}
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"could not read --from-file: {exc}\n")
+            return 1
+    elif args.labels:
+        for pair in args.labels.split(","):
+            pair = pair.strip()
+            if "=" not in pair:
+                continue
+            k, v = pair.split("=", 1)
+            k = k.strip()
+            if k in ts._LABELS:
+                labels[k] = v.strip().lower() in ("yes", "true", "1", "y")
+    elif args.yes:
+        sys.stderr.write("--yes requires --labels or --from-file\n")
+        return 1
+    else:
+        for label in ts._LABELS:
+            sys.stdout.write(f"  {label}? [y/n] ")
+            sys.stdout.flush()
+            try:
+                ans = input().strip().lower()
+            except EOFError:
+                sys.stderr.write("\nno TTY; pass --labels or --from-file for non-interactive\n")
+                return 1
+            labels[label] = ans in ("y", "yes", "true", "1")
+
+    notes = ""
+    if not args.yes:
+        sys.stdout.write("  notes (optional): ")
+        sys.stdout.flush()
+        try:
+            notes = input().strip()
+        except EOFError:
+            notes = ""
+
+    label = ts.label_decision_id(
+        decision_id,
+        labels,
+        labeler_id=os.environ.get("USER", "operator"),
+        notes=notes,
+    )
+    sys.stdout.write(f"\nstored label for {decision_id}\n")
+    sys.stdout.write(f"  rationale_quality_failure = {label.rationale_quality_failure}\n")
+    return 0
+
+
+def cmd_label_stats(_args: argparse.Namespace) -> int:
+    """Show progress toward the per-label training target."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "hooks"))
+    try:
+        import _training_set as ts
+    except ImportError as exc:
+        sys.stderr.write(f"could not load training_set module: {exc}\n")
+        return 1
+
+    p = ts.progress()
+    sys.stdout.write("== training-set progress ==\n")
+    sys.stdout.write(f"target per label: {p['target_per_label']}\n")
+    sys.stdout.write(f"total stored:     {p['total_stored']}\n\n")
+    sys.stdout.write(f"{'label':<25} {'count':>5} {'remaining':>10}\n")
+    for label in ts._LABELS:
+        c = p["counts"].get(label, 0)
+        r = p["remaining"][label]
+        marker = "OK" if r == 0 else "..."
+        sys.stdout.write(f"  {label:<23} {c:>5} {r:>10} {marker}\n")
+    if all(p["remaining"][k] == 0 for k in ts._LABELS):
+        sys.stdout.write("\nALL LABELS REACHED TARGET — ready for n=100 eval\n")
+        return 0
+    sys.stdout.write(f"\nstore: {ts.store_path()}\n")
+    return 1
+
+
 def cmd_audit_history(args: argparse.Namespace) -> int:
     """Mine recent git history and print per-commit quality labels.
 
@@ -1450,6 +1586,27 @@ def main(argv: list | None = None) -> int:
     )
     r.add_argument("--json", action="store_true", help="emit JSON output for hook parsing")
     r.set_defaults(func=cmd_reconcile)
+    lab = sub.add_parser(
+        "label",
+        help="label an audit decision for the SWE-bench eval training set",
+    )
+    lab.add_argument("decision_id", nargs="?", default=None,
+                     help="audit decision_id to label (omit if --random)")
+    lab.add_argument("--random", action="store_true",
+                    help="pick a random unlabeled decision from recent audit")
+    lab.add_argument("--days", type=int, default=7,
+                    help="how far back to look for --random (default 7)")
+    lab.add_argument("--labels", default=None,
+                    help='non-interactive labels, e.g. "scope_drift=yes,plan_violation=no"')
+    lab.add_argument("--from-file", default=None,
+                    help="read labels from a JSON file")
+    lab.add_argument("--yes", action="store_true",
+                    help="non-interactive (requires --labels or --from-file)")
+    lab.set_defaults(func=cmd_label)
+    sub.add_parser(
+        "label-stats",
+        help="show progress toward per-label training target",
+    ).set_defaults(func=cmd_label_stats)
     ah_cmd = sub.add_parser(
         "audit-history",
         help="mine recent git history and label commits for calibration feedback",

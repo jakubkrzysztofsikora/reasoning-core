@@ -131,6 +131,39 @@ def _resolve_rc_mode(project_dir: str) -> str:
     return "advise"
 
 
+def _maybe_prompt_for_label(project_dir: str) -> None:
+    """Surface a non-blocking labeling prompt at session end.
+
+    When `RC_TRAINING_PROMPT_RATE` is set (default 0.05), occasionally
+    surface a random unlabeled audit decision and tell the operator how
+    to label it. The user runs `rc label <id>` when convenient — this
+    is non-blocking, off the critical path, and grows the training set
+    across many sessions on this machine.
+    """
+    try:
+        import _training_set as ts
+    except ImportError:
+        return
+
+    if not ts.should_prompt_for_label():
+        return
+
+    candidate = ts.pick_random_unlabeled(days=7)
+    if not candidate:
+        return
+
+    decision_id = candidate.get("decision_id", "")
+    file_path = candidate.get("file_path", "?")
+    sys.stderr.write(
+        f"\n[reasoning-core] training-set prompt (run when convenient):\n"
+        f"  decision_id: {decision_id}\n"
+        f"  file:        {file_path}\n"
+        f"  decision:    {candidate.get('decision', '?')}\n"
+        f"  label it with: rc label {decision_id}\n"
+        f"  or skip by running: rc label-stats\n\n"
+    )
+
+
 def main() -> None:
     payload = _read_payload()
 
@@ -149,7 +182,9 @@ def main() -> None:
     # "could not verify" — log to stderr but don't block, to avoid false
     # positives from infrastructure failures.
     if rc == 0 and not missing:
-        # Clean
+        # Clean — also surface an occasional labeling prompt to grow the
+        # training set across sessions (non-blocking).
+        _maybe_prompt_for_label(project_dir)
         sys.exit(0)
 
     if rc not in (0, 1):

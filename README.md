@@ -163,6 +163,10 @@ rc bypass-next              # arm one bypass for the next Edit/Write
 rc confirm-next             # audit ground-truth (operator_confirmed event)
 rc enable-enforcement       # flip repo to copilot mode (authenticated; requires PLAN.md)
 rc disable-enforcement      # revert to advisory mode
+rc auth-bootstrap           # generate + store enforcement token (Linux/macOS)
+rc label <decision-id>      # label an audit decision (builds the eval training set)
+rc label --random           # pick one unlabeled decision and label it
+rc label-stats              # progress toward the 10-per-label training target
 rc benchmark                # Markdown report from your local audit log
 rc reasoning-efficiency     # composite north-star metric from the audit log
 rc audit-history            # label commits negative if followed by fix/revert

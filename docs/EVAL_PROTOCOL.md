@@ -73,6 +73,39 @@ leak" or "no-op" failure modes.
 - Inter-rater reliability and per-labeler confusion matrices are reported.
 - A third adjudicator resolves disagreements.
 
+### Distributed training-set collection
+
+For the **primary endpoint** the eval needs ~10 labeled examples per label
+(5 positive, 5 negative) before the n=100 run can start. We collect these
+**across many real coding sessions on this machine**, not in a one-shot
+labeling session. All data stays local; nothing is sent off-host.
+
+Mechanics:
+- **Audit log**: every PreToolUse decision writes a row with `decision_id`,
+  `file_path`, `before_src`, `after_src`, `decision`, `signal_source`.
+- **`rc label <decision-id>`**: manually label one decision. Shows the
+  file, before/after snippet, and prompts for the 5 labels. Non-interactive
+  mode via `--labels scope_drift=yes,plan_violation=no,...` or
+  `--from-file labels.json`.
+- **`rc label --random`**: pick one unlabeled decision from recent audit
+  (last 7 days) and label it. Useful when quotas are low and you have
+  a few minutes.
+- **`rc label-stats`**: show progress toward the 10-per-label target.
+  Exit 0 when all targets met; exit 1 with remaining counts otherwise.
+- **Auto-prompt at session end**: the Stop hook (`stop_reconcile.py`)
+  surfaces a non-blocking prompt at session end with `RC_TRAINING_PROMPT_RATE`
+  probability (default 0.05). The prompt names a `decision_id` and the
+  one-line command to label it. The user runs it when convenient — the
+  hook does not block the session.
+- **Storage**: `~/.local/share/reasoning-core/training_set.jsonl`,
+  append-only, one label per line. Override via `RC_TRAINING_SET_FILE`.
+
+This keeps the labeling effort amortised over normal usage. A typical
+operator who runs the agent ~100 times/day will see ~5 prompts/day at
+the 5% rate; after 2 days of occasional `rc label` runs the training
+set is full. The distributed model also surfaces harder-to-construct
+cases (real edits, not synthetic).
+
 ### Training set
 
 - 10 labeled examples per label (5 positive, 5 negative) provided to each
