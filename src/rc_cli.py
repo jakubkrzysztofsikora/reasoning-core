@@ -964,44 +964,6 @@ def cmd_audit_history(args: argparse.Namespace) -> int:
             sys.stdout.write(f"          reason: {c.label_reason}\n")
     return 0
 
-    """Mine recent git history and print per-commit quality labels.
-
-    Labels commits as positive/negative based on whether they were followed
-    within 48 hours by a fix/revert/hotfix/patch touching the same files.
-    This is the feedback loop input for Phase-4 calibration.
-    """
-    project_dir = Path(args.project_dir) if args.project_dir else _project_dir()
-    if not project_dir.is_dir():
-        sys.stderr.write(f"project directory does not exist: {project_dir}\n")
-        return 1
-
-    try:
-        commits = _cm.mine(str(project_dir), n=args.n)
-    except Exception as exc:  # noqa: BLE001
-        sys.stderr.write(f"could not mine commits: {exc}\n")
-        return 1
-
-    if not commits:
-        sys.stdout.write(f"no commits mined under {project_dir}\n")
-        return 0
-
-    if args.json:
-        sys.stdout.write(json.dumps([c.to_dict() for c in commits], indent=2) + "\n")
-        return 0
-
-    sys.stdout.write(f"{'label':<9} {'sha':<9} {'date':<20} {'files':>5} {'lines':>5}  {'message'}\n")
-    sys.stdout.write("-" * 80 + "\n")
-    for c in commits:
-        date_str = c.date.strftime("%Y-%m-%d %H:%M") if c.date else ""
-        msg = (c.message or "")[:50]
-        sys.stdout.write(
-            f"{c.label or 'unknown':<9} {c.sha[:7]:<9} {date_str:<20} "
-            f"{len(c.files):>5} {sum(c.diff_stat.values()):>5}  {msg}\n"
-        )
-        if args.reasons and c.label_reason:
-            sys.stdout.write(f"          reason: {c.label_reason}\n")
-    return 0
-
 
 # --- benchmark (audit schema v4 measurement foundation) ----------------------
 
@@ -1298,7 +1260,7 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     if args.json:
         out_path = Path(args.json)
         try:
-            out_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+            _atomic_write_text(out_path, json.dumps(metrics, indent=2) + "\n")
         except OSError as exc:
             sys.stderr.write(f"failed to write JSON: {exc}\n")
             return 1
@@ -1306,7 +1268,7 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     report = _fmt_benchmark_markdown(metrics, title="reasoning-core benchmark")
     if args.output:
         try:
-            Path(args.output).write_text(report + "\n", encoding="utf-8")
+            _atomic_write_text(Path(args.output), report + "\n")
         except OSError as exc:
             sys.stderr.write(f"failed to write report: {exc}\n")
             return 1
