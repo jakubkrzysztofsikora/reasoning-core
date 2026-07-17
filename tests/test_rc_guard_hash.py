@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib
-import os
 import sys
 from pathlib import Path
 
@@ -37,17 +36,11 @@ def test_guard_hash_detects_tampering(fresh_rc_cli, tmp_path, monkeypatch):
     state_dir.mkdir()
     monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
 
-    # Initialize hash store
-    store = state_dir / "guard_hashes.json"
-    store.write_text(
-        f'{{"{guard}": "{_sha256_file(guard)}"}}',
-        encoding="utf-8",
-    )
+    fresh_rc_cli._init_guard_hashes([str(guard)])
 
-    # Tamper with the file
     guard.write_text("# tampered", encoding="utf-8")
 
-    result = fresh_rc_cli._verify_guard_hash(str(guard), str(store))
+    result = fresh_rc_cli._verify_guard_hash(str(guard))
     assert result is False
 
 
@@ -58,17 +51,40 @@ def test_guard_hash_passes_intact(fresh_rc_cli, tmp_path, monkeypatch):
     state_dir.mkdir()
     monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
 
-    store = state_dir / "guard_hashes.json"
-    store.write_text(
-        f'{{"{guard}": "{_sha256_file(guard)}"}}',
-        encoding="utf-8",
-    )
+    fresh_rc_cli._init_guard_hashes([str(guard)])
 
-    result = fresh_rc_cli._verify_guard_hash(str(guard), str(store))
+    result = fresh_rc_cli._verify_guard_hash(str(guard))
     assert result is True
 
 
-def test_guard_hash_initializes_store(fresh_rc_cli, tmp_path, monkeypatch):
+def test_guard_hash_returns_false_when_store_missing(fresh_rc_cli, tmp_path, monkeypatch):
+    guard = tmp_path / "pre_edit_guard.py"
+    guard.write_text("# original", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+
+    # No store file → must return False (TAMPERED)
+    result = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert result is False
+
+
+def test_guard_hash_returns_false_when_file_missing_from_store(fresh_rc_cli, tmp_path, monkeypatch):
+    guard = tmp_path / "pre_edit_guard.py"
+    guard.write_text("# original", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+
+    # Store exists but does not contain this file
+    store = state_dir / "guard_hashes.json"
+    store.write_text("{}", encoding="utf-8")
+
+    result = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert result is False
+
+
+def test_guard_hash_returns_false_when_store_corrupt(fresh_rc_cli, tmp_path, monkeypatch):
     guard = tmp_path / "pre_edit_guard.py"
     guard.write_text("# original", encoding="utf-8")
     state_dir = tmp_path / "state"
@@ -76,10 +92,19 @@ def test_guard_hash_initializes_store(fresh_rc_cli, tmp_path, monkeypatch):
     monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
 
     store = state_dir / "guard_hashes.json"
-    assert not store.exists()
+    store.write_text("not json", encoding="utf-8")
 
-    result = fresh_rc_cli._verify_guard_hash(str(guard), str(store))
-    assert result is True
-    assert store.exists()
-    data = store.read_text(encoding="utf-8")
-    assert _sha256_file(guard) in data
+    result = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert result is False
+
+
+def test_guard_hash_returns_false_when_file_missing(fresh_rc_cli, tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+
+    store = state_dir / "guard_hashes.json"
+    store.write_text("{}", encoding="utf-8")
+
+    result = fresh_rc_cli._verify_guard_hash(str(tmp_path / "nonexistent.py"))
+    assert result is False

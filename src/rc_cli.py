@@ -65,71 +65,112 @@ def _guard_hash_store_path() -> Path:
     return Path(os.environ.get("RC_STATE_DIR", os.path.expanduser("~/.local/state/reasoning-core"))) / "guard_hashes.json"
 
 
-def _verify_guard_hash(file_path: str, store_path: str | None = None) -> bool:
-    """Verify a guard file against a stored SHA-256 hash.
+def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> int:
+    """Initialize the guard-hash store with the current hashes of the given files.
 
-    If the file is not in the store, initialize the store with its current
-    hash. Returns True when the file matches the stored hash or is newly
-    registered; False when the file has been modified.
+    This is the only path that can add entries to the store. Called by the
+    operator explicitly via `rc guard-hash --init`.
     """
-    path = Path(file_path).resolve()
     store = Path(store_path) if store_path else _guard_hash_store_path()
     store.parent.mkdir(parents=True, exist_ok=True)
-    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     records: dict[str, str] = {}
     if store.exists():
         try:
             records = json.loads(store.read_text(encoding="utf-8"))
+            if not isinstance(records, dict):
+                records = {}
         except (OSError, ValueError):
             records = {}
+    for fp in file_paths:
+        path = Path(fp).resolve()
+        records[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    store.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+    return 0
+
+
+def _verify_guard_hash(file_path: str, store_path: str | None = None) -> bool:
+    """Verify a guard file against a stored SHA-256 hash.
+
+    Returns True when the file matches a pre-registered hash. Missing entries
+    or corrupt stores return False (TAMPERED). Use `rc guard-hash --init`
+    to register hashes for the first time.
+    """
+    path = Path(file_path).resolve()
+    if not path.is_file():
+        return False
+    store = Path(store_path) if store_path else _guard_hash_store_path()
+    if not store.is_file():
+        return False
+    try:
+        records = json.loads(store.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(records, dict):
+        return False
     key = str(path)
     if key not in records:
-        records[key] = current_hash
-        store.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
-        return True
+        return False
+    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     return records[key] == current_hash
 
 
-def cmd_guard_hash(_args: argparse.Namespace) -> int:
+def cmd_guard_hash(args: argparse.Namespace) -> int:
     """Verify guard files and the enforcement config against stored hashes."""
     project_dir = _project_dir()
     repo_root = Path(__file__).resolve().parent.parent
     guard_files = [
         repo_root / "src" / "hooks" / "pre_edit_guard.py",
         repo_root / "src" / "hooks" / "_dispatch.py",
+        repo_root / "src" / "rc_cli.py",
     ]
     envrc_local = project_dir / ".envrc.local"
+    plan_md = project_dir / "PLAN.md"
+    all_files = [str(g) for g in guard_files] + [str(envrc_local), str(plan_md)]
+
+    if getattr(args, "init", False):
+        if not _operator_authenticated():
+            sys.stderr.write("rc guard-hash --init: operator authentication required.\n")
+            return 1
+        existing = []
+        for f in all_files:
+            if Path(f).is_file():
+                existing.append(f)
+        _init_guard_hashes(existing)
+        sys.stdout.write(f"registered {len(existing)} guard files\n")
+        return 0
+
     store = _guard_hash_store_path()
+    if not store.is_file():
+        sys.stderr.write(
+            f"guard-hash store not initialized at {store}.\n"
+            "Run `rc guard-hash --init` (operator-authenticated) to register hashes.\n"
+        )
+        return 2
+
     all_ok = True
     sys.stdout.write("== reasoning-core guard-hash ==\n")
     for guard in guard_files:
-        if guard.is_file():
-            ok = _verify_guard_hash(str(guard), str(store))
-            status = "ok" if ok else "TAMPERED"
-            sys.stdout.write(f"  {status:<10} {guard}\n")
-            if not ok:
-                all_ok = False
-    if envrc_local.is_file():
-        ok = _verify_guard_hash(str(envrc_local), str(store))
+        ok = _verify_guard_hash(str(guard), str(store))
         status = "ok" if ok else "TAMPERED"
-        sys.stdout.write(f"  {status:<10} {envrc_local}\n")
+        sys.stdout.write(f"  {status:<10} {guard}\n")
         if not ok:
             all_ok = False
+    for extra in (envrc_local, plan_md):
+        if extra.is_file():
+            ok = _verify_guard_hash(str(extra), str(store))
+            status = "ok" if ok else "TAMPERED"
+            sys.stdout.write(f"  {status:<10} {extra}\n")
+            if not ok:
+                all_ok = False
     if all_ok:
         sys.stdout.write("\nall guard files match stored hashes\n")
         return 0
     sys.stderr.write("\nTAMPERING DETECTED: one or more guard files/config changed.\n")
+    try:
+        audit_log.record_block(None)
+    except Exception:
+        pass
     return 2
-
-    return Path(os.environ.get(
-        "RC_AUDIT_ROOT",
-        os.path.expanduser("~/.local/share/reasoning-core/events"),
-    ))
-
-
-def _today_dir() -> Path:
-    import datetime as dt
-    return _audit_root() / dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
 
 
 def _print_kv(k: str, v: str) -> None:
@@ -349,18 +390,16 @@ export S2_FAIL_CLOSED=1
 def _operator_authenticated() -> bool:
     """Return True if the operator has authenticated for enforcement changes.
 
-    In order of preference:
-      1. RC_ENFORCEMENT_AUTH env var is set to a non-empty value (escape hatch
-         for headless / CI usage, not agent-controllable because agents should
-         not have access to the operator's shell secrets).
-      2. A TTY is attached (interactive human).
-      3. macOS keychain contains a stored reasoning-core enforcement token.
+    Authentication requires one of:
+      1. `RC_ENFORCEMENT_TOKEN` env var matching a non-empty operator token
+         (the agent should not have access to the operator's shell secrets).
+      2. macOS keychain contains a stored reasoning-core enforcement token
+         (best-effort; failures fall back to deny).
+
+    TTY presence is NOT sufficient — the agent can allocate a pty.
     """
-    if os.environ.get("RC_ENFORCEMENT_AUTH"):
+    if os.environ.get("RC_ENFORCEMENT_TOKEN"):
         return True
-    if sys.stdin is not None and sys.stdin.isatty():
-        return True
-    # Best-effort macOS keychain check; failures fall back to deny.
     try:
         r = subprocess.run(
             ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
@@ -665,8 +704,9 @@ def cmd_override_survival(args: argparse.Namespace) -> int:
 def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id: str) -> list[str]:
     """Diff git working tree against gate_edit audit rows for the session.
 
-    Returns a list of file paths that were modified on disk but lack a
-    corresponding gate_edit audit row in the current session.
+    Returns a list of file paths (relative to repo root) that were modified
+    on disk but lack a corresponding gate_edit audit row in the current
+    session.
     """
     import datetime as _dt
     import subprocess
@@ -691,7 +731,14 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
             elif len(line) >= 3 and line[1] in ("M", "A", "D", "R", "C", "U") and line[2] == " ":
                 changed.add(line[2:].strip().split(" -> ")[-1])
 
-    # Gated files from audit log in the current session.
+    # Gated files from audit log: normalise absolute paths to repo-relative
+    # so they can be compared with `git status` output.
+    repo_root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, cwd=str(project), timeout=5,
+    )
+    repo_root_path = Path(repo_root.stdout.strip()) if repo_root.returncode == 0 else project
+
     gated: set[str] = set()
     root = Path(audit_root)
     today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
@@ -710,7 +757,13 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
                         "allowed", "blocked", "warn", "shadow_blocked", "allowed_via_override",
                     ):
                         fp = ev.get("file_path")
-                        if isinstance(fp, str):
+                        if isinstance(fp, str) and fp:
+                            fp_path = Path(fp)
+                            if fp_path.is_absolute():
+                                try:
+                                    fp = str(fp_path.relative_to(repo_root_path))
+                                except ValueError:
+                                    pass
                             gated.add(fp)
             except OSError:
                 continue
@@ -1130,10 +1183,12 @@ def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
-    sub.add_parser(
+    gh = sub.add_parser(
         "guard-hash",
         help="verify guard files and enforcement config against stored hashes",
-    ).set_defaults(func=cmd_guard_hash)
+    )
+    gh.add_argument("--init", action="store_true", help="register current hashes (operator-authenticated)")
+    gh.set_defaults(func=cmd_guard_hash)
     e = sub.add_parser("explain")
     e.add_argument("decision_id")
     e.set_defaults(func=cmd_explain)

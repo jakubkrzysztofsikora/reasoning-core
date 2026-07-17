@@ -43,7 +43,7 @@ def isolated_project(tmp_path, monkeypatch):
 
 def _auth_env(monkeypatch):
     """Simulate authenticated operator environment."""
-    monkeypatch.setenv("RC_ENFORCEMENT_AUTH", "operator-token")
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "operator-token")
 
 
 def test_enable_enforcement_requires_authentication(isolated_project, monkeypatch):

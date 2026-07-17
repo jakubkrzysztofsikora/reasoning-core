@@ -193,7 +193,8 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 Spec first ([`docs/PLAN.md`](docs/PLAN.md)). Self-verify before pushing:
 
 ```bash
-pytest -m "not live"                          # offline gate
+pytest -m "not live and not slow"         # fast offline gate
+pytest -m "slow" --timeout=600            # slow suite (SSM sidecar)
 bash -n scripts/*.sh install.sh uninstall.sh  # syntax check
 python3 -c "import json; json.load(open('.claude/settings.json'))"
 ```

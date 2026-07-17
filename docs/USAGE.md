@@ -17,16 +17,21 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | `rc confirm-next` | Record operator agreement with the next block — emits `operator_confirmed` |
 | `rc skip-file <path>` | Add `<path>` to the per-session skip list (logged) |
 | `rc unskip-file <path>` | Remove `<path>` from the skip list |
-| `rc enable-enforcement` | First-run wizard: scaffold `PLAN.md` from `README.md`, flip `RC_MODE=copilot` |
+| `rc enable-enforcement [--hard]` | Flip repo to copilot mode (operator-authenticated; requires existing `PLAN.md`). `--hard` promotes plan-grounding to hard block. |
+| `rc disable-enforcement` | Revert to advisory mode (operator-authenticated) |
+| `rc guard-hash [--init]` | Verify guard files and enforcement config against stored hashes |
+| `rc reconcile` | Diff git working tree against gate_edit audit rows (post-session safety net) |
 | `rc score-pr --base-ref <ref> [--head-ref <ref>] [--mode symbolic|sidecar]` | Score changed files between two git refs (CI dry-run / local pre-push check) |
 | `rc reasoning-efficiency [--days N]` | Audit-log composite north-star metric (drift caught per gate-second) |
 | `rc override-survival [--days N]` | Fraction of operator overrides that survived in the codebase |
 | `rc audit-history [-n N] [--json] [--reasons]` | Mine recent git history and label commits for Phase-4 calibration feedback |
 | `rc benchmark [--days N] [--before DATE] [--after DATE] [--output PATH] [--json PATH]` | One-command benchmark report from the local audit log |
 
-`rc enable-enforcement` runs the first-run wizard: it scaffolds `PLAN.md` from
-`README.md`, shows the 48-hour shadow report checklist, and flips the repo to
-`RC_MODE=copilot`.
+`rc enable-enforcement` requires operator authentication (`RC_ENFORCEMENT_TOKEN`
+env var or a macOS keychain item) and an existing `PLAN.md`. It writes a fenced
+enforcement block into `.envrc.local` and flips the repo to `RC_MODE=copilot`.
+The default profile is **Stage 1** (warn-only plan-grounding); pass `--hard` for
+**Stage 2** (hard plan-grounding block). `rc disable-enforcement` reverts.
 
 `rc audit-history` labels the last `n` commits as positive/negative using a
 48-hour follow-up-fix heuristic. Use `--json` for machine-readable output and
@@ -187,7 +192,7 @@ logged; the hook always returns exit 0. This lets you observe what the gate
 Promote to enforcement when ready:
 
 ```bash
-rc enable-enforcement     # wizard: scaffold PLAN.md, review shadow report, flip to copilot
+rc enable-enforcement     # operator-authenticated; requires PLAN.md; flips RC_MODE=copilot
 ```
 
 Or manually:

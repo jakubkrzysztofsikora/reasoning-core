@@ -18,7 +18,7 @@
 #   RC_BEST_EFFORT_SPEC=1     -- inject iter-3 spec overlay
 #   RC_RULE_ENGINE=1          -- evaluate .reasoning-core/rules.yaml
 # Promote to enforcement after reviewing a 48-hour shadow report:
-#   rc enable-enforcement     -- flips RC_MODE=copilot and scaffolds PLAN.md
+#   rc enable-enforcement     -- flips RC_MODE=copilot (requires existing PLAN.md)
 
 set -euo pipefail
 
