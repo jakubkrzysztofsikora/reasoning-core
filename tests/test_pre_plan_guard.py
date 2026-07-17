@@ -15,6 +15,8 @@ import sys
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK_PATH = os.path.join(REPO_ROOT, "src", "hooks", "pre_plan_guard.py")
 HOOKS_DIR = os.path.join(REPO_ROOT, "src", "hooks")

@@ -16,6 +16,7 @@ Reads the same kill-switch file as src/hooks/_kill_switches.py.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -44,11 +45,82 @@ _KNOBS = (
     "RC_ORACLE_T1", "RC_ORACLE_T2", "RC_ORACLE_BLOCK",
     "RC_PRM_GATE", "RC_PRM_BLOCK", "RC_PRM_THRESHOLD",
     "RC_PRM_PROMO_MIN_REPOS", "RC_PRM_PROMO_MIN_EVENTS", "RC_PRM_PROMO_MIN_DAYS",
-    "RC_BYPASS_NEXT",
+    "RC_BYPASS_NEXT", "RC_PROJECT_INDEX", "RC_ENFORCEMENT_AUTH",
 )
 
 
 def _audit_root() -> Path:
+    return Path(os.environ.get(
+        "RC_AUDIT_ROOT",
+        os.path.expanduser("~/.local/share/reasoning-core/events"),
+    ))
+
+
+def _today_dir() -> Path:
+    import datetime as dt
+    return _audit_root() / dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def _guard_hash_store_path() -> Path:
+    return Path(os.environ.get("RC_STATE_DIR", os.path.expanduser("~/.local/state/reasoning-core"))) / "guard_hashes.json"
+
+
+def _verify_guard_hash(file_path: str, store_path: str | None = None) -> bool:
+    """Verify a guard file against a stored SHA-256 hash.
+
+    If the file is not in the store, initialize the store with its current
+    hash. Returns True when the file matches the stored hash or is newly
+    registered; False when the file has been modified.
+    """
+    path = Path(file_path).resolve()
+    store = Path(store_path) if store_path else _guard_hash_store_path()
+    store.parent.mkdir(parents=True, exist_ok=True)
+    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    records: dict[str, str] = {}
+    if store.exists():
+        try:
+            records = json.loads(store.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            records = {}
+    key = str(path)
+    if key not in records:
+        records[key] = current_hash
+        store.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+        return True
+    return records[key] == current_hash
+
+
+def cmd_guard_hash(_args: argparse.Namespace) -> int:
+    """Verify guard files and the enforcement config against stored hashes."""
+    project_dir = _project_dir()
+    repo_root = Path(__file__).resolve().parent.parent
+    guard_files = [
+        repo_root / "src" / "hooks" / "pre_edit_guard.py",
+        repo_root / "src" / "hooks" / "_dispatch.py",
+    ]
+    envrc_local = project_dir / ".envrc.local"
+    store = _guard_hash_store_path()
+    all_ok = True
+    sys.stdout.write("== reasoning-core guard-hash ==\n")
+    for guard in guard_files:
+        if guard.is_file():
+            ok = _verify_guard_hash(str(guard), str(store))
+            status = "ok" if ok else "TAMPERED"
+            sys.stdout.write(f"  {status:<10} {guard}\n")
+            if not ok:
+                all_ok = False
+    if envrc_local.is_file():
+        ok = _verify_guard_hash(str(envrc_local), str(store))
+        status = "ok" if ok else "TAMPERED"
+        sys.stdout.write(f"  {status:<10} {envrc_local}\n")
+        if not ok:
+            all_ok = False
+    if all_ok:
+        sys.stdout.write("\nall guard files match stored hashes\n")
+        return 0
+    sys.stderr.write("\nTAMPERING DETECTED: one or more guard files/config changed.\n")
+    return 2
+
     return Path(os.environ.get(
         "RC_AUDIT_ROOT",
         os.path.expanduser("~/.local/share/reasoning-core/events"),
@@ -239,28 +311,78 @@ def _project_dir() -> Path:
     )
 
 
-def _update_envrc_local(project_dir: Path) -> Path:
-    """Idempotently append/patch a reasoning-core enforcement block."""
-    envrc_local = project_dir / ".envrc.local"
-    sentinel_start = "# >>> reasoning-core enforcement >>>"
-    sentinel_end = "# <<< reasoning-core enforcement <<<"
-    block = f"""{sentinel_start}
-# Enabled via `rc enable-enforcement`. Copilot mode: block on
-# contract/oracle/rule failures. Autopilot remains opt-in.
+_SENTINEL_START = "# >>> rc enforcement >>>"
+_SENTINEL_END = "# <<< rc enforcement <<<"
+
+
+_ENFORCEMENT_BLOCK_STAGE1 = f"""{_SENTINEL_START}
+# Enabled via `rc enable-enforcement`. Stage 1: copilot mode with warn-only
+# plan-grounding. Promote to Stage 2 (hard plan-grounding) with `rc enable-enforcement --hard`.
 export RC_MODE=copilot
 export RC_SHADOW_MODE=0
 export RC_PLAN_BLOCK=1
-# Keep plan-grounding warn-only unless you want hard blocks:
-# export RC_PLAN_GROUNDING=2
-{sentinel_end}
+export RC_PLAN_GROUNDING=1
+export RC_ORACLE_BLOCK=1
+export RC_RULE_ENGINE=1
+export RC_PROJECT_INDEX=1
+export S2_FAIL_CLOSED=1
+{_SENTINEL_END}
 """
+
+
+_ENFORCEMENT_BLOCK_STAGE2 = f"""{_SENTINEL_START}
+# Enabled via `rc enable-enforcement --hard`. Stage 2: copilot mode with hard
+# plan-grounding. Revert to Stage 1 with `rc enable-enforcement` or to advisory
+# with `rc disable-enforcement`.
+export RC_MODE=copilot
+export RC_SHADOW_MODE=0
+export RC_PLAN_BLOCK=1
+export RC_PLAN_GROUNDING=2
+export RC_ORACLE_BLOCK=1
+export RC_RULE_ENGINE=1
+export RC_PROJECT_INDEX=1
+export S2_FAIL_CLOSED=1
+{_SENTINEL_END}
+"""
+
+
+def _operator_authenticated() -> bool:
+    """Return True if the operator has authenticated for enforcement changes.
+
+    In order of preference:
+      1. RC_ENFORCEMENT_AUTH env var is set to a non-empty value (escape hatch
+         for headless / CI usage, not agent-controllable because agents should
+         not have access to the operator's shell secrets).
+      2. A TTY is attached (interactive human).
+      3. macOS keychain contains a stored reasoning-core enforcement token.
+    """
+    if os.environ.get("RC_ENFORCEMENT_AUTH"):
+        return True
+    if sys.stdin is not None and sys.stdin.isatty():
+        return True
+    # Best-effort macOS keychain check; failures fall back to deny.
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _update_envrc_local(project_dir: Path, hard: bool = False) -> Path:
+    """Idempotently write the reasoning-core enforcement block with fenced markers."""
+    envrc_local = project_dir / ".envrc.local"
+    block = _ENFORCEMENT_BLOCK_STAGE2 if hard else _ENFORCEMENT_BLOCK_STAGE1
     existing = ""
     if envrc_local.exists():
         existing = envrc_local.read_text(encoding="utf-8")
-        # Strip any previous reasoning-core enforcement block.
         import re
         pattern = re.compile(
-            rf"\n?{re.escape(sentinel_start)}.*?{re.escape(sentinel_end)}\n?",
+            rf"\n?{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}\n?",
             re.DOTALL,
         )
         existing = pattern.sub("\n", existing).strip("\n")
@@ -270,38 +392,80 @@ export RC_PLAN_BLOCK=1
     return envrc_local
 
 
-def cmd_enable_enforcement(_args: argparse.Namespace) -> int:
-    """First-run wizard: scaffold PLAN.md and flip repo to copilot mode."""
+def _remove_envrc_local_block(project_dir: Path) -> Path:
+    """Remove only the fenced reasoning-core enforcement block."""
+    envrc_local = project_dir / ".envrc.local"
+    if not envrc_local.exists():
+        return envrc_local
+    existing = envrc_local.read_text(encoding="utf-8")
+    import re
+    pattern = re.compile(
+        rf"\n?{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}\n?",
+        re.DOTALL,
+    )
+    cleaned = pattern.sub("\n", existing).strip("\n")
+    if cleaned:
+        envrc_local.write_text(cleaned + "\n", encoding="utf-8")
+    else:
+        envrc_local.unlink()
+    return envrc_local
+
+
+def cmd_enable_enforcement(args: argparse.Namespace) -> int:
+    """First-run wizard: flip repo to staged copilot mode after operator auth."""
     project_dir = _project_dir()
     if not project_dir.is_dir():
         sys.stderr.write(f"project directory does not exist: {project_dir}\n")
         return 1
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "hooks"))
-    try:
-        import _plan_scaffold as ps  # type: ignore  # noqa: E402
-    except Exception as exc:
-        sys.stderr.write(f"could not load plan scaffold helper: {exc}\n")
+    if not _operator_authenticated():
+        sys.stderr.write(
+            "rc enable-enforcement: operator authentication required.\n"
+            "Run from an interactive shell, set RC_ENFORCEMENT_AUTH, or store a\n"
+            "token in the macOS keychain with service 'reasoning-core-enforcement'.\n"
+        )
         return 1
 
-    plan_path = ps.maybe_scaffold_plan(str(project_dir))
-    envrc_local = _update_envrc_local(project_dir)
+    plan_path = project_dir / "PLAN.md"
+    if not plan_path.is_file():
+        sys.stderr.write(
+            f"rc enable-enforcement: {plan_path} does not exist.\n"
+            "Write a plan manually or run `rc init-plan` before enabling enforcement.\n"
+        )
+        return 1
+
+    envrc_local = _update_envrc_local(project_dir, hard=args.hard)
 
     sys.stdout.write("== reasoning-core enforcement enabled ==\n\n")
-    if plan_path:
-        sys.stdout.write(f"scaffolded plan: {plan_path}\n")
-    else:
-        sys.stdout.write(
-            "PLAN.md already exists or no README.md found; not scaffolding.\n"
-        )
-    sys.stdout.write(f"wrote enforcement config: {envrc_local}\n\n")
-    sys.stdout.write("modes:\n")
-    sys.stdout.write("  advise    (default) — log/warn only, never block\n")
-    sys.stdout.write("  copilot   — block on contract/oracle/rule failures\n")
-    sys.stdout.write("  autopilot — block + auto-repair within policy (opt-in)\n\n")
+    sys.stdout.write(f"plan: {plan_path}\n")
+    sys.stdout.write(f"wrote enforcement config: {envrc_local}\n")
+    stage = "Stage 2 (hard plan-grounding)" if args.hard else "Stage 1 (warn-only plan-grounding)"
+    sys.stdout.write(f"stage: {stage}\n\n")
     sys.stdout.write("next:\n")
     sys.stdout.write("  direnv reload      # or: source .envrc.local\n")
     sys.stdout.write("  rc status          # confirm RC_MODE=copilot\n")
+    return 0
+
+
+def cmd_disable_enforcement(_args: argparse.Namespace) -> int:
+    """Revert repo to advisory mode by removing the enforcement block."""
+    project_dir = _project_dir()
+    if not project_dir.is_dir():
+        sys.stderr.write(f"project directory does not exist: {project_dir}\n")
+        return 1
+
+    if not _operator_authenticated():
+        sys.stderr.write(
+            "rc disable-enforcement: operator authentication required.\n"
+        )
+        return 1
+
+    envrc_local = _remove_envrc_local_block(project_dir)
+    if envrc_local.exists():
+        sys.stdout.write(f"removed enforcement block from {envrc_local}\n")
+    else:
+        sys.stdout.write("no enforcement block found; nothing to remove\n")
+    sys.stdout.write("next: direnv reload  # or: source .envrc.local\n")
     return 0
 
 
@@ -498,7 +662,119 @@ def cmd_override_survival(args: argparse.Namespace) -> int:
 
 
 
+def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id: str) -> list[str]:
+    """Diff git working tree against gate_edit audit rows for the session.
+
+    Returns a list of file paths that were modified on disk but lack a
+    corresponding gate_edit audit row in the current session.
+    """
+    import datetime as _dt
+    import subprocess
+
+    project = Path(project_dir)
+    if not (project / ".git").exists():
+        return []
+
+    # Files changed on disk (relative to repo root).
+    r = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, cwd=str(project), timeout=30,
+    )
+    changed: set[str] = set()
+    if r.returncode == 0:
+        for line in r.stdout.splitlines():
+            line = line.rstrip("\r")
+            if line.startswith("?? "):
+                changed.add(line[3:].strip())
+            elif len(line) >= 4 and line[2] == " ":
+                changed.add(line[3:].strip())
+            elif len(line) >= 3 and line[1] in ("M", "A", "D", "R", "C", "U") and line[2] == " ":
+                changed.add(line[2:].strip().split(" -> ")[-1])
+
+    # Gated files from audit log in the current session.
+    gated: set[str] = set()
+    root = Path(audit_root)
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    day_dir = root / today
+    if day_dir.is_dir():
+        for log in day_dir.glob("*.jsonl"):
+            try:
+                for line in log.read_text(encoding="utf-8").splitlines():
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        continue
+                    if ev.get("session_id") == session_id and ev.get("decision") in (
+                        "allowed", "blocked", "warn", "shadow_blocked", "allowed_via_override",
+                    ):
+                        fp = ev.get("file_path")
+                        if isinstance(fp, str):
+                            gated.add(fp)
+            except OSError:
+                continue
+
+    return sorted(changed - gated)
+
+
+def cmd_reconcile(_args: argparse.Namespace) -> int:
+    """Post-session safety net: flag files written without a gate_edit call."""
+    project_dir = _project_dir()
+    if not project_dir.is_dir():
+        sys.stderr.write(f"project directory does not exist: {project_dir}\n")
+        return 1
+
+    sid = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("RC_SESSION_ID") or "default"
+    missing = _reconcile_missing_gate_events(str(project_dir), str(_audit_root()), sid)
+    if not missing:
+        sys.stdout.write("rc reconcile: all changed files have a gate_edit audit row.\n")
+        return 0
+    sys.stdout.write("rc reconcile: files changed without gate_edit audit row:\n")
+    for fp in missing:
+        sys.stdout.write(f"  {fp}\n")
+    return 1
+
+
 def cmd_audit_history(args: argparse.Namespace) -> int:
+    """Mine recent git history and print per-commit quality labels.
+
+    Labels commits as positive/negative based on whether they were followed
+    within 48 hours by a fix/revert/hotfix/patch touching the same files.
+    This is the feedback loop input for Phase-4 calibration.
+    """
+    project_dir = Path(args.project_dir) if args.project_dir else _project_dir()
+    if not project_dir.is_dir():
+        sys.stderr.write(f"project directory does not exist: {project_dir}\n")
+        return 1
+
+    try:
+        commits = _cm.mine(str(project_dir), n=args.n)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"could not mine commits: {exc}\n")
+        return 1
+
+    if not commits:
+        sys.stdout.write(f"no commits mined under {project_dir}\n")
+        return 0
+
+    if args.json:
+        sys.stdout.write(json.dumps([c.to_dict() for c in commits], indent=2) + "\n")
+        return 0
+
+    sys.stdout.write(f"{'label':<9} {'sha':<9} {'date':<20} {'files':>5} {'lines':>5}  {'message'}\n")
+    sys.stdout.write("-" * 80 + "\n")
+    for c in commits:
+        date_str = c.date.strftime("%Y-%m-%d %H:%M") if c.date else ""
+        msg = (c.message or "")[:50]
+        sys.stdout.write(
+            f"{c.label or 'unknown':<9} {c.sha[:7]:<9} {date_str:<20} "
+            f"{len(c.files):>5} {sum(c.diff_stat.values()):>5}  {msg}\n"
+        )
+        if args.reasons and c.label_reason:
+            sys.stdout.write(f"          reason: {c.label_reason}\n")
+    return 0
+
     """Mine recent git history and print per-commit quality labels.
 
     Labels commits as positive/negative based on whether they were followed
@@ -854,6 +1130,10 @@ def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    sub.add_parser(
+        "guard-hash",
+        help="verify guard files and enforcement config against stored hashes",
+    ).set_defaults(func=cmd_guard_hash)
     e = sub.add_parser("explain")
     e.add_argument("decision_id")
     e.set_defaults(func=cmd_explain)
@@ -861,9 +1141,14 @@ def main(argv: list | None = None) -> int:
     sub.add_parser("confirm-next").set_defaults(func=cmd_confirm_next)
     ee = sub.add_parser(
         "enable-enforcement",
-        help="scaffold PLAN.md and flip repo to copilot mode",
+        help="flip repo to copilot mode after operator authentication (requires PLAN.md)",
     )
+    ee.add_argument("--hard", action="store_true", help="enable Stage 2 hard plan-grounding")
     ee.set_defaults(func=cmd_enable_enforcement)
+    sub.add_parser(
+        "disable-enforcement",
+        help="revert repo to advisory mode by removing the enforcement block",
+    ).set_defaults(func=cmd_disable_enforcement)
     s = sub.add_parser("skip-file")
     s.add_argument("path")
     s.set_defaults(func=cmd_skip_file)
@@ -896,6 +1181,10 @@ def main(argv: list | None = None) -> int:
     os_cmd.add_argument("--days", type=int, default=30)
     os_cmd.add_argument("--audit-root", default=None)
     os_cmd.set_defaults(func=cmd_override_survival)
+    sub.add_parser(
+        "reconcile",
+        help="diff git working tree against gate_edit audit rows for this session",
+    ).set_defaults(func=cmd_reconcile)
     ah_cmd = sub.add_parser(
         "audit-history",
         help="mine recent git history and label commits for calibration feedback",

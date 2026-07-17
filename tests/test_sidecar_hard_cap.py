@@ -113,6 +113,7 @@ def _run_hook(payload: Dict[str, Any], *, env: Optional[Dict[str, str]] = None,
         "S2_FAIL_CLOSED", "S2_URL", "S2_TIMEOUT", "S2_HARD_CAP_MS",
         "RC_ALLOW_GUARD_EDIT", "RC_LANG_LOCK", "RC_STATE_DIR",
         "RC_BEST_EFFORT_SPEC", "RC_PLAN_GROUNDING", "RC_RUN_DIR",
+        "RC_MODE", "RC_ORACLE_BLOCK", "RC_ORACLE_T1", "RC_ORACLE_T2",
     ):
         real_env.pop(var, None)
     if env:
@@ -244,6 +245,9 @@ def test_hard_cap_symbolic_fallback_blocks_on_rule_violation(tmp_path):
                 "S2_HARD_CAP_MS": "500",
                 "RC_RULE_ENGINE": "1",
                 "RC_RULE_ENGINE_ALLOW_BASIC_YAML": "1",
+                "RC_ORACLE_BLOCK": "0",
+                "RC_ORACLE_T1": "0",
+                "RC_ORACLE_T2": "0",
                 "RC_PROJECT_DIR": str(tmp_path),
                 "RC_MODE": "copilot",
             },
@@ -279,6 +283,9 @@ def test_hard_cap_symbolic_fallback_advise_mode_warns(tmp_path):
                 "S2_HARD_CAP_MS": "500",
                 "RC_RULE_ENGINE": "1",
                 "RC_RULE_ENGINE_ALLOW_BASIC_YAML": "1",
+                "RC_ORACLE_BLOCK": "0",
+                "RC_ORACLE_T1": "0",
+                "RC_ORACLE_T2": "0",
                 "RC_PROJECT_DIR": str(tmp_path),
             },
             timeout=20.0,
