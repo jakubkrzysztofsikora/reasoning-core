@@ -41,8 +41,9 @@ def test_guard_hash_detects_tampering(fresh_rc_cli, tmp_path, monkeypatch):
 
     guard.write_text("# tampered", encoding="utf-8")
 
-    result = fresh_rc_cli._verify_guard_hash(str(guard))
-    assert result is False
+    ok, reason = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert ok is False
+    assert reason == "mismatch"
 
 
 def test_guard_hash_passes_intact(fresh_rc_cli, tmp_path, monkeypatch):
@@ -54,8 +55,9 @@ def test_guard_hash_passes_intact(fresh_rc_cli, tmp_path, monkeypatch):
 
     fresh_rc_cli._init_guard_hashes([str(guard)])
 
-    result = fresh_rc_cli._verify_guard_hash(str(guard))
-    assert result is True
+    ok, reason = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert ok is True
+    assert reason == "match"
 
 
 def test_guard_hash_returns_false_when_store_missing(fresh_rc_cli, tmp_path, monkeypatch):
@@ -66,8 +68,9 @@ def test_guard_hash_returns_false_when_store_missing(fresh_rc_cli, tmp_path, mon
     monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
 
     # No store file → must return False (TAMPERED)
-    result = fresh_rc_cli._verify_guard_hash(str(guard))
-    assert result is False
+    ok, reason = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert ok is False
+    assert reason == "store_missing"
 
 
 def test_guard_hash_returns_false_when_file_missing_from_store(fresh_rc_cli, tmp_path, monkeypatch):
@@ -81,8 +84,9 @@ def test_guard_hash_returns_false_when_file_missing_from_store(fresh_rc_cli, tmp
     store = state_dir / "guard_hashes.json"
     store.write_text("{}", encoding="utf-8")
 
-    result = fresh_rc_cli._verify_guard_hash(str(guard))
-    assert result is False
+    ok, reason = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert ok is False
+    assert reason == "not_registered"
 
 
 def test_guard_hash_returns_false_when_store_corrupt(fresh_rc_cli, tmp_path, monkeypatch):
@@ -95,8 +99,9 @@ def test_guard_hash_returns_false_when_store_corrupt(fresh_rc_cli, tmp_path, mon
     store = state_dir / "guard_hashes.json"
     store.write_text("not json", encoding="utf-8")
 
-    result = fresh_rc_cli._verify_guard_hash(str(guard))
-    assert result is False
+    ok, reason = fresh_rc_cli._verify_guard_hash(str(guard))
+    assert ok is False
+    assert reason == "store_corrupt"
 
 
 def test_guard_hash_returns_false_when_file_missing(fresh_rc_cli, tmp_path, monkeypatch):
@@ -107,8 +112,9 @@ def test_guard_hash_returns_false_when_file_missing(fresh_rc_cli, tmp_path, monk
     store = state_dir / "guard_hashes.json"
     store.write_text("{}", encoding="utf-8")
 
-    result = fresh_rc_cli._verify_guard_hash(str(tmp_path / "nonexistent.py"))
-    assert result is False
+    ok, reason = fresh_rc_cli._verify_guard_hash(str(tmp_path / "nonexistent.py"))
+    assert ok is False
+    assert reason == "missing_file"
 
 
 def test_init_warns_on_corrupt_store_and_backs_up(fresh_rc_cli, tmp_path, monkeypatch):

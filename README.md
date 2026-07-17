@@ -49,7 +49,8 @@ execution-grounded oracles on it (`py_compile`, `ruff`, `ast.parse`, your
 block the change before it lands if it drifts off-plan, invents a helper you
 already have, or violates a coupling/coherence threshold. One sidecar, six
 CLIs (Claude Code, OpenAI Codex, Gemini, Moonshot Kimi, GitHub Copilot,
-Mistral Vibe), zero network calls.
+Mistral Vibe). At runtime the sidecar binds to loopback only; no telemetry,
+no cloud relay, no ongoing network calls.
 
 ## Quick start
 
@@ -102,9 +103,12 @@ not the gate's guesses.
 The default scoring vector is always-on: `cyclomatic`, `fan_in`, `fan_out`,
 `depth`, `churn`, `coupling`, `cohesion`, `novelty`. Three additional optional
 dimensions (`session_centroid_drift`, `project_fan_in`, `project_coupling`) are
-available only when a session baseline is registered and `RC_PROJECT_INDEX=1`
-is set; they are not enabled by default. All dimensions are scored in [0, 1]
-with a chord-distance `coherence_delta` on [0, 2].
+emitted only when **both** conditions are met: a session baseline is registered
+(via the sidecar's `/baseline` endpoint) **and** the hook passes `session_id` to
+`/score`. The shipped `.envrc` sets `RC_PROJECT_INDEX=1` by default, but the
+session-baseline path is rarely hit in practice — so the 8-dim vector is what
+production edits get. All dimensions are scored in [0, 1] with a chord-distance
+`coherence_delta` on [0, 2].
 
 **Decision-ID footer on every block** — `exit-2` blocks always end with
 `Decision ID: <hex>` and an `rc explain` / `rc bypass-next` follow-up so the

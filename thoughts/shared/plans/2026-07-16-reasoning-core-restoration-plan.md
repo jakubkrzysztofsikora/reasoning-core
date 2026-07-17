@@ -22,7 +22,7 @@ supersedes: thoughts/shared/plans/2026-07-09-reasoning-core-game-changer-upgrade
 |---|---|---|
 | Phase 0 — Honesty, wiring, guard integrity | **Done** | README honest defaults, authenticated `rc enable/disable-enforcement` with fenced markers, `rc guard-hash` (no trust-on-first-use), `rc reconcile`, test quarantine |
 | Phase 1 — Make copilot fire safely | **Done** | Plan-to-contract compiler (already in `_plan_contract.py`), staged profile (Stage 1 warn, Stage 2 hard), block UX, staged enforcement pilot tests |
-| Phase 2 — Falsifiable evaluation | **Protocol done, pilot done, full eval pending** | `docs/EVAL_PROTOCOL.md` with pre-registered primary endpoint, n=5 local pilot with operational kill criteria |
+| Phase 2 — Falsifiable evaluation | **Protocol done, n=5 sub-pilot done, full n=100 eval pending** | `docs/EVAL_PROTOCOL.md` with pre-registered primary endpoint, n=5 sub-pilot (operational smoke test, not the protocol's n=20 per arm) with operational kill criteria |
 | Phase 3 — Post-decision hardening | **Partial** | Stop hook reconcile integration (`stop_reconcile.py`) for MCP-skip detection; optional integrations (Langfuse, Guardrails, Aider) deferred until funded |
 
 ## Remaining work

@@ -99,6 +99,38 @@ def _parse_reconcile_output(stdout: str) -> list[str]:
     return []
 
 
+def _resolve_rc_mode(project_dir: str) -> str:
+    """Resolve RC_MODE from env, falling back to the project's .envrc.local.
+
+    Claude Code spawns hooks in subshells where direnv may not have loaded.
+    Read the .envrc.local block directly so the copilot block written by
+    `rc enable-enforcement` is honored at hook time.
+    """
+    mode = os.environ.get("RC_MODE", "").strip().lower()
+    if mode:
+        return mode
+    envrc_local = Path(project_dir) / ".envrc.local"
+    if not envrc_local.is_file():
+        return "advise"
+    try:
+        text = envrc_local.read_text(encoding="utf-8")
+    except OSError:
+        return "advise"
+    import re
+    # Look for RC_MODE=copilot or RC_MODE=advise inside the fenced block
+    block_match = re.search(
+        r"# >>> rc enforcement >>>(.*?)# <<< rc enforcement <<<",
+        text, re.DOTALL,
+    )
+    if not block_match:
+        return "advise"
+    block = block_match.group(1)
+    m = re.search(r"^export\s+RC_MODE=(\w+)", block, re.MULTILINE)
+    if m:
+        return m.group(1).lower()
+    return "advise"
+
+
 def main() -> None:
     payload = _read_payload()
 
@@ -108,7 +140,7 @@ def main() -> None:
         sys.exit(0)
 
     project_dir = _project_dir(payload)
-    rc_mode = os.environ.get("RC_MODE", "advise").strip().lower()
+    rc_mode = _resolve_rc_mode(project_dir)
 
     rc, stdout, stderr = _run_rc_reconcile(project_dir)
     missing = _parse_reconcile_output(stdout)
@@ -121,7 +153,17 @@ def main() -> None:
         sys.exit(0)
 
     if rc not in (0, 1):
-        # Infrastructure error — log to stderr, exit 0
+        # Infrastructure error (missing git, missing audit root, etc.)
+        if rc_mode in ("copilot", "autopilot"):
+            # Copilot mode: fail closed — refuse to approve session end
+            # when verification infrastructure is unavailable.
+            sys.stderr.write(
+                f"[reasoning-core] reconcile infrastructure unavailable "
+                f"(rc={rc}); cannot verify MCP-skip. Refusing session end "
+                f"in copilot mode.\n"
+            )
+            sys.exit(2)
+        # Advisory: log only
         sys.stderr.write(f"[reasoning-core] reconcile error: {stderr.strip()}\n")
         sys.exit(0)
 
@@ -131,17 +173,16 @@ def main() -> None:
         summary += f" (+{len(missing) - 5} more)"
 
     if rc_mode in ("copilot", "autopilot"):
-        # In copilot mode, block the session end with structured JSON
-        decision = {
-            "decision": "block",
-            "reason": (
-                f"MCP-SKIP DETECTED: {summary}. "
-                f"All file writes must go through gate_edit. "
-                f"Do not bypass."
-            ),
-        }
-        sys.stdout.write(json.dumps(decision) + "\n")
-        sys.stderr.write(f"[reasoning-core] {decision['reason']}\n")
+        # In copilot mode, block the session end.
+        # Claude Code Stop hook protocol: on exit code 2, the JSON decision
+        # on stdout is ignored; only stderr is fed back to the model.
+        # So we exit 2 with a clean stderr message and emit nothing to stdout.
+        msg = (
+            f"MCP-SKIP DETECTED: {summary}. "
+            f"All file writes must go through gate_edit. "
+            f"Do not bypass."
+        )
+        sys.stderr.write(f"[reasoning-core] {msg}\n")
         sys.exit(2)
     else:
         # Advisory: log to stderr only (operator sees it)

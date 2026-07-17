@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -125,39 +126,33 @@ def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> 
     return (0, warnings)
 
 
-def _verify_guard_hash(file_path: str, store_path: str | None = None) -> bool:
+def _verify_guard_hash(file_path: str, store_path: str | None = None) -> tuple[bool, str]:
     """Verify a guard file against a stored SHA-256 hash.
 
-    Returns True when the file matches a pre-registered hash. Missing entries
-    or corrupt stores return False (TAMPERED). Use `rc guard-hash --init`
-    to register hashes for the first time.
+    Returns (ok, reason):
+      - (True, "match") when verified
+      - (False, "missing_file") when guard file absent
+      - (False, "store_missing") when no store file
+      - (False, "store_corrupt") when store unreadable or not a dict
+      - (False, "not_registered") when file is not in store
+      - (False, "mismatch") when hash differs
+
+    Use `rc guard-hash --init` (operator-authenticated) to register hashes.
     """
-    path = Path(file_path).resolve()
-    if not path.is_file():
-        return False
-    store = Path(store_path) if store_path else _guard_hash_store_path()
-    if not store.is_file():
-        return False
-    try:
-        records = json.loads(store.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(records, dict):
-        return False
-    key = str(path)
-    if key not in records:
-        return False
-    current_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-    return records[key] == current_hash
+    from rc_verify_guard import _verify as _verify_standalone
+    return _verify_standalone(file_path, Path(store_path) if store_path else None)
 
 
 def cmd_guard_hash(args: argparse.Namespace) -> int:
     """Verify guard files and the enforcement config against stored hashes.
 
-    Excludes `rc_cli.py` itself from its own guard list to avoid the
-    self-referential chicken-and-egg problem where editing the CLI flags
-    the CLI as TAMPERED and the only fix is to re-init via the very CLI
-    being edited.
+    Includes `rc_cli.py` itself (no self-exclusion) to prevent the
+    self-referential backdoor where an attacker who edits `rc_cli.py`
+    can rewrite `_operator_authenticated` to always return True.
+
+    The actual hash comparison is delegated to `rc_verify_guard.py`,
+    which has no dependency on this CLI module — so tampering with
+    `rc_cli.py` cannot bypass the verify path.
     """
     project_dir = _project_dir()
     repo_root = Path(__file__).resolve().parent.parent
@@ -169,6 +164,7 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
         repo_root / "src" / "hooks" / "_magic_comments.py",
         repo_root / "src" / "hooks" / "_rule_engine.py",
         repo_root / "src" / "hooks" / "audit_log.py",
+        repo_root / "src" / "rc_cli.py",
     ]
     envrc_local = project_dir / ".envrc.local"
     plan_md = project_dir / "PLAN.md"
@@ -196,30 +192,60 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
         )
         return 2
 
-    all_ok = True
+    # Delegate the actual comparison to rc_verify_guard.py to avoid the
+    # self-referential backdoor where tampering with rc_cli.py could
+    # bypass _verify_guard_hash logic in this file.
+    verify_script = repo_root / "src" / "rc_verify_guard.py"
+    if not verify_script.is_file():
+        sys.stderr.write(f"verifier missing at {verify_script}\n")
+        return 2
+    proc = subprocess.run(
+        [sys.executable, str(verify_script), "--store", str(store)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+
+    # Also check the envrc.local and PLAN.md (these are project-specific
+    # and not in the verifier's hardcoded list)
+    all_ok = proc.returncode == 0
     sys.stdout.write("== reasoning-core guard-hash ==\n")
-    for guard in guard_files:
-        ok = _verify_guard_hash(str(guard), str(store))
-        status = "ok" if ok else "TAMPERED"
-        sys.stdout.write(f"  {status:<10} {guard}\n")
-        if not ok:
-            all_ok = False
     for extra in (envrc_local, plan_md):
         if extra.is_file():
-            ok = _verify_guard_hash(str(extra), str(store))
-            status = "ok" if ok else "TAMPERED"
-            sys.stdout.write(f"  {status:<10} {extra}\n")
+            ok, reason = _verify_guard_hash_standalone(str(extra), str(store))
+            status_label = "ok" if ok else f"TAMPERED ({reason})"
+            sys.stdout.write(f"  {status_label:<25} {extra}\n")
             if not ok:
                 all_ok = False
+
     if all_ok:
         sys.stdout.write("\nall guard files match stored hashes\n")
         return 0
     sys.stderr.write("\nTAMPERING DETECTED: one or more guard files/config changed.\n")
     try:
         audit_log.record_block(None)
-    except Exception:
-        pass
+    except OSError as exc:
+        sys.stderr.write(
+            f"  CRITICAL: tamper detected but audit log write failed: {exc}\n"
+        )
+    except Exception as exc:
+        sys.stderr.write(
+            f"  CRITICAL: tamper detected but audit log write raised "
+            f"{type(exc).__name__}: {exc}\n"
+        )
     return 2
+
+
+def _verify_guard_hash_standalone(file_path: str, store_path: str) -> tuple[bool, str]:
+    """Inline minimal verifier for project-local files (envrc, PLAN.md).
+
+    Returns (ok, reason). Used by cmd_guard_hash for files outside the
+    hardcoded verifier list.
+    """
+    from rc_verify_guard import _verify
+    return _verify(file_path, Path(store_path))
 
 
 def _print_kv(k: str, v: str) -> None:
@@ -403,71 +429,145 @@ def _project_dir() -> Path:
 
 _SENTINEL_START = "# >>> rc enforcement >>>"
 _SENTINEL_END = "# <<< rc enforcement <<<"
+_SENTINEL_RE = re.compile(
+    rf"\n?{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}\n?",
+    re.DOTALL,
+)
 
 
-_ENFORCEMENT_BLOCK_STAGE1 = f"""{_SENTINEL_START}
-# Enabled via `rc enable-enforcement`. Stage 1: copilot mode with warn-only
-# plan-grounding. Promote to Stage 2 (hard plan-grounding) with `rc enable-enforcement --hard`.
-export RC_MODE=copilot
-export RC_SHADOW_MODE=0
-export RC_PLAN_BLOCK=1
-export RC_PLAN_GROUNDING=1
-export RC_ORACLE_BLOCK=1
-export RC_RULE_ENGINE=1
-export RC_PROJECT_INDEX=1
-export S2_FAIL_CLOSED=1
-{_SENTINEL_END}
-"""
+def _enforcement_block(hard: bool = False) -> str:
+    """Build the fenced enforcement block for the requested stage.
+
+    Stage 1 (hard=False): copilot mode with warn-only plan-grounding.
+    Stage 2 (hard=True): copilot mode with hard plan-grounding block.
+    """
+    plan_grounding = "2" if hard else "1"
+    stage_label = "Stage 2 (hard plan-grounding)" if hard else "Stage 1 (warn-only plan-grounding)"
+    block_name = "stage2" if hard else "stage1"
+    return (
+        f"{_SENTINEL_START}\n"
+        f"# Enabled via `rc enable-enforcement{' --hard' if hard else ''}`. "
+        f"{stage_label}. Revert with `rc disable-enforcement`.\n"
+        f"export RC_MODE=copilot\n"
+        f"export RC_SHADOW_MODE=0\n"
+        f"export RC_PLAN_BLOCK=1\n"
+        f"export RC_PLAN_GROUNDING={plan_grounding}\n"
+        f"export RC_ORACLE_BLOCK=1\n"
+        f"export RC_RULE_ENGINE=1\n"
+        f"export RC_PROJECT_INDEX=1\n"
+        f"export S2_FAIL_CLOSED=1\n"
+        f"{_SENTINEL_END}\n"
+    )
 
 
-_ENFORCEMENT_BLOCK_STAGE2 = f"""{_SENTINEL_START}
-# Enabled via `rc enable-enforcement --hard`. Stage 2: copilot mode with hard
-# plan-grounding. Revert to Stage 1 with `rc enable-enforcement` or to advisory
-# with `rc disable-enforcement`.
-export RC_MODE=copilot
-export RC_SHADOW_MODE=0
-export RC_PLAN_BLOCK=1
-export RC_PLAN_GROUNDING=2
-export RC_ORACLE_BLOCK=1
-export RC_RULE_ENGINE=1
-export RC_PROJECT_INDEX=1
-export S2_FAIL_CLOSED=1
-{_SENTINEL_END}
-"""
+_ENFORCEMENT_BLOCK_STAGE1 = _enforcement_block(hard=False)
+_ENFORCEMENT_BLOCK_STAGE2 = _enforcement_block(hard=True)
 
 
 _AUTH_MIN_TOKEN_LEN = 16
+_AUTH_TOKEN_FILE = Path(os.environ.get(
+    "RC_AUTH_TOKEN_FILE",
+    os.path.expanduser("~/.local/state/reasoning-core/auth_token"),
+))
+
+
+def _read_auth_token_from_file() -> str | None:
+    """Read stored auth token from the platform-appropriate secret store.
+
+    Order:
+      1. macOS keychain via `security find-generic-password`.
+      2. Token file at `RC_AUTH_TOKEN_FILE` (Linux/CI fallback).
+
+    Returns the stored token, or None if no backend is available or read failed.
+    """
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except FileNotFoundError:
+        pass  # macOS-only binary absent on Linux/Windows
+    except Exception:
+        pass
+
+    if _AUTH_TOKEN_FILE.is_file():
+        try:
+            return _AUTH_TOKEN_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+    return None
 
 
 def _operator_authenticated() -> bool:
     """Return True if the operator has authenticated for enforcement changes.
 
     Authentication requires one of:
-      1. `RC_ENFORCEMENT_TOKEN` env var matches the keychain-stored token
+      1. `RC_ENFORCEMENT_TOKEN` env var matches the stored token
          (compared in constant time). This is the cross-platform escape hatch
          for headless / CI usage. The env var must be ≥16 chars.
-      2. macOS keychain contains a stored reasoning-core enforcement token
-         (best-effort; failures fall back to deny).
+      2. macOS keychain contains a stored reasoning-core enforcement token.
+      3. Linux/Windows fallback: token file at `RC_AUTH_TOKEN_FILE` (default
+         `~/.local/state/reasoning-core/auth_token`).
 
     TTY presence is NOT sufficient — the agent can allocate a pty.
     Just having `RC_ENFORCEMENT_TOKEN` set to any non-empty string is NOT
     sufficient — an agent can set env vars in its own shell. The token must
-    match the operator's stored secret.
+    match the stored secret.
+
+    Run `rc auth-bootstrap` to seed the token file on Linux/Windows.
     """
     token = os.environ.get("RC_ENFORCEMENT_TOKEN", "")
     if len(token) >= _AUTH_MIN_TOKEN_LEN:
+        stored = _read_auth_token_from_file()
+        if stored is not None and _constant_time_eq(token, stored):
+            return True
+    return False
+
+
+def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
+    """Generate and store a fresh enforcement token.
+
+    Writes the token to the platform-appropriate secret store and prints
+    it once on stdout. The operator must copy it into `RC_ENFORCEMENT_TOKEN`
+    or use it in a CI secret.
+
+    macOS: stores in keychain via `security add-generic-password`.
+    Linux/Windows: writes to `RC_AUTH_TOKEN_FILE` with 0600 permissions.
+    """
+    import secrets
+    token = secrets.token_urlsafe(32)
+
+    if sys.platform == "darwin":
         try:
             r = subprocess.run(
-                ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
+                ["security", "add-generic-password",
+                 "-s", "reasoning-core-enforcement",
+                 "-a", os.environ.get("USER", ""),
+                 "-w", token,
+                 "-U"],
                 capture_output=True, text=True, timeout=5,
             )
-            if r.returncode == 0 and r.stdout.strip():
-                stored = r.stdout.strip()
-                if _constant_time_eq(token, stored):
-                    return True
-        except Exception:
-            pass
-    return False
+            if r.returncode == 0:
+                sys.stdout.write(f"token stored in keychain for user {os.environ.get('USER','')}\n")
+                sys.stdout.write(f"token (copy now, won't be shown again): {token}\n")
+                return 0
+            sys.stderr.write(f"keychain add failed: {r.stderr}\n")
+        except Exception as exc:
+            sys.stderr.write(f"keychain add failed: {exc}\n")
+
+    # Linux/Windows fallback
+    try:
+        _AUTH_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(_AUTH_TOKEN_FILE, token + "\n")
+        os.chmod(_AUTH_TOKEN_FILE, 0o600)
+        sys.stdout.write(f"token stored in {_AUTH_TOKEN_FILE} (mode 0600)\n")
+        sys.stdout.write(f"token (copy now, won't be shown again): {token}\n")
+        return 0
+    except OSError as exc:
+        sys.stderr.write(f"failed to write token file: {exc}\n")
+        return 1
 
 
 def _constant_time_eq(a: str, b: str) -> bool:
@@ -523,12 +623,7 @@ def _update_envrc_local(project_dir: Path, hard: bool = False) -> Path:
     existing = ""
     if envrc_local.is_file() and not envrc_local.is_symlink():
         existing = envrc_local.read_text(encoding="utf-8")
-        import re
-        pattern = re.compile(
-            rf"\n?{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}\n?",
-            re.DOTALL,
-        )
-        existing = pattern.sub("\n", existing).strip("\n")
+        existing = _SENTINEL_RE.sub("\n", existing).strip("\n")
         if existing:
             existing += "\n"
     _atomic_write_text(envrc_local, existing + block)
@@ -552,13 +647,8 @@ def _remove_envrc_local_block(project_dir: Path) -> tuple[Path, bool]:
     if not envrc_local.is_file() or envrc_local.is_symlink():
         return (envrc_local, False)
     existing = envrc_local.read_text(encoding="utf-8")
-    import re
-    pattern = re.compile(
-        rf"\n?{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}\n?",
-        re.DOTALL,
-    )
     had_block = _SENTINEL_START in existing
-    cleaned = pattern.sub("\n", existing).strip("\n")
+    cleaned = _SENTINEL_RE.sub("\n", existing).strip("\n")
     if cleaned:
         _atomic_write_text(envrc_local, cleaned + "\n")
     else:
@@ -890,11 +980,27 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
                             fp = ev.get("file_path")
                             if isinstance(fp, str) and fp:
                                 fp_path = Path(fp)
+                                # Normalise to repo-relative. If fp is
+                                # absolute but not under repo_root, try
+                                # resolving via the symlink-resolved path
+                                # or fall back to the literal fp with a
+                                # warning.
                                 if fp_path.is_absolute():
                                     try:
                                         fp = str(fp_path.relative_to(repo_root_path))
                                     except ValueError:
-                                        pass
+                                        # Try resolving symlinks in repo_root
+                                        try:
+                                            fp = str(
+                                                fp_path.resolve().relative_to(
+                                                    repo_root_path.resolve()
+                                                )
+                                            )
+                                        except ValueError:
+                                            # Fall back: compare on basename
+                                            # so we don't miss-file the entry.
+                                            gated.add(fp_path.name)
+                                            continue
                                 gated.add(fp)
             except OSError:
                 continue
@@ -1302,6 +1408,10 @@ def main(argv: list | None = None) -> int:
         "disable-enforcement",
         help="revert repo to advisory mode by removing the enforcement block",
     ).set_defaults(func=cmd_disable_enforcement)
+    sub.add_parser(
+        "auth-bootstrap",
+        help="generate and store a fresh enforcement token (macOS keychain or token file)",
+    ).set_defaults(func=cmd_auth_bootstrap)
     s = sub.add_parser("skip-file")
     s.add_argument("path")
     s.set_defaults(func=cmd_skip_file)

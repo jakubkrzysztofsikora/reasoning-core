@@ -60,18 +60,18 @@ def test_stop_hook_advisory_when_mcp_skip(tmp_path):
     assert "MCP-skip" in proc.stderr or "advisory" in proc.stderr.lower()
 
 
-def test_stop_hook_copilot_emits_json_block(tmp_path):
+def test_stop_hook_copilot_emits_block_with_stderr(tmp_path):
     project = tmp_path / "repo"
     _init_repo(project)
     (project / "orphan.py").write_text("print('hi')", encoding="utf-8")
 
     proc = _run_hook(project, {"RC_MODE": "copilot", "RC_SESSION_ID": "test"})
-    # Copilot mode: exit 2 with structured JSON decision on stdout
+    # Copilot mode: exit 2 with stderr message; stdout must be empty
+    # (Claude Code Stop hook protocol: on exit 2, JSON stdout is ignored)
     assert proc.returncode == 2, proc.stderr
-    decision = json.loads(proc.stdout.strip())
-    assert decision["decision"] == "block"
-    assert "MCP-SKIP" in decision["reason"]
-    assert "orphan.py" in decision["reason"]
+    assert proc.stdout.strip() == "", f"stdout should be empty on exit 2, got: {proc.stdout!r}"
+    assert "MCP-SKIP" in proc.stderr
+    assert "orphan.py" in proc.stderr
 
 
 def test_stop_hook_stop_hook_active_approves(tmp_path):
