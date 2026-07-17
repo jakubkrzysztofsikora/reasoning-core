@@ -1,6 +1,6 @@
 ---
 date: 2026-07-16
-status: draft — adversarially reviewed, revision 1
+status: Phases 0-3 implemented; full n=100 eval pending
 author: reasoning-core analysis swarm
 adversarial_review:
   - 2026-07-16 — adversarial reviewer (claude-fable-5), verdict "FIX-FIRST"
@@ -8,10 +8,32 @@ adversarial_review:
   - 2026-07-16 — skeptical researcher, verdict "not falsifiable without fixes"
   - 2026-07-16 — security adversary, verdict "guard integrity missing"
   - 2026-07-16 — similar-tools research (Aider, CodeGate, Guardrails, OPA, pyan3, Langfuse, SWE-bench)
+  - 2026-07-16 — Phase 0 security review (BLOCKER: guard-hash auto-register, operator auth, reconcile path)
+  - 2026-07-16 — Phase 0 QA review (BLOCKER: env leak, in-plan test assertion, audit assertions)
+  - 2026-07-16 — Phase 1 QA review (BLOCKER: env scrubbing, plan format, audit assertions)
 supersedes: thoughts/shared/plans/2026-07-09-reasoning-core-game-changer-upgrade.md
 ---
 
 # reasoning-core Restoration Plan — From Shadow Tripwire to Structural Copilot (Rev 1)
+
+## Implementation status (as of 2026-07-16)
+
+| Phase | Status | Key deliverables |
+|---|---|---|
+| Phase 0 — Honesty, wiring, guard integrity | **Done** | README honest defaults, authenticated `rc enable/disable-enforcement` with fenced markers, `rc guard-hash` (no trust-on-first-use), `rc reconcile`, test quarantine |
+| Phase 1 — Make copilot fire safely | **Done** | Plan-to-contract compiler (already in `_plan_contract.py`), staged profile (Stage 1 warn, Stage 2 hard), block UX, staged enforcement pilot tests |
+| Phase 2 — Falsifiable evaluation | **Protocol done, pilot done, full eval pending** | `docs/EVAL_PROTOCOL.md` with pre-registered primary endpoint, n=5 local pilot with operational kill criteria |
+| Phase 3 — Post-decision hardening | **Partial** | Stop hook reconcile integration (`stop_reconcile.py`) for MCP-skip detection; optional integrations (Langfuse, Guardrails, Aider) deferred until funded |
+
+## Remaining work
+
+1. **Run the full n=100 SWE-bench Verified eval** per `docs/EVAL_PROTOCOL.md` §7. Requires the pilot to pass acceptance criteria first.
+2. **Label training set** (10 examples per label) and train the two labelers.
+3. **Wire `rc reconcile` as a mandatory pre-commit hook** in copilot mode (currently it's a Stop hook; pre-commit is optional and bypassable).
+4. **Expand guard-hash coverage** to include `_kill_switches.py`, `_magic_comments.py`, `_guard_paths.py`, `_rule_engine.py`, `audit_log.py`.
+5. **HMAC-protect the guard-hash store** against tampering by a same-user attacker.
+6. **Implement `rc init-plan`** to scaffold a `PLAN.md` template (currently the error message references it but it doesn't exist).
+7. **Update `docs/HARDENING.md`** to reflect the new authenticated enable/disable, fenced markers, and guard-hash flow.
 
 ## Executive summary
 
