@@ -49,13 +49,11 @@ portalocker>=2.7
 # with a single warn-once line at boot.
 psutil>=5.9
 
-# --- GGUF backend for codestral-mamba (RC_EMBEDDER=codestral-mamba-gguf).
-# Loads quantized Mamba weights via llama.cpp — keeps Codestral's code
-# pretraining at a fraction of the RAM (~2.5 GB Q2_K vs ~14 GB fp16 HF).
-# Optional at runtime: ImportError falls back to the HF transformers
-# path silently, so the dep is only mandatory if you actually select
-# the gguf backend. Builds a C++ extension on install — first install
-# is slow on macOS without prebuilt wheels.
+# --- Optional: llama.cpp backend for codestral-mamba-gguf.
+# Not used by default (default is mamba-130m via transformers).
+# Only required if you explicitly select the GGUF backend.
+# Builds a C++ extension on install — first install is slow on macOS
+# without prebuilt wheels.
 llama-cpp-python>=0.2.90
 
 # --- Rule engine: PyYAML is required (see src/hooks/_rule_engine.py).

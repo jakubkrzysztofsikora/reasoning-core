@@ -11,9 +11,13 @@
 </p>
 
 <p align="center">
-  Block AI edits that drift off-plan, import what's banned, or break invariants — before they hit disk.
+  Audit and warn on AI edits that drift off-plan, import what's banned, or break invariants — before they hit disk.
   <br/>
-  Loopback only. No telemetry. No cloud relay.
+  Opt-in enforcement mode can block these edits.
+  <br/>
+  At runtime: loopback-only sidecar, no telemetry, no cloud relay.
+  <br/>
+  One-time model download from HuggingFace is required for the default SSM embedder.
 </p>
 
 <p align="center">
@@ -40,11 +44,13 @@
 
 A local scorer reads every Edit / Write an AI coding agent proposes, runs cheap
 execution-grounded oracles on it (`py_compile`, `ruff`, `ast.parse`, your
-`.reasoning-core/rules.yaml`), scores it against an 11-dim risk vector, and
-**blocks the change before it lands** if it drifts off-plan, invents a helper
-you already have, or violates a coupling/coherence threshold. One sidecar, six
+`.reasoning-core/rules.yaml`), and scores it against an 8-dim risk vector. In the
+**default advisory mode** it warns and audits; in **opt-in copilot mode** it can
+block the change before it lands if it drifts off-plan, invents a helper you
+already have, or violates a coupling/coherence threshold. One sidecar, six
 CLIs (Claude Code, OpenAI Codex, Gemini, Moonshot Kimi, GitHub Copilot,
-Mistral Vibe), zero network calls.
+Mistral Vibe). At runtime the sidecar binds to loopback only; no telemetry,
+no cloud relay, no ongoing network calls.
 
 ## Quick start
 
@@ -92,12 +98,16 @@ not the gate's guesses.
 - `ast.parse` — semantic parse smoke test
 - `.reasoning-core/rules.yaml` — your project's `forbid_import` / `forbid_pattern` list
 
-**Neural risk vector — 11 dims per edit**
+**Neural risk vector — 8 dims per edit**
 
-8 always-on: `cyclomatic`, `fan_in`, `fan_out`, `depth`, `churn`, `coupling`,
-`cohesion`, `novelty`. Plus 3 conditional: `session_centroid_drift` (when a
-session baseline is registered), `project_fan_in` / `project_coupling` (when
-`RC_PROJECT_INDEX=1`). All 11 are scored in [0, 1] with a chord-distance
+The default scoring vector is always-on: `cyclomatic`, `fan_in`, `fan_out`,
+`depth`, `churn`, `coupling`, `cohesion`, `novelty`. Three additional optional
+dimensions (`session_centroid_drift`, `project_fan_in`, `project_coupling`) are
+emitted only when **both** conditions are met: a session baseline is registered
+(via the sidecar's `/baseline` endpoint) **and** the hook passes `session_id` to
+`/score`. The shipped `.envrc` sets `RC_PROJECT_INDEX=1` by default, but the
+session-baseline path is rarely hit in practice — so the 8-dim vector is what
+production edits get. All dimensions are scored in [0, 1] with a chord-distance
 `coherence_delta` on [0, 2].
 
 **Decision-ID footer on every block** — `exit-2` blocks always end with
@@ -127,8 +137,10 @@ your machine.
 
 ## Configure
 
-Defaults installed by `install.sh` are honest-opt-in — gate warns and audits,
-never blocks:
+Defaults installed by `install.sh` are honest-opt-in — the gate warns and audits,
+never blocks. Enforcement is opt-in via `rc enable-enforcement` and requires an
+authenticated operator action. See [`docs/HARDENING.md`](docs/HARDENING.md) for
+the guard-integrity model.
 
 ```bash
 export RC_MODE=advise              # advise | copilot | autopilot
@@ -139,7 +151,7 @@ export RC_RULE_ENGINE=1            # enforce .reasoning-core/rules.yaml
 ```
 
 Per-machine overrides → `.envrc.local` (gitignored). Run `rc enable-enforcement`
-after ~48 h of shadow review to scaffold `PLAN.md` and promote to
+after ~48 h of shadow review and manually authoring a `PLAN.md` to promote to
 `RC_MODE=copilot`. Full env-var table: [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
 ## `rc` CLI
@@ -149,7 +161,12 @@ rc status                   # sidecar health + threshold posture
 rc explain <decision-id>    # why the last edit was blocked
 rc bypass-next              # arm one bypass for the next Edit/Write
 rc confirm-next             # audit ground-truth (operator_confirmed event)
-rc enable-enforcement       # scaffold PLAN.md and flip to copilot mode
+rc enable-enforcement       # flip repo to copilot mode (authenticated; requires PLAN.md)
+rc disable-enforcement      # revert to advisory mode
+rc auth-bootstrap           # generate + store enforcement token (Linux/macOS)
+rc label <decision-id>      # label an audit decision (builds the eval training set)
+rc label --random           # pick one unlabeled decision and label it
+rc label-stats              # progress toward the 10-per-label training target
 rc benchmark                # Markdown report from your local audit log
 rc reasoning-efficiency     # composite north-star metric from the audit log
 rc audit-history            # label commits negative if followed by fix/revert
@@ -186,7 +203,8 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 Spec first ([`docs/PLAN.md`](docs/PLAN.md)). Self-verify before pushing:
 
 ```bash
-pytest -m "not live"                          # offline gate
+pytest -m "not live and not slow"         # fast offline gate
+pytest -m "slow" --timeout=600            # slow suite (SSM sidecar)
 bash -n scripts/*.sh install.sh uninstall.sh  # syntax check
 python3 -c "import json; json.load(open('.claude/settings.json'))"
 ```

@@ -10,11 +10,18 @@ Backends (selected via ``RC_EMBEDDER`` env):
     mamba-130m       -- default. state-spaces/mamba-130m-hf (Pile-LM, ~250 MB).
     codestral-mamba  -- opt-in. mistralai/Mamba-Codestral-7B-v0.1 (Apache 2.0,
                        code-pretrained Mamba-2, 256K context cap -> 8192,
-                       ~14 GB fp16 / ~28 GB fp32). fp16 by default; see
-                       ``RC_EMBEDDER_DTYPE``.
+                       ~14 GB fp16 / ~28 GB fp32). Requires a 40-char SHA pin
+                       via ``RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION``
+                       and a CUDA host with ``mamba-ssm`` installed; CPU-only
+                       naive fallback is unusably slow for the 7B model.
+                       See ``RC_EMBEDDER_DTYPE`` for dtype control.
     bge-code         -- BAAI/bge-code-v1 (code-specialised transformer, ~4GB).
     unixcoder-base   -- microsoft/unixcoder-base (code transformer baseline).
     random-mamba     -- randomly-initialised Mamba-2 control for falsifiability.
+    codestral-mamba-gguf  -- opt-in llama.cpp Q2_K backend. Requires
+                       ``RC_CODESTRAL_GGUF_FILE`` and ``llama-cpp-python``.
+                       Deprecated for this host because the Q2_K file expands
+                       to ~35 GB at runtime under ``llama-cpp-python``.
 
 Dtype env (memory control):
     RC_EMBEDDER_DTYPE  -- float32 | float16 | bfloat16 | auto. Unset →
@@ -250,11 +257,12 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
         license="n/a",
         is_code_pretrained=False,
     ),
-    # Quantized Codestral-Mamba via llama.cpp / GGUF. Keeps the code
-    # pretraining at a fraction of the RAM (~2.5 GB for Q2_K vs ~14 GB
-    # for the fp16 HF weights). Loaded via llama-cpp-python, not HF
-    # transformers — see `_try_load_gguf_backend` and the dispatch in
-    # `embed()`. Default file is Q2_K; override with `RC_CODESTRAL_GGUF_FILE`.
+    # Quantized Codestral-Mamba via llama.cpp / GGUF. The Q2_K file is small
+    # (~2.5 GB on disk) but llama-cpp-python expands it to ~35 GB resident at
+    # runtime on this host, so this backend is deprecated for Mac-Studio CPU
+    # use. Loaded via llama-cpp-python, not HF transformers — see
+    # `_try_load_gguf_backend` and the dispatch in `embed()`. Default file is
+    # Q2_K; override with `RC_CODESTRAL_GGUF_FILE`.
     "codestral-mamba-gguf": _EmbedderBackend(
         name="codestral-mamba-gguf",
         checkpoint="gabriellarson/Mamba-Codestral-7B-v0.1-GGUF",
@@ -297,6 +305,7 @@ _PINNED_REVISIONS: dict[str, str] = {
     "state-spaces/mamba-130m-hf": "1e76775f628fbf1350fbe4dbb3d971ba64af25a1",
     "state-spaces/mamba2-130m":   "3a5aea0c25d0fb43cc360e2c2aac82c26e3eed49",
     "sshleifer/tiny-gpt2":        "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
+    "mistralai/Mamba-Codestral-7B-v0.1": "4f086c08c1e0f07bdc50ca25125dbbf7475d21da",
 }
 
 
@@ -361,6 +370,18 @@ def reset_failure_cache() -> None:
     _LAST_FAILURE_MSG = ""
 
 
+def clear_backbone_cache() -> None:
+    """Drop the cached backbone handle and failure cache.
+
+    Used by falsifiability scripts that need to switch embedders between
+    calls (e.g. real weights vs random-mamba control).
+    """
+    global _HANDLE, _LAST_FAILURE_TS, _LAST_FAILURE_MSG
+    _HANDLE = None
+    _LAST_FAILURE_TS = 0.0
+    _LAST_FAILURE_MSG = ""
+
+
 # --- Helpers ------------------------------------------------------------------
 
 
@@ -372,7 +393,7 @@ def _resolve_device(device: Optional[str]) -> str:
 
 
 def _resolve_backend() -> _EmbedderBackend:
-    """Select backend from RC_EMBEDDER env (default codestral-mamba)."""
+    """Select backend from RC_EMBEDDER env (default mamba-130m)."""
     name = os.environ.get("RC_EMBEDDER", _DEFAULT_BACKEND_NAME).strip().lower()
     if name not in _BACKENDS:
         logger.warning(
@@ -859,7 +880,7 @@ def load_backbone(
 ) -> tuple[Any, Any]:
     """Load (or return cached) embedder backbone + tokenizer.
 
-    Backend is selected via ``RC_EMBEDDER`` env (default: codestral-mamba).
+    Backend is selected via ``RC_EMBEDDER`` env (default: mamba-130m).
     The ``checkpoint`` arg is retained for backward compat but ignored
     unless ``RC_EMBEDDER`` is not set and ``S2_SSM_CHECKPOINT`` is used.
 
@@ -941,13 +962,17 @@ def load_backbone(
 
         # Fallback: only runs when the operator did NOT pin RC_EMBEDDER.
         # Tries remaining backends in registry order, smallest-first to keep
-        # an accidental fallback from blowing up RAM.
+        # an accidental fallback from blowing up RAM. Backends larger than 1K
+        # hidden (e.g. codestral-mamba 7B / GGUF) are excluded from automatic
+        # fallback; use them explicitly via RC_EMBEDDER.
         fallback_order = sorted(
             _BACKENDS.items(),
             key=lambda kv: 0 if kv[1].hidden_size <= 1024 else kv[1].hidden_size,
         )
         for name, fb_backend in fallback_order:
             if name == backend.name:
+                continue
+            if fb_backend.hidden_size > 1024:
                 continue
             handle = _try_load_backend(fb_backend, device)
             if handle is not None:

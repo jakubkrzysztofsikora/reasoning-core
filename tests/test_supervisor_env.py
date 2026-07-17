@@ -47,9 +47,9 @@ def test_extra_env_overrides(monkeypatch):
     assert env["PATH"] == "/usr/bin"
 
 
-def test_gen_extra_env_pins_cpu_when_unset(monkeypatch):
+def test_gen_extra_env_does_not_force_cpu_when_unset(monkeypatch):
     monkeypatch.delenv("MLX_DEFAULT_DEVICE", raising=False)
-    assert mod.gen_extra_env()["MLX_DEFAULT_DEVICE"] == "cpu"
+    assert "MLX_DEFAULT_DEVICE" not in mod.gen_extra_env()
 
 
 def test_gen_extra_env_respects_operator_override(monkeypatch):

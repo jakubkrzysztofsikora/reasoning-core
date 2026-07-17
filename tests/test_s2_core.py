@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 # Ensure repo root is importable.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:

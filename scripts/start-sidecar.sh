@@ -14,11 +14,13 @@
 #   S2_DEVICE            -- cpu|cuda (default cpu).
 #   S2_SSM_CHECKPOINT    -- HF checkpoint id (legacy; default state-spaces/mamba-130m-hf).
 #   RC_EMBEDDER          -- embedder backend selection (default mamba-130m).
-#                         Supported: codestral-mamba | mamba-130m | bge-code |
-#                         unixcoder-base | random-mamba.
+#                         Supported: mamba-130m | codestral-mamba | bge-code |
+#                         unixcoder-base | random-mamba | codestral-mamba-gguf.
 #                         codestral-mamba, bge-code, unixcoder-base require a
 #                         SHA pin via RC_<REPO_SLUG>_REVISION before they will
 #                         load (supply-chain hardening; see ssm_backbone.py).
+#                         codestral-mamba-gguf is deprecated on Mac-Studio CPU
+#                         (Q2_K expands to ~35 GB resident at runtime).
 #   BACKGROUND           -- 1 to fork + wait; unset/0 to run in foreground.
 #   S2_HEALTH_TIMEOUT    -- seconds to wait for model_loaded:true (default 120).
 #   S2_LOG_FILE          -- when BACKGROUND=1, redirect logs here (default /tmp/reasoning-core-sidecar.log).
@@ -34,18 +36,18 @@ HEALTH_URL="http://${HOST}:${PORT}/health"
 TIMEOUT="${S2_HEALTH_TIMEOUT:-120}"
 LOG_FILE="${S2_LOG_FILE:-/tmp/reasoning-core-sidecar.log}"
 
-if [[ -n "${PYTHON:-}" ]]; then                                                                                                                                                       
-      PYTHON_BIN="$PYTHON"
-  elif [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then                                                                                                                                  
-      PYTHON_BIN="${REPO_ROOT}/.venv/bin/python3"                                                                                                                                       
-  else
-      PYTHON_BIN="python3"                                                                                                                                                              
-  fi                                                                                                                                                                                    
-   
-  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [[ ! -x "$PYTHON_BIN" ]]; then                                                                                                       
-      echo "ERROR: $PYTHON_BIN not found" >&2                     
-      exit 1                                                                                                                                                                            
-  fi                                                              
+if [[ -n "${PYTHON:-}" ]]; then
+    PYTHON_BIN="$PYTHON"
+elif [[ -x "${REPO_ROOT}/.venv/bin/python3" ]]; then
+    PYTHON_BIN="${REPO_ROOT}/.venv/bin/python3"
+else
+    PYTHON_BIN="python3"
+fi
+
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 && [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "ERROR: $PYTHON_BIN not found" >&2
+    exit 1
+fi
 echo "Using interpreter: $PYTHON_BIN"
 
 # Ensure the project is importable as the `src` package.

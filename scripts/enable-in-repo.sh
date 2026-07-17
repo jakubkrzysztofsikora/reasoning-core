@@ -173,5 +173,5 @@ next:
   claude                                  # hooks fire on this session (advise mode: log/warn only)
 
 promote to enforcement after reviewing a 48-hour shadow report:
-  rc enable-enforcement                   # scaffolds PLAN.md and flips RC_MODE=copilot
+  rc enable-enforcement                   # flips RC_MODE=copilot (requires existing PLAN.md)
 EOF

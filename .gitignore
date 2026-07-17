@@ -42,12 +42,4 @@ ca-bundle.pem
 
 # Antigravity CLI per-machine project symlinks.
 .antigravitycli/
-
-# >>> reasoning-core >>>
-.envrc.local
-.claude/settings.local.json
-.gemini/settings.json
-.vibe/config.toml
-.reasoning-core/
-# <<< reasoning-core <<<
 eval/calibrated/prm_corpus.jsonl

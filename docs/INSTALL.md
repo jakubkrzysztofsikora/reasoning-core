@@ -31,8 +31,9 @@ rejected — supply-chain hardening).
 huggingface-cli download state-spaces/mamba-130m-hf
 
 # Or: Codestral-Mamba 7B (code-pretrained, hidden=4096)
-# Loads as fp16 by default → ~14 GB resident; fp32 would be ~28 GB and OOMs
-# most laptops. Override with RC_EMBEDDER_DTYPE=float32 / bfloat16 / auto.
+# Loads as fp16 by default -> ~14 GB resident; fp32 would be ~28 GB and OOMs
+# most laptops. Needs a CUDA host with mamba-ssm installed; CPU-only naive
+# fallback is unusably slow for the 7B model.
 # huggingface-cli download mistralai/Mamba-Codestral-7B-v0.1
 # export RC_EMBEDDER=codestral-mamba
 # export RC_MISTRALAI_MAMBA_CODESTRAL_7B_V0_1_REVISION=<40-char hex SHA>
@@ -43,7 +44,8 @@ with `_`, prefix `RC_`, suffix `_REVISION`. Branch names like `main`
 are explicitly rejected.
 
 Supported backends: `mamba-130m` (default), `codestral-mamba`,
-`bge-code`, `unixcoder-base`, `random-mamba` (in-process control for
+`codestral-mamba-gguf` (deprecated on Mac-Studio CPU; expands to ~35 GB at
+runtime), `bge-code`, `unixcoder-base`, `random-mamba` (in-process control for
 falsifiability tests). See [`CONFIGURATION.md#embedder-backend`](CONFIGURATION.md#embedder-backend).
 
 ### 3. Boot the stack
