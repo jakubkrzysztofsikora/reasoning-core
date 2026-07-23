@@ -1,0 +1,28 @@
+rep,kind,label,verdict,reasons,cd
+0,clean,fable-5,ALLOW,(),0.0
+0,clean,kimi-k3,ALLOW,(),0.0
+0,clean,glm-5.2,ALLOW,(),0.0
+0,banned,fable-5,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+0,banned,kimi-k3,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+0,banned,glm-5.2,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+0,broken,fable-5,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+0,broken,kimi-k3,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+0,broken,glm-5.2,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+1,clean,fable-5,ALLOW,(),0.0
+1,clean,kimi-k3,ALLOW,(),0.0
+1,clean,glm-5.2,ALLOW,(),0.0
+1,banned,fable-5,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+1,banned,kimi-k3,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+1,banned,glm-5.2,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+1,broken,fable-5,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+1,broken,kimi-k3,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+1,broken,glm-5.2,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+2,clean,fable-5,ALLOW,(),0.0
+2,clean,kimi-k3,ALLOW,(),0.0
+2,clean,glm-5.2,ALLOW,(),0.0
+2,banned,fable-5,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+2,banned,kimi-k3,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+2,banned,glm-5.2,BLOCK,"('rules.yaml forbid_pattern: eval(',)",
+2,broken,fable-5,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+2,broken,kimi-k3,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
+2,broken,glm-5.2,BLOCK,"('ast.parse SyntaxError: invalid syntax (<unknown>, line 1)',)",
