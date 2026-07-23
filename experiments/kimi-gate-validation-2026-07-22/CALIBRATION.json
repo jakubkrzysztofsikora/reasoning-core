@@ -1,0 +1,8 @@
+{
+ "date": "2026-07-22",
+ "method": "shadow mode on clean reference edits (mirrors upstream 48h shadow guidance), then frozen",
+ "clean_cd": [0.0, 0.0, 0.0, 0.0278],
+ "bad_cd": [0.1247, 0.1331],
+ "cap": 0.10,
+ "note": "clean max 0.028 vs destructive-rewrite min 0.1247; cap 0.10 with ~3.5x margin both sides. Backbone: state-spaces/mamba-130m-hf CPU. Cold-start (new files) exempt per upstream s2_core."
+}
