@@ -14,7 +14,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.dup_index import logic_ratio, logic_tokens, normalize  # noqa: E402
+from src.dup_index import (  # noqa: E402
+    extract_functions,
+    logic_ratio,
+    logic_tokens,
+    normalize,
+)
 
 # Confirm bar the oracle uses; kept in sync with the pipeline default.
 CONFIRM = 0.97
@@ -115,3 +120,32 @@ def test_type_annotations_are_pruned():
 def test_operators_survive_as_logic_tokens():
     # min keeps its comparison operator -- that's the discriminating signal.
     assert "K:<" in logic_tokens("a.ts", MIN_TS)
+
+
+# --- extract_functions --------------------------------------------------------
+_MODULE_TS = (
+    'export function toSlug(s) {\n  return s.toLowerCase().replace(/ /g, "-");\n}\n'
+    'const helper = (x) => {\n  const y = x + 1;\n  return y * 2;\n};\n'
+    'items.forEach((v) => { console.log(v); });\n'  # unnamed callback -> skipped
+)
+
+
+def test_extract_functions_finds_named_functions():
+    funcs = extract_functions("m.ts", _MODULE_TS)
+    names = {name for name, _line, _src in funcs}
+    assert "toSlug" in names          # function_declaration
+    assert "helper" in names          # variable-bound arrow
+
+
+def test_extract_functions_skips_unnamed_callbacks():
+    funcs = extract_functions("m.ts", _MODULE_TS)
+    names = [name for name, _line, _src in funcs]
+    assert "anonymous" not in names
+    assert len(funcs) == 2
+
+
+def test_extract_functions_returns_source_and_line():
+    funcs = extract_functions("m.ts", _MODULE_TS)
+    by_name = {name: (line, src) for name, line, src in funcs}
+    line, src = by_name["toSlug"]
+    assert line == 1 and "toLowerCase" in src

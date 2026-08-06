@@ -190,6 +190,37 @@ def logic_ratio(a_path: str, a_src: str, b_path: str, b_src: str) -> float:
     return logic_ratio_tokens(logic_tokens(a_path, a_src), logic_tokens(b_path, b_src))
 
 
+def extract_functions(path: str, src: str) -> list[tuple[str, int, str]]:
+    """Extract named function definitions from a source file.
+
+    Yields ``(name, line, source)`` for each ``function_declaration``,
+    ``method_definition``, and *named* (variable-bound) arrow / function
+    expression whose source is 40-3000 chars. Unnamed inline callbacks are
+    skipped so the index holds reusable, named units. ``line`` is 1-based.
+    """
+    src_bytes = src.encode("utf-8", errors="replace")
+    root = _parse(path, src).root_node
+    out: list[tuple[str, int, str]] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type in _FUNC_TYPES:
+            parent = node.parent
+            if node.type in ("arrow_function", "function_expression"):
+                if parent is None or parent.type != "variable_declarator":
+                    stack.extend(node.children)
+                    continue
+            text = _text(node, src_bytes)
+            if 40 <= len(text) <= 3000:
+                name_node = node.child_by_field_name("name")
+                if name_node is None and parent is not None and parent.type == "variable_declarator":
+                    name_node = parent.child_by_field_name("name")
+                name = _text(name_node, src_bytes) if name_node is not None else "anonymous"
+                out.append((name, node.start_point[0] + 1, text))
+        stack.extend(node.children)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Distinctiveness ranking
 # ---------------------------------------------------------------------------
