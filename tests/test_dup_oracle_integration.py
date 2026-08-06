@@ -51,10 +51,15 @@ def _confirmed_pairs(records, vectors, token_df) -> set:
     return pairs
 
 
-def test_fixture_is_the_expected_scale():
+def test_fixture_contains_the_hard_negatives():
+    # `test_sibling_families_are_never_confirmed` below is only meaningful if the
+    # corpus actually CONTAINS those siblings -- otherwise it passes vacuously.
+    # Guard their presence (and that vectors stay row-aligned to records).
     records, vectors, _ = _load()
-    assert len(records) == len(vectors)
-    assert len(records) > 200  # ~265 -- the "264 functions" headline, frozen
+    assert len(records) == len(vectors)  # row-aligned
+    names = {r.name for r in records}
+    missing = {"min", "max", "addDays", "addHours", "addWeeks", "subWeeks"} - names
+    assert not missing, f"hard-negative siblings missing from fixture: {missing}"
 
 
 def test_spotlights_only_the_cleanEscapedString_duplicate():

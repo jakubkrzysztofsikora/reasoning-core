@@ -101,16 +101,26 @@ def test_advise_skips_self_when_editing_an_indexed_file(tmp_path):
     assert "a.ts" not in text    # the file's own entry was skipped (no self-dup)
 
 
-def test_main_is_opt_out_by_default(monkeypatch, capsys):
+def test_main_opt_out_never_builds_the_index(monkeypatch, capsys):
+    # Opt-out (env unset) must exit BEFORE touching the model/index, even for a
+    # real (indexable) function. Asserting empty stdout alone was insufficient --
+    # a sub-40-char payload emits nothing regardless of the opt-in.
     monkeypatch.delenv("RC_DUP_ORACLE", raising=False)
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO('{"tool_input": {"file_path": "x.ts", "content": "function f(){return 1+1;}"}}'),
-    )
+    touched = []
+    monkeypatch.setattr(hook, "_get_index", lambda root: touched.append(root))
+    monkeypatch.setattr(hook, "_embedder", lambda: (lambda s: None))
+    payload = {
+        "tool_input": {
+            "file_path": "x.ts",
+            "content": "export function realOne(s) {\n  return s.toLowerCase().replace(RE, '-').trim();\n}\n",
+        },
+        "cwd": "/tmp",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     with pytest.raises(SystemExit) as exc:
         hook.main()
     assert exc.value.code == 0
-    assert capsys.readouterr().out == ""  # off -> no advisory, no model touched
+    assert touched == []  # opt-out -> _get_index never called
 
 
 def test_main_fails_open_on_garbage_payload(monkeypatch, capsys):
@@ -127,3 +137,93 @@ def test_emit_additional_context_shape(capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     assert out["hookSpecificOutput"]["additionalContext"] == "hi there"
+
+
+# --- main() happy path + fail-open (the runtime contract) ---------------------
+
+_SLUG_BODY = 'return {v}.toLowerCase().replace(RE, "-").trim();'
+
+
+def test_main_emits_advisory_on_a_real_duplicate(tmp_path, monkeypatch, capsys):
+    # Full main() path, offline: stubbed index + embedder. Adding makeSlug (a
+    # duplicate of the indexed toSlug) must produce an additionalContext advisory.
+    (tmp_path / "a.ts").write_text("export function toSlug(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+    monkeypatch.setattr(hook, "_get_index", lambda root: index)
+    monkeypatch.setattr(hook, "_embedder", lambda: _stub_embed)
+    payload = {
+        "tool_input": {
+            "file_path": str(tmp_path / "d.ts"),
+            "content": "export function makeSlug(t) {\n  " + _SLUG_BODY.format(v="t") + "\n}\n",
+        },
+        "cwd": str(tmp_path),
+        "hookEventName": "PreToolUse",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "toSlug" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_main_fails_open_when_the_work_raises(tmp_path, monkeypatch, capsys):
+    # A real exception in the happy path (here: index build) must be swallowed
+    # -> exit 0, no output. Narrowing the except would make this raise.
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+
+    def boom(_root):
+        raise RuntimeError("index build blew up")
+
+    monkeypatch.setattr(hook, "_get_index", boom)
+    monkeypatch.setattr(hook, "_embedder", lambda: _stub_embed)
+    payload = {
+        "tool_input": {"file_path": str(tmp_path / "d.ts"), "content": "export function f(x) { return x + 1; }\n"},
+        "cwd": str(tmp_path),
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_main_bails_out_cleanly_if_the_feature_failed_to_import(monkeypatch, capsys):
+    # If the feature's modules failed to import (names guarded to None at module
+    # load), the hook must exit 0 without doing work -- never crash or block.
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+    monkeypatch.setattr(hook, "build_dup_index", None)
+    payload = {
+        "tool_input": {"file_path": "x.ts", "content": "export function f(x) { return x.toLowerCase(); }\n"},
+        "cwd": "/tmp",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == ""
+
+
+# --- self-skip is a COMPOUND key: path AND name -------------------------------
+
+
+def test_advise_flags_a_same_named_duplicate_in_another_file(tmp_path):
+    # Same function name, DIFFERENT file -> a real cross-file duplicate, must be
+    # flagged. (Skipping on name alone would silence it.)
+    (tmp_path / "a.ts").write_text("export function slug(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    added = "export function slug(t) {\n  " + _SLUG_BODY.format(v="t") + "\n}\n"
+    text = advise(added, str(tmp_path / "b.ts"), index, embed_fn=_stub_embed, repo_root=str(tmp_path))
+    assert text is not None and "a.ts" in text
+
+
+def test_advise_flags_a_duplicate_within_the_edited_file(tmp_path):
+    # Editing a.ts to ADD tidy(), which duplicates the existing clean() in the
+    # SAME file -> different name, must be flagged. (Skipping on path alone would
+    # silence every function in the edited file.)
+    (tmp_path / "a.ts").write_text("export function clean(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    added = "export function tidy(t) {\n  " + _SLUG_BODY.format(v="t") + "\n}\n"
+    text = advise(added, str(tmp_path / "a.ts"), index, embed_fn=_stub_embed, repo_root=str(tmp_path))
+    assert text is not None and "clean" in text

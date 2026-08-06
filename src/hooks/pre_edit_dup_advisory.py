@@ -26,10 +26,15 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[2])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from src.dup_index import extract_functions, logic_tokens  # noqa: E402
-from src.dup_oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, find_near_duplicates  # noqa: E402
-from src.dup_repo_index import DupOracleIndex, build_dup_index  # noqa: E402
-from src.grammars import UnsupportedLanguageError  # noqa: E402
+try:  # a PreToolUse hook must never crash at import, even when it's disabled
+    from src.dup_index import extract_functions, logic_tokens
+    from src.dup_oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, find_near_duplicates
+    from src.dup_repo_index import DupOracleIndex, build_dup_index
+    from src.grammars import UnsupportedLanguageError
+except Exception:  # noqa: BLE001 - hook must never crash
+    extract_functions = logic_tokens = find_near_duplicates = None  # type: ignore
+    build_dup_index = DupOracleIndex = UnsupportedLanguageError = None  # type: ignore
+    RECALL_DEFAULT, CONFIRM_DEFAULT = 0.80, 0.97
 
 TOP_K = 3
 
@@ -140,8 +145,16 @@ def _get_index(repo_root: str) -> DupOracleIndex:
     return index
 
 
+def _embedder():
+    # Lazy, monkeypatchable seam: the real embedder is imported only here, so the
+    # offline hook tests substitute a stub without pulling in torch.
+    from src.dup_embed import embed_function
+
+    return embed_function
+
+
 def main() -> None:
-    if os.environ.get("RC_DUP_ORACLE") != "1":  # opt-in
+    if os.environ.get("RC_DUP_ORACLE") != "1" or build_dup_index is None:  # opt-in + import guard
         sys.exit(0)
     try:
         payload = _read_payload()
@@ -151,10 +164,8 @@ def main() -> None:
         if not file_path or not added:
             sys.exit(0)
         repo_root = payload.get("cwd") or os.getcwd()
-        from src.dup_embed import embed_function
-
         text = advise(
-            added, file_path, _get_index(repo_root), embed_fn=embed_function, repo_root=repo_root
+            added, file_path, _get_index(repo_root), embed_fn=_embedder(), repo_root=repo_root
         )
         if text:
             _emit_additional_context(text, payload.get("hookEventName") or "PreToolUse")

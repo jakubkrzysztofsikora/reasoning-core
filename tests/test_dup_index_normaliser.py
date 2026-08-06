@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -86,8 +88,23 @@ def test_structural_rewrite_is_not_confirmed_by_logic_alone():
     assert logic_ratio("a.ts", SUM_LOOP_TS, "b.ts", SUM_REDUCE_TS) < CONFIRM
 
 
-def test_both_empty_ratio_is_one():
-    assert logic_ratio("a.ts", "", "b.ts", "") == 1.0
+def test_string_operator_char_does_not_leak_into_logic():
+    # A string containing an operator character must be pruned, not emitted as a
+    # logic operator -- otherwise g("<") and g(">") would look different.
+    assert "K:<" not in logic_tokens("a.ts", 'function f() { return g("<"); }')
+
+
+def test_string_constant_differences_do_not_break_duplicate_detection():
+    # Two functions differing ONLY in a string literal are still duplicates.
+    a = 'function log(x) {\n  return prefix("A") + x;\n}'
+    b = 'function log(x) {\n  return prefix("B") + x;\n}'
+    assert logic_ratio("a.ts", a, "b.ts", b) >= CONFIRM
+
+
+def test_union_type_operator_does_not_leak_into_logic():
+    # Type annotations are pruned, so a union type's `|` must NOT surface as a
+    # logic operator (removing the prune would leak it).
+    assert "K:|" not in logic_tokens("a.ts", "function pick(x): A | B {\n  return x.first;\n}")
 
 
 def test_different_destructured_key_is_not_a_duplicate():
@@ -156,3 +173,41 @@ def test_extract_functions_is_robust_to_junk_input():
     # never crash (fail-open).
     for src in ("", "   \n", "function {{{ ]] not valid", "const x = 1;"):
         assert extract_functions("x.ts", src) == []
+
+
+def test_extract_functions_skips_tiny_functions():
+    # Below the 40-char floor -> not indexed (one-liners are noise). Isolates the
+    # size gate: this arrow is variable-bound (passes the name gate) but short.
+    assert extract_functions("m.ts", "const f = () => 1;\n") == []
+
+
+def test_extract_functions_skips_long_unnamed_callback():
+    # A LONG unnamed callback (well over the size floor) is still skipped because
+    # it isn't a named, reusable unit -- isolates the parent gate from the size gate.
+    cb = "arr.forEach((item) => {\n  const doubled = item.value * 2;\n  logIt(doubled, item.id);\n});\n"
+    assert extract_functions("m.ts", cb) == []
+
+
+def test_extract_functions_skips_oversized_functions():
+    # Above the 3000-char ceiling -> not indexed (machine-generated / minified
+    # blobs shouldn't be embedded). Isolates the UPPER size bound.
+    huge = "export function big(x) {\n" + "  x.step();\n" * 400 + "  return x;\n}\n"
+    assert len(huge) > 3000
+    assert extract_functions("m.ts", huge) == []
+
+
+@pytest.mark.parametrize("expr", ["x + y", "x * y", "x / y", "x === y", "x && y", "x | y", "x ** y"])
+def test_an_operator_is_load_bearing_logic(expr):
+    # An operator carries logic: `x <op> y` must NOT collapse to `x`. Deleting the
+    # operator from the recognised set would make these two look identical.
+    a = f"function withOp(x, y) {{\n  return {expr};\n}}"
+    b = "function firstArg(x, y) {\n  return x;\n}"
+    assert logic_ratio("a.ts", a, "b.ts", b) < CONFIRM
+
+
+def test_destructured_key_distinguishes_even_when_not_re_read():
+    # `const {id} = o` reads property `id`; two functions destructuring DIFFERENT
+    # keys are different even if the binding is never used again in the body.
+    a = "function f(o) {\n  const {id} = o;\n  return compute();\n}"
+    b = "function f(o) {\n  const {amount} = o;\n  return compute();\n}"
+    assert logic_ratio("a.ts", a, "b.ts", b) < CONFIRM

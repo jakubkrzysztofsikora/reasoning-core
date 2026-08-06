@@ -48,6 +48,19 @@ independent of upstream date-fns. All feature tests run in the offline
 `-m "not live"` gate (frozen `.npy` vectors); the model only runs in the
 fixture generator.
 
+## Evaluation
+
+`eval/validate_dup_embedder.py` is an offline embedder-fitness check (mirrors
+`eval/validate_embedder.py`): over the frozen fixture the pinned embedder places
+the real duplicate ~10σ closer than unrelated functions — the premise Stage 1
+relies on.
+
+A formal `oracle_eval`-style corpus (labelled duplicate / sibling / unrelated
+pairs with precision/recall + a threshold sweep, to calibrate RECALL/CONFIRM
+beyond a single fixture) was **considered and deliberately deferred** for this
+opt-in/experimental PR — happy to add it following the repo's eval conventions
+if that's wanted before merge.
+
 ## Modules
 
 - `src/dup_index.py` — normaliser, logic-token diff, distinctiveness ranking,

@@ -306,7 +306,6 @@ _PINNED_REVISIONS: dict[str, str] = {
     "state-spaces/mamba2-130m":   "3a5aea0c25d0fb43cc360e2c2aac82c26e3eed49",
     "sshleifer/tiny-gpt2":        "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
     "mistralai/Mamba-Codestral-7B-v0.1": "4f086c08c1e0f07bdc50ca25125dbbf7475d21da",
-    # Pinned for the near-duplicate oracle's Stage-1 shortlist (RC_EMBEDDER=unixcoder-base).
     "microsoft/unixcoder-base": "5604afdc964f6c53782a6813140ade5216b99006",
 }
 

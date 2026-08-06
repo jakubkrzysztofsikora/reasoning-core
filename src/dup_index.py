@@ -30,12 +30,15 @@ _IDENT_TYPES = frozenset({
 # Nodes that introduce local bindings whose *names* are noise (renaming them
 # must not change the logic signature).
 _PARAM_CONTAINERS = frozenset({"parameters", "formal_parameters"})
-# Type-annotation subtrees -- pruned whole, so `min<T>(...)` reads like `min(...)`
-# and TS generics don't drown the one operator that distinguishes siblings.
-_TYPE_PRUNE = frozenset({
+# Subtrees pruned whole before tokenising, so their contents never reach the
+# logic stream: type annotations (`min<T>(...)` reads like `min(...)`, so TS
+# generics don't drown the operator that distinguishes siblings) and string
+# literals (a string like "<" must not leak in as an operator token).
+_PRUNED_SUBTREES = frozenset({
     "type_annotation", "type_arguments", "type_parameters", "predefined_type",
     "generic_type", "union_type", "object_type", "type_identifier",
     "type_alias_declaration", "index_type_query", "type",
+    "string", "template_string",
 })
 _FUNC_TYPES = frozenset({
     "function_declaration", "method_definition", "arrow_function",
@@ -131,8 +134,8 @@ def normalize(path: str, src: str) -> list[str]:
     """Return the normalised token stream for the first function in ``src``.
 
     Local variables -> ``V``; the function's own name is dropped; type
-    annotations are pruned; free names (callees, properties) are kept as
-    ``N:<name>``; numeric literals as ``NUM:<value>``; strings as ``STR``;
+    annotations and string literals are pruned entirely; free names (callees,
+    properties) are kept as ``N:<name>``; numeric literals as ``NUM:<value>``;
     operators / keywords as ``K:<sym>``.
     """
     src_bytes = src.encode("utf-8", errors="replace")
@@ -142,15 +145,13 @@ def normalize(path: str, src: str) -> list[str]:
     own_span = (own.start_byte, own.end_byte) if own is not None else None
 
     tokens: list[str] = []
-    for leaf in _leaves(fn, _TYPE_PRUNE):
+    for leaf in _leaves(fn, _PRUNED_SUBTREES):
         if own_span is not None and (leaf.start_byte, leaf.end_byte) == own_span:
             continue  # drop the function's own name -- a rename is not a logic change
         ttype = leaf.type
         text = _text(leaf, src_bytes)
         if ttype in _IDENT_TYPES:
             tokens.append("V" if text in bound else "N:" + text)
-        elif ttype in ("string", "template_string"):
-            tokens.append("STR")
         elif ttype == "number":
             tokens.append("NUM:" + text)
         elif text in _PUNCT:

@@ -15,6 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from collections import Counter  # noqa: E402
+
 from src.dup_index import (  # noqa: E402
     build_token_df,
     distinctive_shared_tokens,
@@ -63,6 +65,9 @@ def test_real_duplicate_shares_distinctive_tokens():
     assert len(shared) >= 2
 
 
-def test_cutoff_scales_with_repo_size_over_a_floor():
-    assert rare_cutoff(10) == 3          # floor wins on a small repo
-    assert rare_cutoff(1000) == 30       # 3% on a large one
+def test_cutoff_makes_a_token_distinctive_only_at_repo_scale():
+    # A token seen in 5 functions is "common" in a tiny repo but "rare" in a big
+    # one -- the cutoff must flip the distinctiveness verdict as the repo grows.
+    shared, df = ["N:sharedTok"], Counter({"N:sharedTok": 5})
+    assert distinctive_shared_tokens(shared, shared, df, rare_cutoff(10)) == []  # df 5 > cutoff 3
+    assert distinctive_shared_tokens(shared, shared, df, rare_cutoff(1000)) == ["N:sharedTok"]  # df 5 <= cutoff 30

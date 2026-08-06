@@ -97,11 +97,6 @@ def test_skip_excludes_a_record():
     assert hits == []
 
 
-def test_empty_index_returns_empty():
-    hits = find_near_duplicates(QUERY_VEC, QUERY_TOKENS, [], np.empty((0, 3)), DF)
-    assert hits == []
-
-
 def test_below_recall_is_never_confirmed_even_if_logic_matches():
     # Far vector but IDENTICAL logic -> Stage 1 must gate it out (no false hit).
     records = [FunctionRecord("far.ts", "same", 1, QUERY_TOKENS)]

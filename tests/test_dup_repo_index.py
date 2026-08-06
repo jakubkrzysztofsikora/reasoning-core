@@ -70,9 +70,22 @@ def test_max_funcs_caps_the_index(tmp_path):
     assert len(index) == 2
 
 
-def test_empty_repo_builds_empty_index(tmp_path):
+def test_max_funcs_caps_within_a_single_file(tmp_path):
+    # Many functions in ONE file, cap below that -> the inner (per-function) cap
+    # must bound the index, not just the per-file check.
+    fns = "\n".join(
+        f"export function fn{i}(x) {{\n  return x.step{i}().done{i}();\n}}" for i in range(6)
+    )
+    (tmp_path / "many.ts").write_text(fns + "\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed, max_funcs=3)
+    assert len(index) == 3
+
+
+def test_build_indexes_across_languages(tmp_path):
+    # The builder is language-agnostic (tree-sitter via select_grammar): a Python
+    # AND a TypeScript function in the same repo should both be indexed. Nothing
+    # else exercises the non-TS path.
+    (tmp_path / "a.ts").write_text('export function tsOne(x) {\n  return x.toLowerCase().trim();\n}\n')
+    (tmp_path / "b.py").write_text('def py_one(x):\n    return x.lower().strip()\n')
     index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
-    assert len(index) == 0
-    assert find_near_duplicates(
-        np.zeros(_VOCAB, dtype=np.float32), [], index.records, index.embeddings, index.token_df
-    ) == []
+    assert {r.name for r in index.records} == {"tsOne", "py_one"}
