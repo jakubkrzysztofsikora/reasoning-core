@@ -169,6 +169,17 @@ def logic_tokens(path: str, src: str) -> list[str]:
     ]
 
 
+def logic_ratio_tokens(a_tokens: list[str], b_tokens: list[str]) -> float:
+    """Similarity in [0, 1] of two already-extracted logic-token streams.
+
+    The query path uses this directly on stored tokens, so the oracle never
+    re-parses index functions at query time.
+    """
+    if not a_tokens and not b_tokens:
+        return 1.0
+    return difflib.SequenceMatcher(None, a_tokens, b_tokens).ratio()
+
+
 def logic_ratio(a_path: str, a_src: str, b_path: str, b_src: str) -> float:
     """Similarity in [0, 1] of two functions' logic-token streams.
 
@@ -176,11 +187,7 @@ def logic_ratio(a_path: str, a_src: str, b_path: str, b_src: str) -> float:
     same-shape sibling that differs in a real operator/callee, and low for a
     wholesale structural rewrite (which Stage 1's embedding shortlist catches).
     """
-    a = logic_tokens(a_path, a_src)
-    b = logic_tokens(b_path, b_src)
-    if not a and not b:
-        return 1.0
-    return difflib.SequenceMatcher(None, a, b).ratio()
+    return logic_ratio_tokens(logic_tokens(a_path, a_src), logic_tokens(b_path, b_src))
 
 
 # ---------------------------------------------------------------------------
