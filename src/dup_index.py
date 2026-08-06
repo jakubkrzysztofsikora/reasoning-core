@@ -270,29 +270,3 @@ def distinctive_shared_tokens(
     """
     shared = set(a_tokens) & set(b_tokens)
     return sorted(t for t in shared if token_df.get(t, 0) <= cutoff)
-
-
-def distinctiveness(
-    a_tokens: list[str], b_tokens: list[str], token_df: Counter, cutoff: int
-) -> int:
-    """Ranking score: how many distinctive tokens two functions share."""
-    return len(distinctive_shared_tokens(a_tokens, b_tokens, token_df, cutoff))
-
-
-def rank_by_distinctiveness(
-    query_tokens: list[str],
-    candidates: list[Any],
-    token_df: Counter,
-    cutoff: int,
-    key=lambda c: c,
-) -> list[Any]:
-    """Return ``candidates`` most-distinctive-first by how many distinctive
-    tokens each shares with ``query_tokens``. ``key`` extracts a candidate's
-    logic tokens (default: the candidate itself is the token list). The sort is
-    stable, so equal-score candidates keep input order.
-    """
-    return sorted(
-        candidates,
-        key=lambda c: distinctiveness(query_tokens, key(c), token_df, cutoff),
-        reverse=True,
-    )

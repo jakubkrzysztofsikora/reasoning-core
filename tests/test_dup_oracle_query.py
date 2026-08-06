@@ -15,6 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from collections import Counter  # noqa: E402
+
 from src.dup_index import build_token_df  # noqa: E402
 from src.dup_oracle import FunctionRecord, find_near_duplicates  # noqa: E402
 
@@ -53,6 +55,24 @@ def test_confirms_dup_rejects_sibling_ignores_unrelated():
 def test_hit_carries_shared_distinctive_tokens():
     hits = find_near_duplicates(QUERY_VEC, QUERY_TOKENS, RECORDS, EMBEDDINGS, DF)
     assert "N:computeTax" in hits[0].shared and "N:Rate" in hits[0].shared
+
+
+def test_ranks_by_distinctiveness_above_cosine():
+    # Two confirmed duplicates. `more` shares an extra RARE token with the query;
+    # `fewer` has the HIGHER cosine. Distinctiveness must still rank `more` first
+    # -- it's the primary sort key, above cosine.
+    common = [f"N:c{i}" for i in range(30)]
+    query_tokens = common + ["N:rareA", "N:rareB"]
+    records = [
+        FunctionRecord("fewer.ts", "fewer", 1, common + ["N:rareA"]),        # shares rareA only
+        FunctionRecord("more.ts", "more", 1, common + ["N:rareA", "N:rareB"]),  # shares rareA + rareB
+    ]
+    embeddings = np.stack([_unit([0.999, 0.045, 0.0]), _unit([0.99, 0.14, 0.0])])  # fewer has higher cosine
+    token_df = Counter({t: 100 for t in common})  # common tokens -> not distinctive
+    token_df.update({"N:rareA": 2, "N:rareB": 2})  # rare -> distinctive (cutoff = rare_cutoff(2) = 3)
+    hits = find_near_duplicates(QUERY_VEC, query_tokens, records, embeddings, token_df)
+    assert [h.name for h in hits] == ["more", "fewer"]
+    assert len(hits[0].shared) > len(hits[1].shared)
 
 
 def test_ranks_by_cosine_when_logic_and_distinctiveness_tie():

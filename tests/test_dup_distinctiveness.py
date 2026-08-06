@@ -1,8 +1,10 @@
-"""Unit tests for the distinctiveness ranking (src/dup_index.py).
+"""Unit tests for the distinctiveness primitives (src/dup_index.py).
 
-Ranks confirmed near-duplicates by how RARE their shared tokens are, so
+These rank confirmed near-duplicates by how RARE their shared tokens are, so
 boilerplate that matches only on ubiquitous tokens sinks below genuine
-duplication. Pure / fast: operates on logic-token lists, no parsing, no model.
+duplication. The ranking is applied on the production path by
+``dup_oracle.find_near_duplicates`` (see test_dup_oracle_query.py); here we pin
+the primitives it uses. Pure / fast: logic-token lists, no parsing, no model.
 """
 from __future__ import annotations
 
@@ -16,8 +18,6 @@ if str(REPO_ROOT) not in sys.path:
 from src.dup_index import (  # noqa: E402
     build_token_df,
     distinctive_shared_tokens,
-    distinctiveness,
-    rank_by_distinctiveness,
     rare_cutoff,
 )
 
@@ -45,11 +45,12 @@ def test_common_tokens_are_not_distinctive():
     assert df["N:computeTax"] <= cutoff
 
 
-def test_boilerplate_pair_scores_zero_distinctiveness():
+def test_boilerplate_pair_shares_no_distinctive_tokens():
     corpus = _corpus()
     df, n = build_token_df(corpus)
     cutoff = rare_cutoff(n)
-    assert distinctiveness(corpus[0], corpus[1], df, cutoff) == 0
+    # Boilerplate matches only on ubiquitous tokens -> nothing distinctive shared.
+    assert distinctive_shared_tokens(corpus[0], corpus[1], df, cutoff) == []
 
 
 def test_real_duplicate_shares_distinctive_tokens():
@@ -59,27 +60,7 @@ def test_real_duplicate_shares_distinctive_tokens():
     shared = distinctive_shared_tokens(corpus[3], corpus[4], df, cutoff)
     assert "N:computeTax" in shared and "N:Rate" in shared
     assert "N:super" not in shared  # ubiquitous -> excluded
-    assert distinctiveness(corpus[3], corpus[4], df, cutoff) >= 2
-
-
-def test_ranking_puts_genuine_duplicate_above_boilerplate():
-    corpus = _corpus()
-    df, n = build_token_df(corpus)
-    cutoff = rare_cutoff(n)
-    query = corpus[3]                       # the real-duplicate shape
-    candidates = [corpus[0], corpus[4]]     # boilerplate first, genuine second
-    ranked = rank_by_distinctiveness(query, candidates, df, cutoff)
-    assert ranked[0] is corpus[4]           # genuine duplicate ranks first
-    assert ranked[-1] is corpus[0]
-
-
-def test_rank_supports_a_key_extractor():
-    corpus = _corpus()
-    df, n = build_token_df(corpus)
-    cutoff = rare_cutoff(n)
-    hits = [{"name": "boiler", "toks": corpus[0]}, {"name": "real", "toks": corpus[4]}]
-    ranked = rank_by_distinctiveness(corpus[3], hits, df, cutoff, key=lambda h: h["toks"])
-    assert ranked[0]["name"] == "real"
+    assert len(shared) >= 2
 
 
 def test_cutoff_scales_with_repo_size_over_a_floor():
