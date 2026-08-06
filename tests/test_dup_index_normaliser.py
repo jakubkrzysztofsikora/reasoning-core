@@ -33,6 +33,15 @@ MAX_TS = 'function max(xs) {\n  let r;\n  for (const d of xs) { if (r === undefi
 ADD_WEEKS_TS = 'function addWeeks(date, amount) {\n  return addDays(date, amount * 7);\n}'
 SUB_WEEKS_TS = 'function subWeeks(date, amount) {\n  return addWeeks(date, -amount);\n}'
 
+# --- Renamed copy differing ONLY in a loop-variable name ----------------------
+PICK_A_TS = 'function pickA(xs) {\n  let r;\n  for (const d of xs) { if (r === undefined || d < r) r = d; }\n  return r;\n}'
+PICK_B_TS = 'function pickB(items) {\n  let acc;\n  for (const el of items) { if (acc === undefined || el < acc) acc = el; }\n  return acc;\n}'
+
+# --- Same behaviour, wholesale structural rewrite (Stage-2 is NOT meant to
+#     confirm this; Stage-1 embedding shortlist is what catches rewrites) ------
+SUM_LOOP_TS = 'function sumA(xs) {\n  let total = 0;\n  for (const x of xs) { total += x; }\n  return total;\n}'
+SUM_REDUCE_TS = 'function sumB(xs) {\n  return xs.reduce((a, b) => a + b, 0);\n}'
+
 
 def test_renamed_python_copy_is_a_duplicate():
     assert logic_ratio("a.py", TO_SLUG_PY, "b.py", SLUGIFY_PY) >= CONFIRM
@@ -53,10 +62,25 @@ def test_addweeks_vs_subweeks_is_not_a_duplicate():
     assert logic_ratio("a.ts", ADD_WEEKS_TS, "b.ts", SUB_WEEKS_TS) < CONFIRM
 
 
+def test_loop_variable_rename_is_a_duplicate():
+    # Differ only in loop + local variable names -> must confirm as a duplicate.
+    assert logic_ratio("a.ts", PICK_A_TS, "b.ts", PICK_B_TS) >= CONFIRM
+
+
+def test_structural_rewrite_is_not_confirmed_by_logic_alone():
+    # A wholesale rewrite (loop-accumulate vs .reduce) is NOT Stage-2's job to
+    # confirm -- it must fall well below the bar; Stage-1 cosine catches these.
+    assert logic_ratio("a.ts", SUM_LOOP_TS, "b.ts", SUM_REDUCE_TS) < CONFIRM
+
+
+def test_both_empty_ratio_is_one():
+    assert logic_ratio("a.ts", "", "b.ts", "") == 1.0
+
+
 def test_own_name_is_dropped():
-    # Identical bodies, different names -> the name must not appear in tokens.
-    a = normalize("a.ts", TO_SLUG_TS)
-    assert "N:toSlug" not in a and "N:slugify" not in a
+    # Each function's own name must not appear in its own token stream.
+    assert "N:toSlug" not in normalize("a.ts", TO_SLUG_TS)
+    assert "N:slugify" not in normalize("b.ts", SLUGIFY_TS)
 
 
 def test_local_variables_are_canonicalised():

@@ -3,8 +3,10 @@
 Reduces a function to its *logic* -- the tokens that carry meaning (operators,
 callee / property names, literal values) with local variable names canonicalised
 and language scaffolding (type annotations, the function's own name) stripped --
-so a renamed or rewritten duplicate collapses to the same token stream while a
-same-shape sibling (``min`` / ``max``, ``addWeeks`` / ``subWeeks``) does not.
+so a renamed (or lightly-edited) duplicate collapses to the same token stream
+while a same-shape sibling (``min`` / ``max``, ``addWeeks`` / ``subWeeks``) does
+not. A wholesale structural rewrite is *not* expected to match here -- that is
+what the embedding shortlist (Stage 1) is for.
 
 Pure: tree-sitter only, no model. Parsing goes through :mod:`src.grammars`, so
 the normaliser supports every language the grammar layer does. Used by the
@@ -73,7 +75,7 @@ def _leaves(node: Any, prune: frozenset[str]):
 
 
 def _first_function(root: Any) -> Any:
-    """Return the outermost function-like node, or ``root`` if none."""
+    """Return the first function-like node in DFS order, or ``root`` if none."""
     stack = [root]
     while stack:
         node = stack.pop()
@@ -105,6 +107,14 @@ def _bound_names(fn: Any, src_bytes: bytes) -> set[str]:
             lhs = node.child_by_field_name("left")
             if lhs is not None:
                 for leaf in _leaves(lhs, frozenset()):
+                    if leaf.type == "identifier":
+                        names.add(_text(leaf, src_bytes))
+        elif node.type in ("for_in_statement", "for_of_statement", "for_statement"):
+            # Loop binding, e.g. `for (const d of xs)` / `for x in xs` -- the
+            # variable sits under the ``left`` field for both TS/JS and Python.
+            left = node.child_by_field_name("left")
+            if left is not None:
+                for leaf in _leaves(left, frozenset()):
                     if leaf.type == "identifier":
                         names.add(_text(leaf, src_bytes))
         stack.extend(node.children)
@@ -139,7 +149,7 @@ def normalize(path: str, src: str) -> list[str]:
             tokens.append("NUM:" + text)
         elif text in _PUNCT:
             continue
-        else:
+        elif text:
             tokens.append("K:" + (text if len(text) <= 4 else ttype))
     return tokens
 
@@ -160,8 +170,9 @@ def logic_tokens(path: str, src: str) -> list[str]:
 def logic_ratio(a_path: str, a_src: str, b_path: str, b_src: str) -> float:
     """Similarity in [0, 1] of two functions' logic-token streams.
 
-    ~1.0 for a true renamed/rewritten duplicate; clearly lower for a same-shape
-    sibling that differs in a real operator or callee.
+    ~1.0 for a renamed or lightly-edited duplicate; clearly lower for a
+    same-shape sibling that differs in a real operator/callee, and low for a
+    wholesale structural rewrite (which Stage 1's embedding shortlist catches).
     """
     a = logic_tokens(a_path, a_src)
     b = logic_tokens(b_path, b_src)
