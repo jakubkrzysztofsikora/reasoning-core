@@ -16,6 +16,8 @@ shortlist -- see ``docs/dup-oracle.md``.
 from __future__ import annotations
 
 import difflib
+from collections import Counter
+from collections.abc import Iterable
 from typing import Any
 
 from .grammars import get_parser, select_grammar
@@ -179,3 +181,76 @@ def logic_ratio(a_path: str, a_src: str, b_path: str, b_src: str) -> float:
     if not a and not b:
         return 1.0
     return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+# ---------------------------------------------------------------------------
+# Distinctiveness ranking
+# ---------------------------------------------------------------------------
+#
+# Two confirmed duplicates that share only *ubiquitous* tokens (``super``,
+# ``this``, a common assignment) are weak evidence -- typically boilerplate like
+# identical constructors. Two that share repo-*rare* tokens (a specific callee)
+# are strong. We rank hits by how many distinctive (rare) tokens they share, so
+# boilerplate sinks below genuine duplication. This is a RANKING signal, not a
+# hard filter: gating on it wrongly dropped a real duplicate in testing.
+
+
+def build_token_df(functions_tokens: Iterable[list[str]]) -> tuple[Counter, int]:
+    """Document frequency of each logic token across a corpus of functions.
+
+    Returns ``(df, n)`` where ``df[token]`` is the number of functions whose
+    logic-token *set* contains ``token`` and ``n`` is the function count.
+    """
+    df: Counter = Counter()
+    n = 0
+    for tokens in functions_tokens:
+        n += 1
+        for token in set(tokens):
+            df[token] += 1
+    return df, n
+
+
+def rare_cutoff(n_functions: int, frac: float = 0.03, floor: int = 3) -> int:
+    """Df threshold at/below which a token counts as *distinctive*.
+
+    Scales with repo size (``frac`` of functions) over a small absolute floor,
+    so tiny repos still get a meaningful cutoff.
+    """
+    return max(floor, int(frac * n_functions))
+
+
+def distinctive_shared_tokens(
+    a_tokens: list[str], b_tokens: list[str], token_df: Counter, cutoff: int
+) -> list[str]:
+    """Tokens shared by both functions that are rare across the repo
+    (``df <= cutoff``) -- the evidence a match is genuine, not boilerplate. Also
+    what the advisory shows the agent as the "why we think so".
+    """
+    shared = set(a_tokens) & set(b_tokens)
+    return sorted(t for t in shared if token_df.get(t, 0) <= cutoff)
+
+
+def distinctiveness(
+    a_tokens: list[str], b_tokens: list[str], token_df: Counter, cutoff: int
+) -> int:
+    """Ranking score: how many distinctive tokens two functions share."""
+    return len(distinctive_shared_tokens(a_tokens, b_tokens, token_df, cutoff))
+
+
+def rank_by_distinctiveness(
+    query_tokens: list[str],
+    candidates: list[Any],
+    token_df: Counter,
+    cutoff: int,
+    key=lambda c: c,
+) -> list[Any]:
+    """Return ``candidates`` most-distinctive-first by how many distinctive
+    tokens each shares with ``query_tokens``. ``key`` extracts a candidate's
+    logic tokens (default: the candidate itself is the token list). The sort is
+    stable, so equal-score candidates keep input order.
+    """
+    return sorted(
+        candidates,
+        key=lambda c: distinctiveness(query_tokens, key(c), token_df, cutoff),
+        reverse=True,
+    )
