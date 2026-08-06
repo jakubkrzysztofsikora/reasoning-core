@@ -149,3 +149,10 @@ def test_extract_functions_returns_source_and_line():
     by_name = {name: (line, src) for name, line, src in funcs}
     line, src = by_name["toSlug"]
     assert line == 1 and "toLowerCase" in src
+
+
+def test_extract_functions_is_robust_to_junk_input():
+    # The runtime hook feeds arbitrary / partial edit content -> must return [],
+    # never crash (fail-open).
+    for src in ("", "   \n", "function {{{ ]] not valid", "const x = 1;"):
+        assert extract_functions("x.ts", src) == []
