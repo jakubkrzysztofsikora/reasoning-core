@@ -74,14 +74,22 @@ def advise(
     index: Optional[DupOracleIndex],
     *,
     embed_fn,
+    repo_root: Optional[str] = None,
     recall: float = RECALL_DEFAULT,
     confirm: float = CONFIRM_DEFAULT,
     top_k: int = TOP_K,
 ) -> Optional[str]:
     """Return the advisory text if any added function duplicates an indexed one,
-    else ``None``. Pure given ``index`` + ``embed_fn`` -> offline-testable."""
+    else ``None``. Pure given ``index`` + ``embed_fn`` -> offline-testable.
+
+    ``repo_root`` lets a function's own index entry be skipped: index paths are
+    repo-relative (from ``project_index``) while ``file_path`` from the tool
+    payload is absolute, so we compare them in the same relative space -- else a
+    lightly-edited existing function would be flagged as duplicating itself.
+    """
     if not added_src or index is None or len(index) == 0:
         return None
+    self_path = os.path.relpath(file_path, repo_root) if repo_root else file_path
     try:
         functions = extract_functions(file_path, added_src)
     except UnsupportedLanguageError:
@@ -95,7 +103,7 @@ def advise(
         hits = find_near_duplicates(
             embed_fn(fsrc), tokens, index.records, index.embeddings, index.token_df,
             recall=recall, confirm=confirm,
-            skip=lambda i, rec, fp=file_path, nm=name: rec.path == fp and rec.name == nm,
+            skip=lambda i, rec, sp=self_path, nm=name: rec.path == sp and rec.name == nm,
         )
         if hits:
             blocks.append(_format_block(name, hits[:top_k]))
@@ -145,7 +153,9 @@ def main() -> None:
         repo_root = payload.get("cwd") or os.getcwd()
         from src.dup_embed import embed_function
 
-        text = advise(added, file_path, _get_index(repo_root), embed_fn=embed_function)
+        text = advise(
+            added, file_path, _get_index(repo_root), embed_fn=embed_function, repo_root=repo_root
+        )
         if text:
             _emit_additional_context(text, payload.get("hookEventName") or "PreToolUse")
     except Exception:

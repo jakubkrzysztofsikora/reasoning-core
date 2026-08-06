@@ -29,9 +29,13 @@ Two stages, so it stays fast and low-noise:
    across the repo, so boilerplate (identical constructors, thin wrappers)
    sinks below genuine duplication. A ranking, not a hard filter.
 
-Function embeddings live alongside the existing project index
-(`src/project_index.py`), built in the background and refreshed on touched
-files, so the per-edit cost is only: embed the new function + a cosine query.
+Function embeddings are held in a `DupOracleIndex` (`src/dup_repo_index.py`).
+**Current limitation:** the advisory hook builds that index on demand and caches
+it in-process, but the hook runs as a fresh process per edit — so a large repo
+pays a full rebuild each time. Wiring it onto `project_index`'s background build
++ touched-file refresh (or the sidecar) — so the per-edit cost is only "embed
+the new function + a cosine query" — is the main follow-up before it's usable at
+scale / enabled by default.
 
 ## Acceptance test (the anchor)
 

@@ -6,10 +6,13 @@ novel code).
 """
 from __future__ import annotations
 
+import io
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -17,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.dup_index import logic_tokens  # noqa: E402
 from src.dup_repo_index import build_dup_index  # noqa: E402
+from src.hooks import pre_edit_dup_advisory as hook  # noqa: E402
 from src.hooks.pre_edit_dup_advisory import _added_source, advise  # noqa: E402
 
 _VOCAB = 64
@@ -77,3 +81,49 @@ def test_advise_empty_index_or_source_is_silent(tmp_path):
     empty_dir.mkdir()
     empty_index = build_dup_index(str(empty_dir), embed_fn=_stub_embed)
     assert advise("export function f(){ return 1 + 1 + 1; }", "d.ts", empty_index, embed_fn=_stub_embed) is None
+
+
+def test_advise_skips_self_when_editing_an_indexed_file(tmp_path):
+    # Index has a.ts::toSlug and b.ts::slugify (a duplicate of toSlug).
+    (tmp_path / "a.ts").write_text(
+        'export function toSlug(s) {\n  return s.toLowerCase().replace(RE, "-").trim();\n}\n'
+    )
+    (tmp_path / "b.ts").write_text(
+        'export function slugify(v) {\n  return v.toLowerCase().replace(RE, "-").trim();\n}\n'
+    )
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    # Re-adding toSlug to a.ts, addressed by ABSOLUTE path (as the hook receives
+    # it): must skip a.ts::toSlug (self) but still flag slugify in b.ts.
+    added = 'export function toSlug(s) {\n  return s.toLowerCase().replace(RE, "-").trim();\n}\n'
+    text = advise(added, str(tmp_path / "a.ts"), index, embed_fn=_stub_embed, repo_root=str(tmp_path))
+    assert text is not None
+    assert "b.ts" in text        # the genuine cross-file duplicate is surfaced
+    assert "a.ts" not in text    # the file's own entry was skipped (no self-dup)
+
+
+def test_main_is_opt_out_by_default(monkeypatch, capsys):
+    monkeypatch.delenv("RC_DUP_ORACLE", raising=False)
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO('{"tool_input": {"file_path": "x.ts", "content": "function f(){return 1+1;}"}}'),
+    )
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == ""  # off -> no advisory, no model touched
+
+
+def test_main_fails_open_on_garbage_payload(monkeypatch, capsys):
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+    monkeypatch.setattr("sys.stdin", io.StringIO("not json at all"))
+    with pytest.raises(SystemExit) as exc:
+        hook.main()  # empty payload -> exits before building the index (no torch)
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_emit_additional_context_shape(capsys):
+    hook._emit_additional_context("hi there", "PreToolUse")
+    out = json.loads(capsys.readouterr().out)
+    assert out["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
+    assert out["hookSpecificOutput"]["additionalContext"] == "hi there"

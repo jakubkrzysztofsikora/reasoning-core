@@ -21,8 +21,19 @@ from .dup_oracle import FunctionRecord
 from .grammars import UnsupportedLanguageError
 from .project_index import _iter_repo_files
 
-# Cap embedding cost / memory on large monorepos (768-dim f32 ~= 3 KB/function).
-DEFAULT_MAX_FUNCS = int(os.environ.get("RC_DUP_ORACLE_MAX_FUNCS", "5000"))
+def _max_funcs_from_env() -> int:
+    """Cap embedding cost / memory on large monorepos (768-dim f32 ~= 3 KB/fn).
+
+    A malformed env value falls back to the default rather than raising at import
+    time (which would break the hook's fail-open contract).
+    """
+    try:
+        return int(os.environ.get("RC_DUP_ORACLE_MAX_FUNCS", "5000"))
+    except ValueError:
+        return 5000
+
+
+DEFAULT_MAX_FUNCS = _max_funcs_from_env()
 
 
 @dataclass

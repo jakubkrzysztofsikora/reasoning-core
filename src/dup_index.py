@@ -77,13 +77,17 @@ def _leaves(node: Any, prune: frozenset[str]):
 
 
 def _first_function(root: Any) -> Any:
-    """Return the first function-like node in DFS order, or ``root`` if none."""
+    """Return the first function-like node in document order, or ``root`` if none.
+
+    Callers feed a single extracted function, so sibling order is not relied
+    upon; the reversed push keeps a true left-to-right traversal regardless.
+    """
     stack = [root]
     while stack:
         node = stack.pop()
         if node.type in _FUNC_TYPES:
             return node
-        stack.extend(node.children)
+        stack.extend(reversed(node.children))
     return root
 
 
