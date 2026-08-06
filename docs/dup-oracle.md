@@ -40,4 +40,26 @@ functions the pipeline must spotlight exactly the real duplicate —
 `cleanEscapedString`, copy-pasted across `format` / `lightFormat` / `parse` —
 and must **not** confirm sibling families (`min`/`max`, `addWeeks`/`subWeeks`,
 `addDays`/`addHours`). This freezes the behaviour as a regression guard,
-independent of upstream date-fns.
+independent of upstream date-fns. All feature tests run in the offline
+`-m "not live"` gate (frozen `.npy` vectors); the model only runs in the
+fixture generator.
+
+## Modules
+
+- `src/dup_index.py` — normaliser, logic-token diff, distinctiveness ranking,
+  function extraction (pure; tree-sitter only).
+- `src/dup_oracle.py` — the two-stage query (`find_near_duplicates`).
+- `src/dup_repo_index.py` — builds the repo function+embedding index.
+- `src/dup_embed.py` — L2-normalising wrapper over `ssm_backbone.embed`
+  (the only torch-touching module).
+- `src/hooks/pre_edit_dup_advisory.py` — the PreToolUse advisory.
+
+## Enabling
+
+Off by default. To turn it on, set `RC_DUP_ORACLE=1` and wire the hook as a
+`PreToolUse` matcher for `Edit|Write|MultiEdit` in `.claude/settings.json`:
+
+    python3 src/hooks/pre_edit_dup_advisory.py
+
+It reads the tool payload on stdin and, when a duplicate is found, prints a
+`hookSpecificOutput.additionalContext` blurb (exit 0, never blocks).
