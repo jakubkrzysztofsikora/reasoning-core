@@ -42,6 +42,14 @@ PICK_B_TS = 'function pickB(items) {\n  let acc;\n  for (const el of items) { if
 SUM_LOOP_TS = 'function sumA(xs) {\n  let total = 0;\n  for (const x of xs) { total += x; }\n  return total;\n}'
 SUM_REDUCE_TS = 'function sumB(xs) {\n  return xs.reduce((a, b) => a + b, 0);\n}'
 
+# --- Object-destructuring shorthand: `{id}` is a property READ, not a pure
+#     local rename. Different keys read different fields -> different function;
+#     same key with renamed surrounding locals -> a duplicate. Canonicalising
+#     the shorthand key would wrongly collapse the first pair (false positive). -
+DESTR_ID_TS = 'function sa(rows) {\n  let t = 0;\n  for (const {id} of rows) { t += id; }\n  return t;\n}'
+DESTR_AMOUNT_TS = 'function sb(rows) {\n  let t = 0;\n  for (const {amount} of rows) { t += amount; }\n  return t;\n}'
+DESTR_ID_RENAMED_TS = 'function sc(list) {\n  let s = 0;\n  for (const {id} of list) { s += id; }\n  return s;\n}'
+
 
 def test_renamed_python_copy_is_a_duplicate():
     assert logic_ratio("a.py", TO_SLUG_PY, "b.py", SLUGIFY_PY) >= CONFIRM
@@ -75,6 +83,16 @@ def test_structural_rewrite_is_not_confirmed_by_logic_alone():
 
 def test_both_empty_ratio_is_one():
     assert logic_ratio("a.ts", "", "b.ts", "") == 1.0
+
+
+def test_different_destructured_key_is_not_a_duplicate():
+    # {id} vs {amount} read different fields -> must NOT collapse.
+    assert logic_ratio("a.ts", DESTR_ID_TS, "b.ts", DESTR_AMOUNT_TS) < CONFIRM
+
+
+def test_same_destructured_key_with_renamed_locals_is_a_duplicate():
+    # Same field, only surrounding locals renamed -> a duplicate.
+    assert logic_ratio("a.ts", DESTR_ID_TS, "b.ts", DESTR_ID_RENAMED_TS) >= CONFIRM
 
 
 def test_own_name_is_dropped():
