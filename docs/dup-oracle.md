@@ -30,12 +30,18 @@ Two stages, so it stays fast and low-noise:
    sinks below genuine duplication. A ranking, not a hard filter.
 
 Function embeddings are held in a `DupOracleIndex` (`src/dup_repo_index.py`).
-**Current limitation:** the advisory hook builds that index on demand and caches
-it in-process, but the hook runs as a fresh process per edit — so a large repo
-pays a full rebuild each time. Wiring it onto `project_index`'s background build
-+ touched-file refresh (or the sidecar) — so the per-edit cost is only "embed
-the new function + a cosine query" — is the main follow-up before it's usable at
-scale / enabled by default.
+
+**Current limitation + planned fix.** The advisory hook builds that index on
+demand and caches it in-process, but the hook runs as a fresh process per edit —
+so a large repo pays two costs each time: re-embedding every function, and
+reloading the encoder. Persisting the index removes both. The natural home is the
+**sidecar**: it already holds the model in memory and already keeps embedding
+state across requests (`/baseline`), so a `/dup-check` endpoint alongside it would
+drop the per-edit cost to just "embed the new function + a cosine query". A
+self-contained **disk cache** (reload vectors, re-embed only touched files) is a
+lighter fallback for runs without the sidecar — it removes the re-embed cost but
+not the model load. This is the main follow-up before default-enable; scoped and
+ready to build into the sidecar once the approach is agreed.
 
 ## Acceptance test (the anchor)
 
