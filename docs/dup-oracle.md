@@ -109,6 +109,9 @@ if that's wanted before merge.
 - `src/dup_embed.py` — L2-normalising wrapper over `ssm_backbone.embed`
   (the only torch-touching module).
 - `src/hooks/pre_edit_dup_advisory.py` — the PreToolUse advisory.
+- `src/dup_oracle_flagcount.py` — per-session flag counter + colour gradient
+  (pure; no torch, no terminal).
+- `src/hooks/dup_oracle_statusline.py` — the statusline segment (reader).
 
 ## Enabling
 
@@ -124,3 +127,35 @@ The index is cached to disk automatically (see **Index persistence** above).
 Relevant env: `RC_DUP_ORACLE_CACHE=0` disables the cache, `RC_DUP_ORACLE_MAX_FUNCS`
 sets the embedding ceiling, `RC_CACHE_DIR` relocates the cache
 (default `~/.cache/reasoning-core/dup-index.<repo-hash>.npz`).
+
+## Statusline visibility (optional, debug)
+
+A companion statusline segment shows how many reuse advisories the hook has
+raised **in the current session**, colour-coded so you can see at a glance
+whether the agent keeps reinventing existing code:
+
+- **green** `0 flags` — all clear;
+- **pale orange** at the first flag, ramping steadily to **red** by ~10 flags —
+  a climbing count means the agent is repeatedly re-implementing things the repo
+  already has (a cue that it may need steering).
+
+Same gate as the hook (`RC_DUP_ORACLE=1`); silent otherwise, so it never implies
+the oracle is running when it isn't. Per-session (a new session starts at 0),
+local-only, and fails open — a broken counter never breaks the statusline or an
+edit. It does **not** collect or transmit anything; the count lives in a small
+per-session file under the OS temp dir.
+
+Mechanism: the hook appends one record to that file each time it emits an
+advisory; the statusline reads the file every prompt and renders the count. Both
+key the file off the payload's `session_id`.
+
+To turn it on, add a `statusLine` command to `.claude/settings.json` (this is a
+manual edit — the repo's bash guard blocks scripted writes to settings):
+
+    "statusLine": {
+      "type": "command",
+      "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/dup_oracle_statusline.py"
+    }
+
+**Not in scope:** cross-user telemetry / data collection — this is a local debug
+view only.
