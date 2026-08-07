@@ -170,6 +170,70 @@ def test_main_emits_advisory_on_a_real_duplicate(tmp_path, monkeypatch, capsys):
     assert "toSlug" in out["hookSpecificOutput"]["additionalContext"]
 
 
+def _slug_dup_payload(tmp_path):
+    return {
+        "tool_input": {
+            "file_path": str(tmp_path / "d.ts"),
+            "content": "export function makeSlug(t) {\n  " + _SLUG_BODY.format(v="t") + "\n}\n",
+        },
+        "cwd": str(tmp_path),
+        "session_id": "hook-sess",
+    }
+
+
+def test_main_bumps_the_flag_tally_when_it_emits_an_advisory(tmp_path, monkeypatch):
+    # The statusline counter must tick up exactly when an advisory fires. Redirect
+    # the flag-counter's tmp dir into tmp_path so the round-trip is hermetic, then
+    # assert the real counter went 0 -> 1 across a real main() that emits.
+    import src.dup_oracle_flagcount as fc
+
+    monkeypatch.setattr(fc.tempfile, "gettempdir", lambda: str(tmp_path / "counters"))
+    (tmp_path / "a.ts").write_text("export function toSlug(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+    monkeypatch.setattr(hook, "_get_index", lambda root: index)
+    monkeypatch.setattr(hook, "_embedder", lambda: _stub_embed)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_slug_dup_payload(tmp_path))))
+
+    assert fc.read_count("hook-sess") == 0
+    with pytest.raises(SystemExit) as exc:
+        hook.main()
+    assert exc.value.code == 0
+    assert fc.read_count("hook-sess") == 1  # advisory emitted -> one flag
+
+
+def test_main_does_not_bump_when_no_advisory_is_emitted(tmp_path, monkeypatch, capsys):
+    # A novel function raises no advisory, so the tally must stay at 0 -- the
+    # counter tracks flags raised, not edits seen.
+    import src.dup_oracle_flagcount as fc
+
+    monkeypatch.setattr(fc.tempfile, "gettempdir", lambda: str(tmp_path / "counters"))
+    (tmp_path / "a.ts").write_text("export function toSlug(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+    monkeypatch.setattr(hook, "_get_index", lambda root: index)
+    monkeypatch.setattr(hook, "_embedder", lambda: _stub_embed)
+    payload = {
+        "tool_input": {
+            "file_path": str(tmp_path / "d.ts"),
+            "content": (
+                "export function quicksort(arr) {\n"
+                "  if (arr.length < 2) return arr;\n"
+                "  const p = arr[0];\n"
+                "  return quicksort(arr.filter((x) => x < p));\n"
+                "}\n"
+            ),
+        },
+        "cwd": str(tmp_path),
+        "session_id": "hook-sess",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert capsys.readouterr().out == ""  # no advisory...
+    assert fc.read_count("hook-sess") == 0  # ...so no tick
+
+
 def test_main_fails_open_when_the_work_raises(tmp_path, monkeypatch, capsys):
     # A real exception in the happy path (here: index build) must be swallowed
     # -> exit 0, no output. Narrowing the except would make this raise.

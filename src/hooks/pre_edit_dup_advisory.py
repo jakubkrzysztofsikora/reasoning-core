@@ -34,6 +34,7 @@ _IMPORT_ERROR: Optional[str] = None
 try:  # a PreToolUse hook must never crash at import, even when it's disabled
     from src.dup_index import extract_functions, logic_tokens
     from src.dup_oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, find_near_duplicates
+    from src.dup_oracle_flagcount import bump as _bump_flagcount
     from src.dup_repo_index import (
         DupOracleIndex,
         build_dup_index,
@@ -48,6 +49,7 @@ except Exception as exc:  # noqa: BLE001 - hook must never crash
     extract_functions = logic_tokens = find_near_duplicates = None  # type: ignore
     build_dup_index = load_or_build_dup_index = None  # type: ignore
     DupOracleIndex = UnsupportedLanguageError = None  # type: ignore
+    _bump_flagcount = None  # type: ignore
     RECALL_DEFAULT, CONFIRM_DEFAULT = 0.80, 0.97
 
 TOP_K = 3
@@ -200,6 +202,8 @@ def main() -> None:
         )
         if text:
             _emit_additional_context(text, payload.get("hookEventName") or "PreToolUse")
+            if _bump_flagcount is not None:  # per-session tally for the statusline
+                _bump_flagcount(payload.get("session_id") or "")
     except Exception as exc:  # noqa: BLE001
         # Fail open -- an advisory must never block an edit -- but leave a trace
         # so a broken run isn't invisible when the operator enabled it.
