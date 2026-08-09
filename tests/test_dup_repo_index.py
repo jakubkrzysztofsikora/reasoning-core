@@ -118,6 +118,49 @@ def test_index_build_survives_a_file_whose_grammar_is_missing(tmp_path):
     assert "keep" in {r.name for r in index.records}
 
 
+def test_index_skips_a_file_whose_grammar_is_not_installed(tmp_path, monkeypatch):
+    # Deterministic (grammar-agnostic) version of the degradation guard: force
+    # ONE file's extraction to raise the grammar-not-installed RuntimeError and
+    # assert the build survives and still indexes the other file.
+    import src.dup_repo_index as dri
+
+    (tmp_path / "a.mjs").write_text(
+        "export function keep(s) {\n  return s.toLowerCase().replace(RE, '-').trim();\n}\n"
+    )
+    (tmp_path / "b.mjs").write_text(
+        "export function other(s) {\n  return s.toUpperCase().split(',').join('-');\n}\n"
+    )
+    real = dri.extract_functions
+
+    def flaky(rel, src):
+        if rel.endswith("b.mjs"):
+            raise RuntimeError("Could not load tree-sitter grammar for 'javascript'. Install ...")
+        return real(rel, src)
+
+    monkeypatch.setattr(dri, "extract_functions", flaky)
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    names = {r.name for r in index.records}
+    assert "keep" in names and "other" not in names
+
+
+def test_index_build_does_not_swallow_a_systemic_grammar_error(tmp_path, monkeypatch):
+    # A systemic failure (tree-sitter ABI mismatch) affects every file. It must
+    # NOT be silently turned into an empty index -- the oracle would then report
+    # "no duplicates" forever with zero signal. It must surface.
+    import src.dup_repo_index as dri
+
+    (tmp_path / "a.mjs").write_text(
+        "export function keep(s) {\n  return s.toLowerCase().replace(RE, '-').trim();\n}\n"
+    )
+
+    def boom(rel, src):
+        raise RuntimeError("tree-sitter ABI mismatch for 'javascript': ... upgrade tree-sitter")
+
+    monkeypatch.setattr(dri, "extract_functions", boom)
+    with pytest.raises(RuntimeError):
+        build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+
+
 @pytest.mark.skipif(not HAS_CSHARP, reason="tree-sitter C# grammar not installed")
 def test_index_covers_csharp_when_grammar_available(tmp_path):
     (tmp_path / "a.cs").write_text(

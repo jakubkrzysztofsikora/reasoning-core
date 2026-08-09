@@ -7,9 +7,9 @@ tokens + a repo token-df, and embeds each. The embedder is **injectable**
 offline with a stub -- the real model is only reached when no ``embed_fn`` is
 supplied.
 
-File discovery is the dup oracle's own (``_iter_source_files``) rather than
-``project_index._iter_repo_files``: the latter walks only ``.py/.js/.ts/.tsx``
-for its call-graph feature, which would silently miss duplicates in other
+File discovery reuses ``project_index._iter_repo_files`` with the dup oracle's
+own wider extension set: that helper walks only ``.py/.js/.ts/.tsx`` by default
+(for its call-graph feature), which would silently miss duplicates in other
 grammar-supported code sources (``.mjs/.cjs/.cs``).
 """
 from __future__ import annotations
@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 from collections import Counter
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
@@ -25,37 +24,18 @@ import numpy as np
 from .dup_index import build_token_df, extract_functions, logic_tokens
 from .dup_oracle import FunctionRecord
 from .grammars import EXTENSION_MAP, UnsupportedLanguageError
-from .project_index import _is_skip_dir
+from .project_index import _iter_repo_files
 
 # The oracle dedups *functions*, so index only the function-bearing code
 # languages the grammars support -- not data/markup (json, yaml, css, html,
-# markdown, dockerfile, sql) which have nothing to compare. Derived from the
-# grammar extension map so a newly-supported code language is covered here
-# automatically. Yields e.g. {.py, .js, .mjs, .cjs, .ts, .tsx, .cs}.
+# markdown, dockerfile, sql) which have nothing to compare. This is an explicit
+# allowlist: to index a newly-supported *language*, add its id here (a new
+# *extension* of a language already listed is picked up automatically from
+# EXTENSION_MAP). Yields e.g. {.py, .js, .mjs, .cjs, .ts, .tsx, .cs}.
 _CODE_LANGUAGES = frozenset({"python", "javascript", "typescript", "tsx", "csharp"})
 _DUP_SRC_EXTS = frozenset(
     ext for ext, lang in EXTENSION_MAP.items() if lang in _CODE_LANGUAGES
 )
-
-
-def _iter_source_files(repo_root: str) -> list[str]:
-    """Return sorted relative paths of the repo's function-bearing code files.
-
-    Mirrors ``project_index``'s skip-dir pruning (dotdirs, vendored trees) but
-    covers every code extension the dup oracle can extract functions from.
-    """
-    found: list[str] = []
-    root = Path(repo_root)
-    if not root.is_dir():
-        return found
-    for dirpath, dirnames, filenames in os.walk(str(root)):
-        dirnames[:] = [d for d in dirnames if not _is_skip_dir(d)]
-        reldir = Path(dirpath).relative_to(root)
-        for fn in filenames:
-            if any(fn.endswith(ext) for ext in _DUP_SRC_EXTS):
-                found.append(str(reldir / fn))
-    found.sort()
-    return found
 
 
 def _max_funcs_from_env() -> int:
@@ -109,22 +89,26 @@ def build_dup_index(
         embed_fn = _default_embed()
 
     collected: list[tuple[str, str, int, str]] = []  # (rel, name, line, source)
-    for rel in _iter_source_files(repo_root):
+    for rel in _iter_repo_files(repo_root, _DUP_SRC_EXTS):
         if len(collected) >= max_funcs:
             break
         try:
-            src = open(os.path.join(repo_root, rel), encoding="utf-8", errors="replace").read()
+            with open(os.path.join(repo_root, rel), encoding="utf-8", errors="replace") as fh:
+                src = fh.read()
         except OSError:
             continue
         try:
             funcs = extract_functions(rel, src)
-        except (UnsupportedLanguageError, RuntimeError):
-            # UnsupportedLanguageError: extension isn't a code grammar.
-            # RuntimeError: the grammar wheel isn't installed (e.g. C# absent).
-            # Either way, skip this file rather than failing the whole build --
-            # the oracle must degrade gracefully, never disable itself on one
-            # unindexable file.
-            continue
+        except UnsupportedLanguageError:
+            continue  # extension isn't a code grammar
+        except RuntimeError as exc:
+            # A missing grammar wheel (e.g. C# absent) is per-file skippable --
+            # degrade gracefully rather than failing the whole build. But a
+            # systemic failure (tree-sitter ABI mismatch) must NOT be swallowed
+            # into a silently-empty index; let it surface.
+            if "Could not load tree-sitter grammar" in str(exc):
+                continue
+            raise
         for name, line, fsrc in funcs:
             collected.append((rel, name, line, fsrc))
             if len(collected) >= max_funcs:
