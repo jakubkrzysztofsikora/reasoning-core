@@ -41,8 +41,11 @@ _PRUNED_SUBTREES = frozenset({
     "string", "template_string",
 })
 _FUNC_TYPES = frozenset({
+    # JS / TS / Python
     "function_declaration", "method_definition", "arrow_function",
     "function_expression", "function_definition",
+    # C# (node names mirror s2_core._csharp_methods)
+    "method_declaration", "local_function_statement", "constructor_declaration",
 })
 # Structural punctuation carries no logic signal -- dropped.
 _PUNCT = frozenset({"(", ")", "{", "}", "[", "]", ",", ";", ":", ".", "$", "=>", "?."})
@@ -199,9 +202,10 @@ def extract_functions(path: str, src: str) -> list[tuple[str, int, str]]:
     """Extract named function definitions from a source file.
 
     Yields ``(name, line, source)`` for each ``function_declaration``,
-    ``method_definition``, and *named* (variable-bound) arrow / function
-    expression whose source is 40-3000 chars. Unnamed inline callbacks are
-    skipped so the index holds reusable, named units. ``line`` is 1-based.
+    ``method_definition``, C# method / constructor / local function, and *named*
+    (variable-bound) arrow / function expression whose source is 40-3000 chars.
+    Unnamed inline callbacks are skipped so the index holds reusable, named
+    units. ``line`` is 1-based.
     """
     src_bytes = src.encode("utf-8", errors="replace")
     root = _parse(path, src).root_node

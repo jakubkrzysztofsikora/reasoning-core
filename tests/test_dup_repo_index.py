@@ -24,15 +24,21 @@ from src.dup_repo_index import build_dup_index  # noqa: E402
 _VOCAB = 64
 
 
-def _grammar_available(rel: str, sample: str) -> bool:
+def _extraction_works(rel: str, sample: str) -> bool:
+    """True only if the extractor actually returns a function for ``sample`` --
+    a loadable grammar alone is not enough (the node types must be in
+    dup_index._FUNC_TYPES), so this guards against a false-positive skip."""
     try:
-        extract_functions(rel, sample)
-        return True
+        return bool(extract_functions(rel, sample))
     except Exception:
         return False
 
 
-HAS_CSHARP = _grammar_available("x.cs", "class C { int A() { return 1; } }\n")
+# A substantial (>=40 char body) C# method so the size filter doesn't drop it.
+HAS_CSHARP = _extraction_works(
+    "x.cs",
+    "class C {\n  public int Add(int a, int b) { return a + b + a - b; }\n}\n",
+)
 
 
 def _stub_embed(source: str) -> np.ndarray:

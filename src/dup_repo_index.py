@@ -26,12 +26,14 @@ from .dup_oracle import FunctionRecord
 from .grammars import EXTENSION_MAP, UnsupportedLanguageError
 from .project_index import _iter_repo_files
 
-# The oracle dedups *functions*, so index only the function-bearing code
-# languages the grammars support -- not data/markup (json, yaml, css, html,
-# markdown, dockerfile, sql) which have nothing to compare. This is an explicit
-# allowlist: to index a newly-supported *language*, add its id here (a new
-# *extension* of a language already listed is picked up automatically from
-# EXTENSION_MAP). Yields e.g. {.py, .js, .mjs, .cjs, .ts, .tsx, .cs}.
+# The oracle dedups *functions*, so index only languages whose function nodes
+# the extractor actually understands -- i.e. those with entries in
+# ``dup_index._FUNC_TYPES``. This is the real gate, NOT grammar/EXTENSION_MAP
+# membership: a language can be grammar-parseable (e.g. SQL, which grammars.py
+# classifies as code, not data) yet have no function node types in the
+# extractor, in which case indexing it would silently yield nothing. To add a
+# language here you must ALSO add its function node types to ``_FUNC_TYPES``.
+# Explicit allowlist by design; yields e.g. {.py, .js, .mjs, .cjs, .ts, .tsx, .cs}.
 _CODE_LANGUAGES = frozenset({"python", "javascript", "typescript", "tsx", "csharp"})
 _DUP_SRC_EXTS = frozenset(
     ext for ext, lang in EXTENSION_MAP.items() if lang in _CODE_LANGUAGES
