@@ -197,6 +197,8 @@ def _t1_node_check(*, file_path: str, after_src: str, report: OracleReport) -> N
     """
     if not file_path.endswith(_JS_EXTENSIONS):
         return
+    if file_path.endswith(".jsx"):
+        return  # node --check cannot parse JSX; eslint (T2) covers it instead
     if not shutil.which("node"):
         return
 

@@ -104,6 +104,62 @@ def test_node_check_flags_error_broken_under_both_module_systems():
 
 
 # ---------------------------------------------------------------------------
+# T1 — JSX must not be routed to `node --check` (Node cannot parse JSX)
+# ---------------------------------------------------------------------------
+
+
+class _FakeProc:
+    def __init__(self, returncode: int, stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+def test_node_check_skips_jsx_even_when_node_is_present(monkeypatch):
+    # `node --check` cannot parse JSX under any module system, so valid React
+    # (`return <div />`) is false-flagged as a syntax error whenever node is
+    # installed. .jsx must be skipped BEFORE node runs -- asserted
+    # node-independently by mocking node as present and having it reject input.
+    calls = []
+    monkeypatch.setattr(_oracles.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(
+        _oracles.subprocess,
+        "run",
+        lambda *a, **k: calls.append(a)
+        or _FakeProc(returncode=1, stderr="tmp.cjs:2\nSyntaxError: Unexpected token '<'"),
+    )
+    report = _oracles.OracleReport()
+    _oracles._t1_node_check(
+        file_path="App.jsx",
+        after_src='export function App() {\n  return <div className="x" />;\n}\n',
+        report=report,
+    )
+    assert calls == []  # node --check never invoked for JSX
+    assert report.clean is True
+    assert all(a.tool != "node" for a in report.annotations)
+
+
+def test_node_check_still_runs_on_plain_js(monkeypatch):
+    # Guard against over-correction: plain .js must still be syntax-checked.
+    calls = []
+    monkeypatch.setattr(_oracles.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(
+        _oracles.subprocess, "run", lambda *a, **k: calls.append(a) or _FakeProc(returncode=0)
+    )
+    report = _oracles.OracleReport()
+    _oracles._t1_node_check(file_path="good.js", after_src="const x = 1;\n", report=report)
+    assert calls != []  # node --check was invoked for .js
+
+
+@pytest.mark.skipif(not HAS_NODE, reason="node not installed")
+def test_node_check_passes_valid_jsx_end_to_end():
+    # Full path with a real node: valid JSX in a .jsx file must not be flagged.
+    report = _oracles.run_oracles(
+        "App.jsx", "export function App() {\n  return <div />;\n}\n", enable_t2=False
+    )
+    assert all(a.tool != "node" for a in report.annotations)
+
+
+# ---------------------------------------------------------------------------
 # T2 — eslint (JS/TS lint, best-effort)
 # ---------------------------------------------------------------------------
 
