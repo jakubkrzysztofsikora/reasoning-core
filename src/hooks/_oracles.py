@@ -31,7 +31,7 @@ def _ruff_command() -> list[str] | None:
     binary = shutil.which("ruff")
     if binary:
         return [binary]
-    candidate = Path(sys.executable).resolve().parent / "ruff"
+    candidate = Path(sys.prefix) / "bin" / "ruff"
     if candidate.is_file() and os.access(candidate, os.X_OK):
         return [str(candidate)]
     return None
