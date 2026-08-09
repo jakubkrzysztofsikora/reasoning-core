@@ -15,11 +15,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.dup_index import logic_tokens  # noqa: E402
+import pytest  # noqa: E402
+
+from src.dup_index import extract_functions, logic_tokens  # noqa: E402
 from src.dup_oracle import find_near_duplicates  # noqa: E402
 from src.dup_repo_index import build_dup_index  # noqa: E402
 
 _VOCAB = 64
+
+
+def _grammar_available(rel: str, sample: str) -> bool:
+    try:
+        extract_functions(rel, sample)
+        return True
+    except Exception:
+        return False
+
+
+HAS_CSHARP = _grammar_available("x.cs", "class C { int A() { return 1; } }\n")
 
 
 def _stub_embed(source: str) -> np.ndarray:
@@ -79,6 +92,39 @@ def test_max_funcs_caps_within_a_single_file(tmp_path):
     (tmp_path / "many.ts").write_text(fns + "\n")
     index = build_dup_index(str(tmp_path), embed_fn=_stub_embed, max_funcs=3)
     assert len(index) == 3
+
+
+def test_index_covers_mjs_and_cjs(tmp_path):
+    # The grammars support .mjs/.cjs (both -> javascript), so duplicates in those
+    # sources must be indexed. The old discovery only walked .py/.js/.ts/.tsx and
+    # silently missed them.
+    (tmp_path / "a.mjs").write_text("export function slugM(s) {\n  return s.toLowerCase().trim();\n}\n")
+    (tmp_path / "b.cjs").write_text(
+        "function slugC(s) {\n  return s.toLowerCase().trim();\n}\nmodule.exports = { slugC };\n"
+    )
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    assert {"slugM", "slugC"} <= {r.name for r in index.records}
+
+
+def test_index_build_survives_a_file_whose_grammar_is_missing(tmp_path):
+    # A supported-but-uninstalled grammar (e.g. C# where the wheel is absent)
+    # raises at extract time. That must degrade to "skip this file", never crash
+    # the whole build -- the JS functions must still be indexed.
+    (tmp_path / "a.mjs").write_text(
+        "export function keep(s) {\n  return s.toLowerCase().replace(RE, '-').trim();\n}\n"
+    )
+    (tmp_path / "weird.cs").write_text("class C {\n  int Add(int a, int b) { return a + b; }\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)  # must not raise
+    assert "keep" in {r.name for r in index.records}
+
+
+@pytest.mark.skipif(not HAS_CSHARP, reason="tree-sitter C# grammar not installed")
+def test_index_covers_csharp_when_grammar_available(tmp_path):
+    (tmp_path / "a.cs").write_text(
+        "class Calc {\n  public int Add(int a, int b) { return a + b; }\n}\n"
+    )
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    assert any(r.name == "Add" for r in index.records)
 
 
 def test_build_indexes_across_languages(tmp_path):
