@@ -189,11 +189,17 @@ def _resolve_node_bin(name: str, worktree: Optional[Path] = None) -> Optional[st
 def _t1_node_check(*, file_path: str, after_src: str, report: OracleReport) -> None:
     """Syntax-check JavaScript with ``node --check`` (the JS ``py_compile``).
 
-    ``.mjs`` is always ESM and ``.cjs`` always CommonJS; plain ``.js`` / ``.jsx``
-    are ambiguous, so the source is checked under both module systems and only
+    ``.mjs`` is always ESM and ``.cjs`` always CommonJS; plain ``.js`` is
+    ambiguous, so the source is checked under both module systems and only
     reported when *both* reject it. Otherwise valid ESM in a ``.js`` file (a
     ``"type": "module"`` project) would be false-blocked. Skips non-JS files and
     no-ops when ``node`` isn't installed.
+
+    ``.jsx`` is excluded entirely: ``node --check`` cannot parse JSX under any
+    module system, so valid React would be false-flagged; eslint (T2) lints it
+    instead. Known limitation: JSX written in a plain ``.js`` file (e.g. CRA /
+    Next) is not detectable by extension and is still checked -- a rarer,
+    pre-existing case left to a follow-up.
     """
     if not file_path.endswith(_JS_EXTENSIONS):
         return
