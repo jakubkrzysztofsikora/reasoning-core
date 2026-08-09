@@ -331,3 +331,12 @@ Smoke runs at n ≤ 5 are descriptive only. Use them to gate "the harness
 itself is healthy" (every per-task file present, no schema drift, no
 sidecar timeouts > 5 %). Real ship/kill votes come from n ≥ 50 and
 ideally the full n=100.
+# Evaluation protocol note
+
+`run_suite.py` freezes its task selection, seed, arm configuration, dataset
+digest, code SHA, and aggregate-report digest in `run_manifest.json`. The
+continuing weekly monitoring design uses five paired arms (`vanilla`,
+`advisory_shadow`, `deterministic_only`, `plan_grounding_only`, and
+`full_copilot`) with 20 tasks. These runs are regression monitoring, not proof
+of broad performance claims; use two arm-blind labelers and report reliability
+before interpreting differences.

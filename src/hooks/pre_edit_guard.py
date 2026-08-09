@@ -901,6 +901,45 @@ def main() -> None:
                 extra={**(rich_pg.audit_extra or {}), "rc_mode": _rc_mode()},
             )
 
+        # Project structural checks are deterministic and run before neural
+        # scoring.  Explicit allowlists are deliberately narrow: a matching
+        # cycle or duplicate key must be named by the operator.
+        try:
+            from src import project_index as _project_index  # type: ignore
+            root = str(_project_dir())
+            cycle = _project_index.find_import_cycle(root, file_path, after_src)
+            duplicates = _project_index.find_duplicate_definitions(root, file_path, after_src)
+            cycle_key = " -> ".join(cycle) if cycle else ""
+            cycle_allowed = cycle_key in {x.strip() for x in os.environ.get("RC_IMPORT_CYCLE_ALLOWLIST", "").split(",") if x.strip()}
+            duplicate_allow = {x.strip() for x in os.environ.get("RC_DUPLICATE_ALLOWLIST", "").split(",") if x.strip()}
+            unallowed_duplicates = [item for item in duplicates if f"{item['symbol']}@{item['path']}" not in duplicate_allow]
+            structural_reason = ""
+            if cycle and not cycle_allowed:
+                structural_reason = f"import_cycle:{cycle_key}"
+            elif unallowed_duplicates:
+                first_duplicate = unallowed_duplicates[0]
+                structural_reason = f"duplicate_definition:{first_duplicate['kind']}:{first_duplicate['symbol']}@{first_duplicate['path']}:{first_duplicate['line']}"
+            if structural_reason:
+                message = (
+                    "[reasoning-core] BLOCKED: deterministic structural policy\n"
+                    f"  reason: {structural_reason}\n"
+                    "  hint: repair the import/definition, or add the exact entry to the operator allowlist.\n"
+                )
+                extra = {"import_cycle": cycle, "duplicate_definitions": duplicates, "rc_mode": _rc_mode()}
+                if _rc_mode() != "advise" and os.environ.get("RC_STRUCTURAL_BLOCK", "1") == "1":
+                    audit_log.record_block(file_path)
+                    _emit_audit(tool_name=tool_name, decision="blocked", file_path=file_path, started=started,
+                                before_src=before_src, after_src=after_src, reason=structural_reason,
+                                signal_source="structural", retry_after_block=is_retry, extra=extra)
+                    _exit(2, message)
+                sys.stderr.write(message.replace("BLOCKED", "WARN"))
+                _emit_audit(tool_name=tool_name, decision="warn", file_path=file_path, started=started,
+                            before_src=before_src, after_src=after_src, reason=structural_reason,
+                            signal_source="structural", retry_after_block=is_retry, extra=extra)
+                pair_has_audit_row = True
+        except Exception:  # noqa: BLE001 - unavailable index never becomes a hidden block
+            pass
+
         # Phase 2: execution-grounded oracles. Track the cumulative patch and
         # run fast T1/T2 checks before the expensive sidecar call.
         if _patch_tracker is not None:
@@ -1330,6 +1369,30 @@ def main() -> None:
             is_retry=is_retry,
         ):
             continue
+
+        # Neural coherence is evidence, not an independent hard policy.  All
+        # deterministic hard sources above return immediately; if execution
+        # reaches here a neural regression is necessarily uncorroborated.
+        if (report.get("regression_detected") and report.get("fired_conditions") is not None
+                and os.environ.get("RC_NEURAL_CORROBORATED", "1") == "1"):
+            advisory = dict(report)
+            advisory["regression_detected"] = False
+            advisory["neural_signal_mode"] = "advisory"
+            _emit_audit(
+                tool_name=tool_name,
+                decision="warn",
+                file_path=file_path,
+                started=started,
+                before_src=before_src,
+                after_src=after_src,
+                report=advisory,
+                reason="neural_uncorroborated_advisory",
+                signal_source="neural",
+                retry_after_block=is_retry,
+                extra={"rc_mode": _rc_mode(), "neural_signal_mode": "advisory"},
+            )
+            report = advisory
+            pair_has_audit_row = True
 
         # Final SSM/aggregate regression gate. Honor RC_MODE: advise warns,
         # copilot/autopilot block.

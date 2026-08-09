@@ -24,6 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src import baselines
+
 # Make hook helpers importable without installing the package.
 _HOOKS_DIR = Path(__file__).resolve().parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
@@ -60,6 +62,49 @@ def _audit_root() -> Path:
 def _today_dir() -> Path:
     import datetime as dt
     return _audit_root() / dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def cmd_baseline_capture(args: argparse.Namespace) -> int:
+    """Capture a registry manifest; refuse to overwrite an existing baseline."""
+    target = baselines.manifest_path(args.id)
+    if target.exists():
+        sys.stderr.write(f"baseline already exists (immutable): {target}\n")
+        return 2
+    local_root = Path(args.artifact_root or os.path.expanduser("~/.local/share/reasoning-core/baselines")) / args.id
+    local_root.mkdir(parents=True, exist_ok=True)
+    manifest = baselines.create_manifest(args.id, audit_root=_audit_root(), artifacts=[local_root])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(target)
+    return 0
+
+
+def cmd_baseline_list(_args: argparse.Namespace) -> int:
+    if not baselines.REGISTRY_ROOT.is_dir():
+        return 0
+    for path in sorted(baselines.REGISTRY_ROOT.glob("*.json")):
+        try:
+            manifest = baselines.load_manifest(path.stem)
+            print(f"{manifest['baseline_id']}\t{manifest['captured_at']}\t{manifest.get('code', {}).get('git_sha', 'unknown')}")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            sys.stderr.write(f"invalid baseline {path}: {exc}\n")
+            return 2
+    return 0
+
+
+def cmd_baseline_show(args: argparse.Namespace) -> int:
+    manifest = baselines.load_manifest(args.id)
+    if args.verify:
+        manifest = {**manifest, "artifact_verification": baselines.verify_artifacts(manifest)}
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_baseline_compare(args: argparse.Namespace) -> int:
+    left = baselines.load_manifest(args.from_id)
+    right = baselines.load_manifest(args.to_id)
+    print(json.dumps(baselines.compare_manifests(left, right), indent=2, sort_keys=True))
+    return 0
 
 
 def _guard_hash_store_path() -> Path:
@@ -1547,6 +1592,21 @@ def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    baseline = sub.add_parser("baseline", help="capture and inspect immutable evaluation baselines")
+    baseline_sub = baseline.add_subparsers(dest="baseline_cmd", required=True)
+    baseline_capture = baseline_sub.add_parser("capture", help="capture a new immutable baseline manifest")
+    baseline_capture.add_argument("--id", default=baselines.DEFAULT_ID)
+    baseline_capture.add_argument("--artifact-root", default=None)
+    baseline_capture.set_defaults(func=cmd_baseline_capture)
+    baseline_sub.add_parser("list", help="list committed baseline manifests").set_defaults(func=cmd_baseline_list)
+    baseline_show = baseline_sub.add_parser("show", help="print one baseline manifest")
+    baseline_show.add_argument("id")
+    baseline_show.add_argument("--verify", action="store_true", help="verify hashes of available local artifacts")
+    baseline_show.set_defaults(func=cmd_baseline_show)
+    baseline_compare = baseline_sub.add_parser("compare", help="compare two immutable manifests")
+    baseline_compare.add_argument("from_id")
+    baseline_compare.add_argument("to_id")
+    baseline_compare.set_defaults(func=cmd_baseline_compare)
     gh = sub.add_parser(
         "guard-hash",
         help="verify guard files and enforcement config against stored hashes",

@@ -92,7 +92,7 @@ def gate_edit(
         change_kind: "edit" or "write".
 
     Returns:
-        Dict with ``decision`` ("block" | "allow"), ``message`` (human
+        Dict with ``decision`` ("blocked" | "allowed"), ``message`` (human
         summary), ``regression_detected`` (bool), and on a successful
         sidecar call, the full ``ImpactReport`` keys merged in.
     """
@@ -114,11 +114,11 @@ def gate_edit(
         with httpx.Client(timeout=_timeout_seconds()) as client:
             r = client.post(endpoint, json=body)
         if r.status_code == 415:
-            started_audit_decision = "allow"
+            started_audit_decision = "allowed"
             started_message = "unsupported_language"
             report = {"unsupported_language": True}
         elif r.status_code != 200:
-            started_audit_decision = "block" if _fail_closed() else "allow"
+            started_audit_decision = "blocked" if _fail_closed() else "allowed"
             started_message = f"sidecar_http_{r.status_code}"
             report = {"sidecar_unavailable": True, "status_code": r.status_code}
         else:
@@ -127,14 +127,22 @@ def gate_edit(
             except Exception:  # noqa: BLE001
                 report = {}
             regression = bool(report.get("regression_detected"))
-            started_audit_decision = "block" if regression else "allow"
+            # The sidecar's Mamba/coherence report is not a standalone policy
+            # verdict. Hosts using the MCP write path receive an advisory
+            # receipt unless this caller has supplied deterministic evidence.
+            corroborated = bool(report.get("deterministic_signal"))
+            if regression and os.environ.get("RC_NEURAL_CORROBORATED", "1") == "1" and not corroborated:
+                report["neural_signal_mode"] = "advisory"
+                report["regression_detected"] = False
+                regression = False
+            started_audit_decision = "blocked" if regression else "allowed"
             started_message = report.get("human_summary", "") or ""
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
-        started_audit_decision = "block" if _fail_closed() else "allow"
+        started_audit_decision = "blocked" if _fail_closed() else "allowed"
         started_message = f"sidecar_unreachable: {exc!r}"
         report = {"sidecar_unavailable": True}
     except Exception as exc:  # noqa: BLE001
-        started_audit_decision = "block" if _fail_closed() else "allow"
+        started_audit_decision = "blocked" if _fail_closed() else "allowed"
         started_message = f"unexpected: {exc!r}"
         report = {"sidecar_unavailable": True}
 

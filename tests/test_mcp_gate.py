@@ -39,20 +39,23 @@ def test_allow_when_no_regression(monkeypatch, tmp_path):
                        "HTTPError": Exception, "TimeoutException": Exception})(),
     )
     out = mcp_gate.gate_edit("/x.py", "before", "after")
-    assert out["decision"] == "allow"
+    assert out["decision"] == "allowed"
     assert out["regression_detected"] is False
 
 
 def test_block_when_regression(monkeypatch, tmp_path):
     monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path))
     monkeypatch.setenv("RC_HOST", "vibe")
+    # Legacy direct neural blocking remains available only as an explicit
+    # compatibility override; the release default is corroborated scoring.
+    monkeypatch.setenv("RC_NEURAL_CORROBORATED", "0")
     monkeypatch.setattr(
         mcp_gate, "httpx",
         type("M", (), {"Client": lambda *a, **kw: _MockClient(payload={"regression_detected": True, "human_summary": "REGRESSION"}),
                        "HTTPError": Exception, "TimeoutException": Exception})(),
     )
     out = mcp_gate.gate_edit("/x.py", "before", "after")
-    assert out["decision"] == "block"
+    assert out["decision"] == "blocked"
     assert out["regression_detected"] is True
     assert out["message"] == "REGRESSION"
 
@@ -65,7 +68,7 @@ def test_unsupported_language_allows(monkeypatch, tmp_path):
                        "HTTPError": Exception, "TimeoutException": Exception})(),
     )
     out = mcp_gate.gate_edit("/x.rb", "before", "after")
-    assert out["decision"] == "allow"
+    assert out["decision"] == "allowed"
     assert out.get("unsupported_language") is True
 
 

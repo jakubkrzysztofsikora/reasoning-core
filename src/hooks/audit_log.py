@@ -67,7 +67,7 @@ except Exception:  # noqa: BLE001 - fallback to no-op lock if not installed
             "Run `pip install portalocker>=2.7`.\n"
         )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # gate_id values for ablation attribution (Phase 1)
 GATE_IDS = frozenset({
@@ -208,6 +208,13 @@ def new_event(
     Callers add hook-specific keys via ``**fields``. Returns a fresh dict; the
     caller may mutate it (e.g. set ``latency_ms`` once the hook is done).
     """
+    config = {
+        key: os.environ[key]
+        for key in sorted(os.environ)
+        if key.startswith("RC_") or key.startswith("S2_")
+        if not any(secret in key.lower() for secret in ("token", "secret", "password", "api_key"))
+    }
+    config_hash = hashlib.sha256(json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
     base: Dict[str, Any] = {
         "ts": _now_iso(),
         "decision_id": uuid.uuid4().hex[:12],
@@ -217,6 +224,8 @@ def new_event(
         "schema_version": SCHEMA_VERSION,
         "tool_name": tool_name,
         "decision": decision,
+        "gate_version": "system1-2026-08-09",
+        "configuration_hash": config_hash,
     }
     if file_path is not None:
         base["file_path"] = file_path
