@@ -22,7 +22,19 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 from typing import List, Optional
+
+
+def _ruff_command() -> list[str] | None:
+    """Find Ruff in PATH or in the interpreter running this hook."""
+    binary = shutil.which("ruff")
+    if binary:
+        return [binary]
+    candidate = Path(sys.executable).resolve().parent / "ruff"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return [str(candidate)]
+    return None
 
 
 def health_canaries(repo_root: str | None = None) -> dict[str, dict[str, object]]:
@@ -39,9 +51,9 @@ def health_canaries(repo_root: str | None = None) -> dict[str, dict[str, object]
     ruff_ok = False
     detail = "disabled"
     if ruff_enabled:
-        binary = shutil.which("ruff")
-        if binary:
-            result = subprocess.run([binary, "check", "--output-format", "json", "-"], input="import os\n", capture_output=True, text=True, timeout=5)
+        command = _ruff_command()
+        if command:
+            result = subprocess.run([*command, "check", "--output-format", "json", "-"], input="import os\n", capture_output=True, text=True, timeout=5)
             ruff_ok = result.returncode != 0 and bool(result.stdout.strip())
             detail = "canary finding observed" if ruff_ok else f"ruff returned {result.returncode} without a finding"
         else:
@@ -225,7 +237,8 @@ def _t2_ruff(
     """
     if not file_path.endswith(".py"):
         return
-    if not shutil.which("ruff"):
+    command = _ruff_command()
+    if not command:
         return
 
     target: Path
@@ -247,7 +260,7 @@ def _t2_ruff(
 
     try:
         result = subprocess.run(
-            ["ruff", "check", "--quiet", "--output-format", "json", str(target)],
+            [*command, "check", "--quiet", "--output-format", "json", str(target)],
             capture_output=True,
             text=True,
             check=False,
