@@ -102,14 +102,32 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/jakubsikora/.claude/hooks/stop-context-guard.py",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   },
   "mcpServers": {
     "hybrid-reasoner": {
       "type": "stdio",
       "command": "python3",
-      "args": ["-m", "src.mcp_reasoner"],
+      "args": [
+        "-m",
+        "src.mcp_reasoner"
+      ],
       "env": {}
     }
-  }
+  },
+  "model": "opus",
+  "effortLevel": "low",
+  "autoCompactEnabled": true,
+  "autoCompactWindow": "100k"
 }
