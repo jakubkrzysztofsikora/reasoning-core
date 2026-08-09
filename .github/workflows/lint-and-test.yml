@@ -61,7 +61,11 @@ jobs:
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
+          # The GGUF backend is opt-in and builds native llama.cpp code. The
+          # offline gate exercises the default Mamba backend, so avoid making
+          # every PR wait for an unrelated native build.
+          grep -v '^[[:space:]]*llama-cpp-python' requirements.txt > /tmp/requirements-ci.txt
+          python3 -m pip install -r /tmp/requirements-ci.txt
 
       - name: py_compile all tracked .py files
         run: |

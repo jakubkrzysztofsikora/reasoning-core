@@ -236,9 +236,11 @@ def test_score_change_identical_inputs(s2_core_module, loaded_backbone):
     assert report.coherence_delta == pytest.approx(0.0, abs=1e-5)
     # No regression when nothing changed.
     assert report.regression_detected is False
-    # 8-dim risk vector with declared labels.
+    # Default calls emit the always-on eight-dimensional contract. The three
+    # project/session dimensions require both a session baseline and index.
     assert isinstance(report.risk_vector, list)
-    assert len(report.risk_vector) == len(s2_core_module.RISK_LABELS)
+    assert report.risk_labels == list(s2_core_module.RISK_LABELS[:8])
+    assert len(report.risk_vector) == len(report.risk_labels) == 8
     for v in report.risk_vector:
         assert 0.0 <= float(v) <= 1.0
 
@@ -249,7 +251,7 @@ def test_score_change_regression_detected(s2_core_module, loaded_backbone):
     # The bad refactor drops the guard clause and adds unbounded recursion;
     # that should trip at least one of the regression conditions.
     assert isinstance(report.risk_vector, list)
-    assert len(report.risk_vector) == len(s2_core_module.RISK_LABELS)
+    assert len(report.risk_vector) == len(report.risk_labels) == 8
     # We do not pin the exact dim that trips, but we expect a regression.
     assert report.regression_detected is True
     assert isinstance(report.human_summary, str)
@@ -281,8 +283,8 @@ def test_impact_report_to_dict_shape(s2_core_module, loaded_backbone):
         "human_summary",
     ):
         assert key in d
-    assert len(d["risk_vector"]) == len(s2_core_module.RISK_LABELS)
-    assert len(d["risk_labels"]) == len(s2_core_module.RISK_LABELS)
+    assert len(d["risk_vector"]) == len(d["risk_labels"]) == 8
+    assert d["risk_labels"] == list(s2_core_module.RISK_LABELS[:8])
     # Phase 2 schema migration: exact ordered tuple must not drift.
     assert s2_core_module.RISK_LABELS == (
         "cyclomatic", "fan_in", "fan_out", "depth",
@@ -385,7 +387,7 @@ def test_http_score_happy_path(http_client, s2_core_module):
         "human_summary",
     ):
         assert key in body
-    assert len(body["risk_vector"]) == len(s2_core_module.RISK_LABELS)
+    assert len(body["risk_vector"]) == len(body["risk_labels"]) == 8
 
 
 def test_http_score_unsupported_language(http_client):

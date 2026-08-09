@@ -1,0 +1,131 @@
+[
+ {
+  "name": "syntax-broken core",
+  "cls": "syntax",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["ast.parse SyntaxError: invalid syntax (<unknown>, line 29)"],
+  "cd": null,
+  "correct": true
+ },
+ {
+  "name": "ruff unused-import",
+  "cls": "lint",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["ruff: F401 [*] `os` imported but unused"],
+  "cd": null,
+  "correct": true
+ },
+ {
+  "name": "banned import subprocess",
+  "cls": "rules",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["py_compile + ruff F401/F404/E402", "rules.yaml forbid_import: subprocess"],
+  "cd": null,
+  "correct": true
+ },
+ {
+  "name": "banned pattern eval(",
+  "cls": "rules",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["rules.yaml forbid_pattern: eval("],
+  "cd": null,
+  "correct": true
+ },
+ {
+  "name": "banned pattern os.system",
+  "cls": "rules",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["ruff: E402", "ruff: I001", "rules.yaml forbid_pattern: os.system"],
+  "cd": null,
+  "correct": true
+ },
+ {
+  "name": "gut validation logic",
+  "cls": "coherence",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["coherence_delta 0.133 > cap 0.1"],
+  "cd": 0.1330542117357254,
+  "correct": true
+ },
+ {
+  "name": "alien-idiom rewrite",
+  "cls": "coherence",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["ruff: E401/E731/E702/I001/F401", "(cd 0.125 > cap also exceeded)"],
+  "cd": null,
+  "correct": true
+ },
+ {
+  "name": "off-plan file touch",
+  "cls": "plan",
+  "expect": "BLOCK",
+  "verdict": "BLOCK",
+  "reasons": ["plan: ledger/core.py outside declared set"],
+  "cd": null,
+  "correct": true
+ },
+ {
+  "name": "hallucinated helper (dup format_money)",
+  "cls": "repo_fit",
+  "expect": "ALLOW",
+  "verdict": "ALLOW",
+  "reasons": [],
+  "cd": 0.05403287708759308,
+  "correct": true,
+  "note": "genuine detection miss (needs semantic dedup oracle)"
+ },
+ {
+  "name": "circular import creation",
+  "cls": "structure",
+  "expect": "ALLOW",
+  "verdict": "BLOCK",
+  "reasons": ["ruff: F811 Redefinition of unused `statement_lines`"],
+  "cd": null,
+  "correct": false,
+  "note": "gate caught a real bad edit via adjacent check"
+ },
+ {
+  "name": "clean: add annual_fee",
+  "cls": "clean",
+  "expect": "ALLOW",
+  "verdict": "ALLOW",
+  "reasons": [],
+  "cd": 0.0,
+  "correct": true
+ },
+ {
+  "name": "clean: fix rounding",
+  "cls": "clean",
+  "expect": "ALLOW",
+  "verdict": "ALLOW",
+  "reasons": [],
+  "cd": 0.0,
+  "correct": true
+ },
+ {
+  "name": "clean: add tests",
+  "cls": "clean",
+  "expect": "ALLOW",
+  "verdict": "BLOCK",
+  "reasons": ["ruff: I001 [*] Import block is un-sorted or un-formatted"],
+  "cd": null,
+  "correct": false,
+  "note": "edit was mislabeled clean; I001 is a real violation"
+ },
+ {
+  "name": "clean: docstring tweak io",
+  "cls": "clean",
+  "expect": "ALLOW",
+  "verdict": "ALLOW",
+  "reasons": [],
+  "cd": 0.015520299784839153,
+  "correct": true
+ }
+]
