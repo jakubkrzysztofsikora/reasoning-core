@@ -52,6 +52,130 @@ class ProjectIndex:
         ]
 
 
+def _python_definitions(src: str) -> list[tuple[str, int, str]]:
+    """Return top-level definitions with a stable body fingerprint."""
+    try:
+        import ast
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    definitions = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            # Names and locations differ for intentional copies; arguments and
+            # body shape are a conservative high-confidence duplicate signal.
+            if hasattr(node, "args"):
+                fingerprint = ast.dump(node.args, include_attributes=False) + ast.dump(ast.Module(body=node.body, type_ignores=[]), include_attributes=False)
+            else:
+                fingerprint = ast.dump(ast.Module(body=node.body, type_ignores=[]), include_attributes=False)
+            definitions.append((node.name, node.lineno, fingerprint))
+    return definitions
+
+
+def find_duplicate_definitions(repo_root: str, file_path: str, after_src: str) -> list[dict[str, Any]]:
+    """Find exact-name and high-confidence same-body definitions in a repo.
+
+    The caller supplies the proposed source, allowing this to run before the
+    write reaches disk.  Same-file matches are excluded by line/name pairing.
+    """
+    proposed = _python_definitions(after_src) if file_path.endswith(".py") else []
+    if not proposed:
+        return []
+    findings: list[dict[str, Any]] = []
+    root = Path(repo_root)
+    target = Path(file_path)
+    try:
+        target_rel = str(target.resolve().relative_to(root.resolve())) if target.is_absolute() else str(target)
+    except ValueError:
+        target_rel = str(target)
+    for rel_path in _iter_repo_files(repo_root):
+        if not rel_path.endswith(".py"):
+            continue
+        try:
+            existing = _python_definitions((root / rel_path).read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        for new_name, new_line, new_body in proposed:
+            for old_name, old_line, old_body in existing:
+                if rel_path == target_rel and old_name == new_name and old_line == new_line:
+                    continue
+                kind = "exact_name" if new_name == old_name else "semantic_body"
+                if kind == "exact_name" or new_body == old_body:
+                    findings.append({"kind": kind, "symbol": new_name, "path": rel_path, "line": old_line})
+    return findings
+
+
+def _module_for_path(path: str) -> str:
+    p = Path(path).with_suffix("")
+    parts = list(p.parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _local_imports(src: str, rel_path: str, known: set[str]) -> set[str]:
+    """Resolve local Python imports into project module names."""
+    import ast
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return set()
+    current = _module_for_path(rel_path).split(".")
+    package = current[:-1]
+    edges: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in known:
+                    edges.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            base = (node.module or "").split(".") if node.module else []
+            if node.level:
+                prefix = package[:max(0, len(package) - node.level + 1)]
+                candidate = ".".join(prefix + base)
+            else:
+                candidate = ".".join(base)
+            if candidate in known:
+                edges.add(candidate)
+            for alias in node.names:
+                child = f"{candidate}.{alias.name}" if candidate else alias.name
+                if child in known:
+                    edges.add(child)
+    return edges
+
+
+def find_import_cycle(repo_root: str, file_path: str, after_src: str) -> list[str] | None:
+    """Return one newly present local import cycle, including its closing node."""
+    root = Path(repo_root)
+    files = [path for path in _iter_repo_files(repo_root) if path.endswith(".py")]
+    known = {_module_for_path(path) for path in files}
+    graph: dict[str, set[str]] = {}
+    try:
+        target_rel = str(Path(file_path).resolve().relative_to(root.resolve())) if Path(file_path).is_absolute() else str(Path(file_path))
+    except ValueError:
+        target_rel = str(Path(file_path))
+    for rel in files:
+        source = after_src if rel == target_rel else (root / rel).read_text(encoding="utf-8", errors="replace")
+        graph[_module_for_path(rel)] = _local_imports(source, rel, known)
+    start = _module_for_path(target_rel)
+    visiting: list[str] = []
+    visited: set[str] = set()
+    def visit(module: str) -> list[str] | None:
+        if module in visiting:
+            return visiting[visiting.index(module):] + [module]
+        if module in visited:
+            return None
+        visiting.append(module)
+        for child in graph.get(module, set()):
+            cycle = visit(child)
+            if cycle:
+                return cycle
+        visiting.pop()
+        visited.add(module)
+        return None
+    return visit(start)
+
+
 # ---------------------------------------------------------------------------
 # File discovery — same filtering as _mock_detector._iter_repoFiles
 # ---------------------------------------------------------------------------

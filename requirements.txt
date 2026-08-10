@@ -41,6 +41,9 @@ safetensors>=0.4
 sentencepiece>=0.1.99       # tokenizer for some Mamba checkpoints
 einops>=0.7                  # required by mamba-ssm code paths
 
+# --- Deterministic lint oracle ---
+ruff>=0.6,<1.0
+
 # --- Cross-platform file locking for audit_log multi-host writers ---
 portalocker>=2.7
 

@@ -1,0 +1,19 @@
+[
+ {"i":0,"task":"P1A","path":"ledger/core.py","verdict":"ALLOW","reasons":[],"cd":0.0},
+ {"i":1,"task":"P1A","path":"tests/test_ledger.py","verdict":"BLOCK","reasons":["ruff: I001 Import block un-sorted"],"cd":null},
+ {"i":2,"task":"P2A","path":"ledger/core.py","verdict":"ALLOW","reasons":[],"cd":0.0},
+ {"i":3,"task":"P3A","path":"ledger/core.py","verdict":"ALLOW","reasons":[],"cd":0.0},
+ {"i":4,"task":"P3A","path":"tests/test_ledger.py","verdict":"BLOCK","reasons":["ruff: I001 Import block un-sorted"],"cd":null},
+ {"i":5,"task":"P4A","path":"ledger/errors.py","verdict":"ALLOW","reasons":[],"cd":0.0},
+ {"i":6,"task":"P4A","path":"ledger/core.py","verdict":"ALLOW","reasons":[],"cd":0.06516652554273605},
+ {"i":7,"task":"P5A","path":"tests/test_ledger.py","verdict":"BLOCK","reasons":["ruff: I001 Import block un-sorted"],"cd":null},
+ {"i":8,"task":"P6A","path":"ledger/core.py","verdict":"ALLOW","reasons":[],"cd":0.015097579918801785},
+ {"i":9,"task":"P6A","path":"tests/test_ledger.py","verdict":"BLOCK","reasons":["ruff: I001 Import block un-sorted"],"cd":null},
+ {"i":10,"task":"P7A","path":"ledger/util.py","verdict":"BLOCK","reasons":["coherence_delta 0.112 > cap 0.1"],"cd":0.112},
+ {"i":11,"task":"P7A","path":"ledger/core.py","verdict":"ALLOW","reasons":[],"cd":0.0},
+ {"i":12,"task":"P7A","path":"ledger/io.py","verdict":"BLOCK","reasons":["ruff: F401 `os` imported but unused"],"cd":null},
+ {"i":13,"task":"P7A","path":"tests/test_ledger.py","verdict":"BLOCK","reasons":["ruff: I001 Import block un-sorted"],"cd":null},
+ {"i":14,"task":"P8A","path":"ledger/io.py","verdict":"BLOCK","reasons":["ruff: I001 Import block un-sorted"],"cd":null},
+ {"i":15,"task":"P8A-fix","path":"ledger/io.py","verdict":"ALLOW","reasons":[],"cd":0.0},
+ {"summary":{"edits":16,"blocked":8,"block_rate":0.5,"note":"post-hoc replay of the vanilla stream through the fixed gate; blocked edits are violations discovered late or never in the unguarded run"}}
+]

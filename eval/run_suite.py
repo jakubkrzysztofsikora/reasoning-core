@@ -17,6 +17,7 @@ schedule and exits 0. CI uses dry-run as a smoke test.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -30,6 +31,41 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATASET = REPO_ROOT / "eval" / "datasets" / "swe_bench_verified_python_subset.json"
 DEFAULT_OUT_BASE = REPO_ROOT / "eval" / "runs"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _git_head() -> str | None:
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=3)
+        return result.stdout.strip() if result.returncode == 0 else None
+    except OSError:
+        return None
+
+
+def _write_run_manifest(out_dir: Path, *, run_id: str, dataset: Path, tasks: list[dict[str, Any],], arms: list[str], seed: int, schedule: list[tuple[str, str]], live: bool) -> Path:
+    """Freeze inputs before execution so reports remain comparable later."""
+    arm_config = {arm: {key: value for key, value in os.environ.items() if key.startswith("RC_") or key.startswith("S2_")} for arm in arms}
+    manifest = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "dataset": {"path": str(dataset), "sha256": _sha256(dataset)},
+        "task_ids": [task["instance_id"] for task in tasks],
+        "seed": seed,
+        "arms": arms,
+        "schedule": [{"task_id": task_id, "arm": arm} for task_id, arm in schedule],
+        "arm_configuration": arm_config,
+        "configuration_hash": hashlib.sha256(json.dumps(arm_config, sort_keys=True).encode()).hexdigest(),
+        "code_sha": _git_head(),
+        "live": live,
+        "raw_artifact_path": str(out_dir / "results.jsonl"),
+    }
+    path = out_dir / "run_manifest.json"
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -118,8 +154,9 @@ def _run_one(task_id: str, arm: str, out_dir: Path, timeout_s: int) -> dict[str,
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
+    supported_arms = {"vanilla", "advisory_shadow", "deterministic_only", "plan_grounding_only", "full_copilot", "treatment"}
     for arm in arms:
-        if arm not in {"vanilla", "treatment"}:
+        if arm not in supported_arms:
             print(f"ERROR: unknown arm '{arm}'", file=sys.stderr)
             return 2
 
@@ -142,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     started_at = datetime.now(timezone.utc).isoformat()
+    manifest_path = _write_run_manifest(out_dir, run_id=run_id, dataset=Path(args.dataset), tasks=tasks, arms=arms, seed=args.seed, schedule=schedule, live=os.environ.get("RC_LIVE", "0") == "1")
     print(f"[run_suite] run_id={run_id} tasks={len(tasks)} arms={arms} out={out_dir}")
     print(f"[run_suite] schedule:")
     for tid, arm in schedule:
@@ -157,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             "arms": arms,
             "schedule": [{"task_id": t, "arm": a} for t, a in schedule],
             "live": False,
+            "run_manifest": str(manifest_path),
         }
         with open(out_dir / "run_summary.json", "w", encoding="utf-8") as fh:
             json.dump(summary, fh, indent=2)
@@ -192,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         "timed_out": timed_out,
         "errored": errored,
         "live": True,
+        "run_manifest": str(manifest_path),
     }
     with open(out_dir / "run_summary.json", "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2)
@@ -202,6 +242,13 @@ def main(argv: list[str] | None = None) -> int:
         rc = subprocess.call(["python3", str(agg_script), str(out_dir)])
         if rc != 0:
             print(f"[run_suite] aggregate.py exited non-zero ({rc})", file=sys.stderr)
+
+    # Bind the aggregate output after it exists without changing frozen inputs.
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    report = out_dir / "report.json"
+    if report.is_file():
+        manifest["aggregate_report"] = {"path": str(report), "sha256": _sha256(report)}
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     return 0
 

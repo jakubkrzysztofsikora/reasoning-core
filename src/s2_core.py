@@ -1177,8 +1177,18 @@ def create_app():
     Request = _fastapi.Request
     JSONResponse = _fastapi_responses.JSONResponse
 
+    oracle_health: dict[str, dict[str, object]] = {}
+
     @asynccontextmanager
     async def _lifespan(_app):  # pragma: no cover - exercised via boot
+        nonlocal oracle_health
+        try:
+            from src.hooks._oracles import blocking_oracles_healthy, health_canaries
+            oracle_health = health_canaries(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+            if not blocking_oracles_healthy(oracle_health):
+                logger.error("one or more configured deterministic oracle canaries failed: %s", oracle_health)
+        except Exception as exc:  # noqa: BLE001
+            oracle_health = {"canary_runner": {"enabled": True, "healthy": False, "detail": str(exc)}}
         try:
             load_backbone()
             logger.info("backbone pre-warmed at startup")
@@ -1222,6 +1232,10 @@ def create_app():
         return JSONResponse(
             {
                 "status": "ok",
+                "enforcement_healthy": bool(oracle_health) and all(
+                    bool(item.get("healthy")) for item in oracle_health.values() if item.get("enabled")
+                ),
+                "oracle_health": oracle_health,
                 "model_loaded": bool(is_loaded()),
                 "languages": list(SUPPORTED_LANGUAGES),
                 "backbone": dict(BACKBONE_INFO),

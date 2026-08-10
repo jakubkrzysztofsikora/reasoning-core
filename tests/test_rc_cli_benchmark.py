@@ -47,6 +47,7 @@ def test_empty_audit_root_prints_zero_events(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Total events" in out
     assert "0" in out
+    assert "| False-positive proxy | n/a |" in out
 
 
 def test_benchmark_populated_from_synthetic_audit(tmp_path, capsys):

@@ -22,7 +22,63 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 from typing import List, Optional
+
+
+def _ruff_command() -> list[str] | None:
+    """Find Ruff in PATH or in the interpreter running this hook."""
+    binary = shutil.which("ruff")
+    if binary:
+        return [binary]
+    candidate = Path(sys.prefix) / "bin" / "ruff"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return [str(candidate)]
+    return None
+
+
+def health_canaries(repo_root: str | None = None) -> dict[str, dict[str, object]]:
+    """Prove enabled deterministic checks can produce their expected result.
+
+    A missing Ruff binary is healthy only when T2 is disabled.  This prevents
+    the historical "exit 2 means no findings" failure mode from being treated
+    as a clean oracle result.
+    """
+    checks: dict[str, dict[str, object]] = {}
+    syntax = run_oracles("canary.py", "def broken(:\n", enable_t1=True, enable_t2=False)
+    checks["syntax_parse"] = {"enabled": os.environ.get("RC_ORACLE_T1", "1") == "1", "healthy": not syntax.clean}
+    ruff_enabled = os.environ.get("RC_ORACLE_T2", "1") == "1"
+    ruff_ok = False
+    detail = "disabled"
+    if ruff_enabled:
+        command = _ruff_command()
+        if command:
+            result = subprocess.run([*command, "check", "--output-format", "json", "-"], input="import os\n", capture_output=True, text=True, timeout=5)
+            ruff_ok = result.returncode != 0 and bool(result.stdout.strip())
+            detail = "canary finding observed" if ruff_ok else f"ruff returned {result.returncode} without a finding"
+        else:
+            detail = "ruff executable not found"
+    checks["ruff"] = {"enabled": ruff_enabled, "healthy": ruff_ok if ruff_enabled else True, "detail": detail}
+    try:
+        from src import project_index
+        root = repo_root or os.getcwd()
+        checks["semantic_index"] = {"enabled": os.environ.get("RC_STRUCTURAL_BLOCK", "1") == "1", "healthy": isinstance(project_index._iter_repo_files(root), list)}
+    except Exception as exc:  # noqa: BLE001
+        checks["semantic_index"] = {"enabled": True, "healthy": False, "detail": str(exc)}
+    # Rule/plan modules are imported as availability canaries; their actual
+    # proposed-edit evaluation remains in the hook dispatch path.
+    for name, module in (("policy_rules", "src.hooks._rule_engine"), ("plan_contract", "src.hooks._plan_contract")):
+        try:
+            __import__(module)
+            checks[name] = {"enabled": True, "healthy": True}
+        except Exception as exc:  # noqa: BLE001
+            checks[name] = {"enabled": True, "healthy": False, "detail": str(exc)}
+    checks["import_cycles"] = {"enabled": os.environ.get("RC_STRUCTURAL_BLOCK", "1") == "1", "healthy": checks["semantic_index"]["healthy"]}
+    return checks
+
+
+def blocking_oracles_healthy(checks: dict[str, dict[str, object]]) -> bool:
+    return all(bool(item.get("healthy")) for item in checks.values() if item.get("enabled"))
 
 
 @dataclass
@@ -306,7 +362,8 @@ def _t2_ruff(
     """
     if not file_path.endswith(".py"):
         return
-    if not shutil.which("ruff"):
+    command = _ruff_command()
+    if not command:
         return
 
     target: Path
@@ -328,7 +385,7 @@ def _t2_ruff(
 
     try:
         result = subprocess.run(
-            ["ruff", "check", "--quiet", "--output-format", "json", str(target)],
+            [*command, "check", "--quiet", "--output-format", "json", str(target)],
             capture_output=True,
             text=True,
             check=False,
@@ -523,4 +580,6 @@ __all__ = [
     "Annotation",
     "OracleReport",
     "run_oracles",
+    "health_canaries",
+    "blocking_oracles_healthy",
 ]

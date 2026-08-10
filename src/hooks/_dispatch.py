@@ -166,6 +166,20 @@ def _resolve_plan_path() -> Optional[Path]:
     return p if p.exists() else None
 
 
+_SCAFFOLD_MARKER = "Auto-scaffolded by reasoning-core"
+_SCAFFOLD_PLACEHOLDER = "TODO: list 3-5 source files"
+
+
+def _is_stub_plan(plan_text: str) -> bool:
+    """True when PLAN.md is still the untouched auto-scaffold.
+
+    The scaffold lists only README.md plus a TODO placeholder, so every real
+    source edit registers as drift. Grounding against it produces noise, not
+    signal.
+    """
+    return _SCAFFOLD_MARKER in plan_text and _SCAFFOLD_PLACEHOLDER in plan_text
+
+
 def gate_plan_grounding(
     *,
     file_path: str,
@@ -202,6 +216,17 @@ def gate_plan_grounding(
     if basename == "plan.md" or basename.endswith(".plan.md"):
         return GateOutcome()
     plan_path = _resolve_plan_path()
+    if plan_path is not None:
+        try:
+            if _is_stub_plan(plan_path.read_text(encoding="utf-8", errors="replace")):
+                return GateOutcome(
+                    action="audit_only",
+                    decision="audit_only",
+                    reason="stub_plan_md",
+                    signal_source="plan_grounding",
+                )
+        except OSError:
+            pass
     if plan_path is None:
         # B3 fix (sweep round-5): mode is active but PLAN.md is absent.
         # Emit an audit event so the eval aggregator can distinguish

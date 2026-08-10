@@ -24,6 +24,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src import baselines
+
 # Make hook helpers importable without installing the package.
 _HOOKS_DIR = Path(__file__).resolve().parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
@@ -60,6 +62,49 @@ def _audit_root() -> Path:
 def _today_dir() -> Path:
     import datetime as dt
     return _audit_root() / dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def cmd_baseline_capture(args: argparse.Namespace) -> int:
+    """Capture a registry manifest; refuse to overwrite an existing baseline."""
+    target = baselines.manifest_path(args.id)
+    if target.exists():
+        sys.stderr.write(f"baseline already exists (immutable): {target}\n")
+        return 2
+    local_root = Path(args.artifact_root or os.path.expanduser("~/.local/share/reasoning-core/baselines")) / args.id
+    local_root.mkdir(parents=True, exist_ok=True)
+    manifest = baselines.create_manifest(args.id, audit_root=_audit_root(), artifacts=[local_root])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(target)
+    return 0
+
+
+def cmd_baseline_list(_args: argparse.Namespace) -> int:
+    if not baselines.REGISTRY_ROOT.is_dir():
+        return 0
+    for path in sorted(baselines.REGISTRY_ROOT.glob("*.json")):
+        try:
+            manifest = baselines.load_manifest(path.stem)
+            print(f"{manifest['baseline_id']}\t{manifest['captured_at']}\t{manifest.get('code', {}).get('git_sha', 'unknown')}")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            sys.stderr.write(f"invalid baseline {path}: {exc}\n")
+            return 2
+    return 0
+
+
+def cmd_baseline_show(args: argparse.Namespace) -> int:
+    manifest = baselines.load_manifest(args.id)
+    if args.verify:
+        manifest = {**manifest, "artifact_verification": baselines.verify_artifacts(manifest)}
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_baseline_compare(args: argparse.Namespace) -> int:
+    left = baselines.load_manifest(args.from_id)
+    right = baselines.load_manifest(args.to_id)
+    print(json.dumps(baselines.compare_manifests(left, right), indent=2, sort_keys=True))
+    return 0
 
 
 def _guard_hash_store_path() -> Path:
@@ -751,17 +796,15 @@ def _load_override_links() -> dict[str, set[str]]:
 def _walk_audit_events(audit_root: Path, days: int):
     import datetime as _dt
     import gzip
-    cutoff = _dt.datetime.now(tz=_dt.timezone.utc) - _dt.timedelta(days=days)
+    earliest = _dt.datetime.now(tz=_dt.timezone.utc).date() - _dt.timedelta(days=days - 1)
     if not audit_root.is_dir():
         return
     for day_dir in sorted(audit_root.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]")):
         try:
-            day = _dt.datetime.strptime(day_dir.name, "%Y-%m-%d").replace(
-                tzinfo=_dt.timezone.utc
-            )
+            day = _dt.datetime.strptime(day_dir.name, "%Y-%m-%d").date()
         except ValueError:
             continue
-        if day < cutoff.replace(hour=0, minute=0, second=0, microsecond=0):
+        if day < earliest:
             continue
         for f in day_dir.iterdir():
             opener = gzip.open if f.name.endswith(".gz") else open
@@ -863,18 +906,27 @@ def _override_survival_counts(audit_root: Path, days: int, repo_root: Path | Non
         if not git_head or not fp:
             unknown += 1
             continue
-        if repo_root is None:
+        ev_root = ev.get("project_dir")
+        event_repo = Path(ev_root) if ev_root else repo_root
+        if event_repo is None or not (event_repo / ".git").exists():
+            event_repo = repo_root
+        if event_repo is None:
+            unknown += 1
+            continue
+        try:
+            rel_fp = str(Path(fp).resolve().relative_to(Path(event_repo).resolve()))
+        except ValueError:
             unknown += 1
             continue
         try:
             r = subprocess.run(
-                ["git", "show", f"{git_head}:{fp}"],
-                capture_output=True, text=True, timeout=5, cwd=str(repo_root),
+                ["git", "show", f"{git_head}:{rel_fp}"],
+                capture_output=True, text=True, timeout=5, cwd=str(event_repo),
             )
             content_at_override = r.stdout if r.returncode == 0 else None
         except Exception:
             content_at_override = None
-        fpath = repo_root / fp
+        fpath = Path(event_repo) / rel_fp
         try:
             content_current = fpath.read_text(encoding="utf-8", errors="replace") if fpath.is_file() else None
         except OSError:
@@ -1070,7 +1122,7 @@ def cmd_label(args: argparse.Namespace) -> int:
         sys.stderr.write(f"decision {decision_id} is already labeled\n")
         return 1
 
-    audit_row = ts._lookup_audit_row(decision_id)
+    audit_row = ts._lookup_audit_row(decision_id, days=max(args.days, 7))
     if not audit_row:
         sys.stderr.write(f"warning: decision_id {decision_id} not found in audit log\n")
 
@@ -1281,6 +1333,8 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
     block_latencies: list[int] = []
     retry_after_block = 0
     scope_creep = 0
+    scope_creep_blocked = 0
+    scope_creep_warned = 0
     operator_overrides = 0
     operator_confirmed = 0
     allowed_via_override = 0
@@ -1320,6 +1374,10 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
 
         if reason == "plan_impl_drift" or "contract_violation" in reason.lower():
             scope_creep += 1
+            if decision in ("blocked", "shadow_blocked"):
+                scope_creep_blocked += 1
+            else:
+                scope_creep_warned += 1
 
         if decision == "operator_override":
             operator_overrides += 1
@@ -1348,6 +1406,8 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
         "operator_confirmed": operator_confirmed,
         "retry_after_block": retry_after_block,
         "scope_creep_catches": scope_creep,
+        "scope_creep_blocked": scope_creep_blocked,
+        "scope_creep_warned": scope_creep_warned,
         "severity": severity,
         "signal_sources": signal_sources,
         "median_latency_ms": int(median_latency) if median_latency is not None else None,
@@ -1367,11 +1427,14 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
     # outcome, so it is intentionally excluded to avoid double-counting the
     # same incident. Clamp to 1.0 so the headline number stays interpretable
     # even when the same incident appears in both counts.
-    fp_denominator = max(1, metrics["blocked"] + metrics["warn"] + metrics["shadow_blocked"])
-    metrics["false_positive_proxy"] = min(
-        1.0,
-        round((retry_after_block + allowed_via_override) / fp_denominator, 3),
-    )
+    fp_denominator = metrics["blocked"] + metrics["shadow_blocked"]
+    if fp_denominator == 0:
+        metrics["false_positive_proxy"] = None
+    else:
+        metrics["false_positive_proxy"] = min(
+            1.0,
+            round((retry_after_block + allowed_via_override) / fp_denominator, 3),
+        )
 
     # Override survival summary (best-effort; full calc uses shared helper).
     metrics["override_survival_ratio"] = None  # computed separately if repo available
@@ -1380,6 +1443,10 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
 
 def _fmt_latency(value: int | None) -> str:
     return str(value) if value is not None else "n/a"
+
+
+def _fmt_ratio(value: float | None) -> str:
+    return f"{value:.3f}" if value is not None else "n/a"
 
 
 def _fmt_benchmark_markdown(metrics: dict, title: str = "reasoning-core benchmark") -> str:
@@ -1397,9 +1464,11 @@ def _fmt_benchmark_markdown(metrics: dict, title: str = "reasoning-core benchmar
         f"| Allowed via override | {metrics['allowed_via_override']} |",
         f"| Operator overrides | {metrics['operator_override']} |",
         f"| Operator confirmed | {metrics['operator_confirmed']} |",
-        f"| Scope-creep catches | {metrics['scope_creep_catches']} |",
+        f"| Scope-creep catches (total) | {metrics['scope_creep_catches']} |",
+        f"| Scope-creep prevented (blocked) | {metrics['scope_creep_blocked']} |",
+        f"| Scope-creep advised only (warn) | {metrics['scope_creep_warned']} |",
         f"| Retry-after-block proxy | {metrics['retry_after_block']} |",
-        f"| False-positive proxy | {metrics['false_positive_proxy']:.3f} |",
+        f"| False-positive proxy | {_fmt_ratio(metrics['false_positive_proxy'])} |",
         f"| Median latency (ms) | {_fmt_latency(metrics['median_latency_ms'])} |",
         f"| p95 latency (ms) | {_fmt_latency(metrics['p95_latency_ms'])} |",
         f"| Median block latency (ms) | {_fmt_latency(metrics['median_block_latency_ms'])} |",
@@ -1523,6 +1592,21 @@ def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    baseline = sub.add_parser("baseline", help="capture and inspect immutable evaluation baselines")
+    baseline_sub = baseline.add_subparsers(dest="baseline_cmd", required=True)
+    baseline_capture = baseline_sub.add_parser("capture", help="capture a new immutable baseline manifest")
+    baseline_capture.add_argument("--id", default=baselines.DEFAULT_ID)
+    baseline_capture.add_argument("--artifact-root", default=None)
+    baseline_capture.set_defaults(func=cmd_baseline_capture)
+    baseline_sub.add_parser("list", help="list committed baseline manifests").set_defaults(func=cmd_baseline_list)
+    baseline_show = baseline_sub.add_parser("show", help="print one baseline manifest")
+    baseline_show.add_argument("id")
+    baseline_show.add_argument("--verify", action="store_true", help="verify hashes of available local artifacts")
+    baseline_show.set_defaults(func=cmd_baseline_show)
+    baseline_compare = baseline_sub.add_parser("compare", help="compare two immutable manifests")
+    baseline_compare.add_argument("from_id")
+    baseline_compare.add_argument("to_id")
+    baseline_compare.set_defaults(func=cmd_baseline_compare)
     gh = sub.add_parser(
         "guard-hash",
         help="verify guard files and enforcement config against stored hashes",
