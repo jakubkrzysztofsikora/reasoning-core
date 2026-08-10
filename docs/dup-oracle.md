@@ -7,10 +7,18 @@ before/after drift). It has no cross-file awareness, so an agent can happily
 re-implement a helper that already exists elsewhere under a different name.
 
 This oracle adds that awareness: when the agent is about to write a function,
-it checks the **whole repo** for a behaviourally-similar one and, if found,
-emits an advisory naming it — so the agent reuses or extends instead of
+it checks the repo's other functions for a behaviourally-similar one and, if
+found, emits an advisory naming it — so the agent reuses or extends instead of
 re-inventing. **Advisory only: it never blocks** (always exits 0). Opt-in via
 `RC_DUP_ORACLE=1`.
+
+**Language scope.** The oracle indexes **Python, JavaScript and TypeScript**
+(`.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.tsx`). Other tree-sitter-parseable
+languages (e.g. **C#**, **SQL**) are deliberately **out of scope**: making them
+work is not just a matter of walking their files — the function extractor
+(`dup_index._FUNC_TYPES`) and the normaliser (its param/local handling) would
+each need language-specific entries, or renamed duplicates would silently fail
+to collapse. Tracked as a follow-up; see the dup-oracle language-support issue.
 
 ## How it works
 

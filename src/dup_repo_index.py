@@ -8,9 +8,9 @@ offline with a stub -- the real model is only reached when no ``embed_fn`` is
 supplied.
 
 File discovery reuses ``project_index._iter_repo_files`` with the dup oracle's
-own wider extension set: that helper walks only ``.py/.js/.ts/.tsx`` by default
-(for its call-graph feature), which would silently miss duplicates in other
-grammar-supported code sources (``.mjs/.cjs/.cs``).
+own extension set: that helper walks only ``.py/.js/.ts/.tsx`` by default (for
+its call-graph feature), which would silently miss duplicates in ``.mjs/.cjs``
+(both JavaScript).
 """
 from __future__ import annotations
 
@@ -26,15 +26,16 @@ from .dup_oracle import FunctionRecord
 from .grammars import EXTENSION_MAP, UnsupportedLanguageError
 from .project_index import _iter_repo_files
 
-# The oracle dedups *functions*, so index only languages whose function nodes
-# the extractor actually understands -- i.e. those with entries in
-# ``dup_index._FUNC_TYPES``. This is the real gate, NOT grammar/EXTENSION_MAP
-# membership: a language can be grammar-parseable (e.g. SQL, which grammars.py
-# classifies as code, not data) yet have no function node types in the
-# extractor, in which case indexing it would silently yield nothing. To add a
-# language here you must ALSO add its function node types to ``_FUNC_TYPES``.
-# Explicit allowlist by design; yields e.g. {.py, .js, .mjs, .cjs, .ts, .tsx, .cs}.
-_CODE_LANGUAGES = frozenset({"python", "javascript", "typescript", "tsx", "csharp"})
+# The oracle dedups *functions*, so index only languages the extractor AND the
+# normalizer fully handle -- currently Python / JavaScript / TypeScript. Being
+# grammar-parseable is NOT sufficient: the real gates are dup_index._FUNC_TYPES
+# (which function nodes are extracted) and normalize()'s bound-name handling
+# (which params/locals are canonicalized so renamed duplicates collapse). C# and
+# SQL parse but are deliberately OUT OF SCOPE -- enabling them needs their
+# function node types in _FUNC_TYPES and their param containers in the
+# normalizer, not just a wider walk. Explicit allowlist by design; yields
+# {.py, .js, .mjs, .cjs, .ts, .tsx}.
+_CODE_LANGUAGES = frozenset({"python", "javascript", "typescript", "tsx"})
 _DUP_SRC_EXTS = frozenset(
     ext for ext, lang in EXTENSION_MAP.items() if lang in _CODE_LANGUAGES
 )
@@ -103,14 +104,10 @@ def build_dup_index(
             funcs = extract_functions(rel, src)
         except UnsupportedLanguageError:
             continue  # extension isn't a code grammar
-        except RuntimeError as exc:
-            # A missing grammar wheel (e.g. C# absent) is per-file skippable --
-            # degrade gracefully rather than failing the whole build. But a
-            # systemic failure (tree-sitter ABI mismatch) must NOT be swallowed
-            # into a silently-empty index; let it surface.
-            if "Could not load tree-sitter grammar" in str(exc):
-                continue
-            raise
+        # NB: a grammar-load/ABI RuntimeError is deliberately NOT caught here.
+        # Every in-scope language is a required dependency, so such a failure is
+        # systemic (a broken install), not a per-file quirk -- letting it surface
+        # is correct rather than masking it as a silently-empty index.
         for name, line, fsrc in funcs:
             collected.append((rel, name, line, fsrc))
             if len(collected) >= max_funcs:
