@@ -38,11 +38,11 @@ def colour_for(count: int) -> tuple[int, int, int]:
     )
 
 
-def render(count: int, label: str = "dup-oracle") -> str:
-    """A truecolor-wrapped statusline segment, e.g. ``🔎 dup-oracle: 3 flags``."""
+def render(count: int) -> str:
+    """A truecolor-wrapped statusline segment, e.g. ``♻️ 3 dups`` (green at 0)."""
     r, g, b = colour_for(count)
-    noun = "flag" if count == 1 else "flags"
-    return f"\x1b[38;2;{r};{g};{b}m🔎 {label}: {count} {noun}\x1b[0m"
+    noun = "dup" if count == 1 else "dups"
+    return f"\x1b[38;2;{r};{g};{b}m♻️ {count} {noun}\x1b[0m"
 
 
 def _base_dir(base: str | None) -> str:

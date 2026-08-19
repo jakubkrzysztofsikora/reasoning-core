@@ -71,10 +71,10 @@ def test_render_is_truecolor_wrapped_and_matches_colour_for():
     assert out.endswith("\x1b[0m")
 
 
-def test_render_pluralises_only_one_flag_as_singular():
-    assert "0 flags" in render(0)
-    assert "1 flag" in render(1) and "1 flags" not in render(1)
-    assert "4 flags" in render(4)
+def test_render_pluralises_only_one_dup_as_singular():
+    assert "0 dups" in render(0)
+    assert "1 dup" in render(1) and "1 dups" not in render(1)
+    assert "4 dups" in render(4)
 
 
 # --- per-session counter ----------------------------------------------------
