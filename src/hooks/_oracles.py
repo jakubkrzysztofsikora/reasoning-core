@@ -400,6 +400,8 @@ def _t2_ruff(
         except json.JSONDecodeError:
             findings = []
         for finding in findings:
+            if finding.get("fix"):
+                continue
             report.add(
                 tool="ruff",
                 file_path=file_path,
