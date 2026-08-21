@@ -161,3 +161,84 @@ def test_reused_index_still_finds_the_planted_duplicate(tmp_path):
         idx.embeddings, idx.token_df, skip=lambda k, rec: k == i,
     )
     assert [h.name for h in hits] == ["slugify"]  # dup survives the cache round-trip
+
+
+# --------------------------------------------------------------------------
+# Increment 3 -- B2: selective recompute + prune + bounded cap (AC2)
+# --------------------------------------------------------------------------
+
+def test_only_changed_file_re_embedded_and_deleted_file_pruned(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)  # a.ts, b.ts, c.ts -- one function each
+
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+
+    # Change a.ts (new logic -> new hash) and delete c.ts.
+    (repo / "a.ts").write_text(
+        'export function toSlug(s) {\n  return s.toUpperCase().split(SEP).join("_");\n}\n'
+    )
+    (repo / "c.ts").unlink()
+
+    embed = CountingEmbed()
+    idx = load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
+
+    assert embed.calls == 1  # only a.ts's single function re-embedded; b.ts reused
+    names = {r.name for r in idx.records}
+    assert names == {"toSlug", "slugify"}  # a.ts (changed) + b.ts; c.ts pruned
+    assert "fib" not in names  # deleted file's record is gone
+
+
+def _repo_of_single_fn_files(root: Path, names: list[str]) -> None:
+    """One file per name (sorted by filename), each with exactly one function."""
+    for nm in names:
+        (root / f"{nm}.ts").write_text(
+            f"export function {nm}(x) {{\n  return x.step().via_{nm}();\n}}\n"
+        )
+
+
+def test_first_build_embedding_is_bounded_by_max_funcs(tmp_path, capsys):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _repo_of_single_fn_files(repo, ["f0", "f1", "f2", "f3", "f4", "f5"])  # 6 fns
+
+    embed = CountingEmbed()
+    idx = load_or_build_dup_index(
+        str(repo), embed_fn=embed, cache_dir=str(cache), max_funcs=3
+    )
+    assert embed.calls == 3      # bounded: never embeds all 6
+    assert len(idx) == 3         # returned index capped
+    err = capsys.readouterr().err
+    assert "coverage partial" in err
+    assert "first 3" in err
+
+
+def test_over_cap_file_is_carried_forward_not_re_embedded(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    # Sorted order: a, b, c -- all three fit and get cached.
+    _repo_of_single_fn_files(repo, ["a", "b", "c"])
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache), max_funcs=3)
+
+    # Add a file that sorts first, pushing c outside the cap of 3.
+    (repo / "0.ts").write_text('export function z0(x) {\n  return x.step().via_z0();\n}\n')
+    embed2 = CountingEmbed()
+    load_or_build_dup_index(str(repo), embed_fn=embed2, cache_dir=str(cache), max_funcs=3)
+    assert embed2.calls == 1  # only the new 0.ts embedded; c not re-embedded, just carried
+
+    # Remove 0.ts again -> c re-enters the cap. If c had been carried forward
+    # (not deleted), it is reused now with zero re-embeds.
+    (repo / "0.ts").unlink()
+    embed3 = CountingEmbed()
+    idx3 = load_or_build_dup_index(str(repo), embed_fn=embed3, cache_dir=str(cache), max_funcs=3)
+    assert embed3.calls == 0  # a, b, c all reused -- carry-forward saved c's vectors
+    assert {r.name for r in idx3.records} == {"a", "b", "c"}
