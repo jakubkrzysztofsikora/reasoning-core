@@ -76,50 +76,81 @@ def _default_embed() -> Callable[[str], "np.ndarray"]:
     return embed_function
 
 
+def _index_file(
+    repo_root: str,
+    rel: str,
+    embed_fn: Callable[[str], "np.ndarray"],
+) -> tuple[list[FunctionRecord], list["np.ndarray"]]:
+    """Extract, tokenise and embed every named function in one repo file.
+
+    Returns ``(records, vecs)`` row-aligned (``vecs[i]`` is the embedding of
+    ``records[i]``). The single per-file extract+embed code path shared by the
+    plain builder and the persistent cache, so both honour the same contracts:
+
+    * an unreadable file (``OSError``) or a non-code extension
+      (``UnsupportedLanguageError``) yields ``([], [])`` -- skip it;
+    * a grammar-load/ABI ``RuntimeError`` is deliberately **not** caught. Every
+      in-scope language is a required dependency, so such a failure is systemic
+      (a broken install), not a per-file quirk -- letting it surface is correct
+      rather than masking it as a silently-empty index. This is also why callers
+      must assemble fully *before* persisting: a mid-build raise here must never
+      leave a truncated cache behind.
+    """
+    try:
+        with open(os.path.join(repo_root, rel), encoding="utf-8", errors="replace") as fh:
+            src = fh.read()
+    except OSError:
+        return [], []
+    try:
+        funcs = extract_functions(rel, src)
+    except UnsupportedLanguageError:
+        return [], []
+    records: list[FunctionRecord] = []
+    vecs: list["np.ndarray"] = []
+    for name, line, fsrc in funcs:
+        records.append(FunctionRecord(rel, name, line, logic_tokens(rel, fsrc)))
+        vecs.append(embed_fn(fsrc))
+    return records, vecs
+
+
+def _assemble_index(
+    records: list[FunctionRecord], vecs: list["np.ndarray"]
+) -> DupOracleIndex:
+    """Pack row-aligned records + vectors into a ``DupOracleIndex`` (token_df is
+    derived cheaply from the records)."""
+    if records:
+        embeddings = np.stack(vecs).astype(np.float32)
+    else:
+        embeddings = np.empty((0, 0), dtype=np.float32)
+    token_df, _ = build_token_df([r.logic_tokens for r in records])
+    return DupOracleIndex(records=records, embeddings=embeddings, token_df=token_df)
+
+
 def build_dup_index(
     repo_root: str,
     *,
     embed_fn: Optional[Callable[[str], "np.ndarray"]] = None,
     max_funcs: int = DEFAULT_MAX_FUNCS,
 ) -> DupOracleIndex:
-    """Build the function + embedding index for ``repo_root``.
+    """Build the function + embedding index for ``repo_root`` (no persistence).
 
     ``embed_fn`` maps a function's source to an L2-normalised vector; when
     omitted the real code embedder is used. ``max_funcs`` bounds how many
-    functions are embedded, so a monorepo can't blow the budget.
+    functions land in the index, so a monorepo can't blow the budget. Stays
+    persistence-free -- the disk cache lives in :func:`load_or_build_dup_index`.
     """
     if embed_fn is None:
         embed_fn = _default_embed()
 
-    collected: list[tuple[str, str, int, str]] = []  # (rel, name, line, source)
+    records: list[FunctionRecord] = []
+    vecs: list["np.ndarray"] = []
     for rel in _iter_repo_files(repo_root, _DUP_SRC_EXTS):
-        if len(collected) >= max_funcs:
+        if len(records) >= max_funcs:
             break
-        try:
-            with open(os.path.join(repo_root, rel), encoding="utf-8", errors="replace") as fh:
-                src = fh.read()
-        except OSError:
-            continue
-        try:
-            funcs = extract_functions(rel, src)
-        except UnsupportedLanguageError:
-            continue  # extension isn't a code grammar
-        # NB: a grammar-load/ABI RuntimeError is deliberately NOT caught here.
-        # Every in-scope language is a required dependency, so such a failure is
-        # systemic (a broken install), not a per-file quirk -- letting it surface
-        # is correct rather than masking it as a silently-empty index.
-        for name, line, fsrc in funcs:
-            collected.append((rel, name, line, fsrc))
-            if len(collected) >= max_funcs:
+        frecords, fvecs = _index_file(repo_root, rel, embed_fn)
+        for rec, vec in zip(frecords, fvecs):
+            records.append(rec)
+            vecs.append(vec)
+            if len(records) >= max_funcs:
                 break
-
-    records = [
-        FunctionRecord(rel, name, line, logic_tokens(rel, fsrc))
-        for (rel, name, line, fsrc) in collected
-    ]
-    if records:
-        embeddings = np.stack([embed_fn(fsrc) for (_r, _n, _l, fsrc) in collected]).astype(np.float32)
-    else:
-        embeddings = np.empty((0, 0), dtype=np.float32)
-    token_df, _ = build_token_df([r.logic_tokens for r in records])
-    return DupOracleIndex(records=records, embeddings=embeddings, token_df=token_df)
+    return _assemble_index(records, vecs)
