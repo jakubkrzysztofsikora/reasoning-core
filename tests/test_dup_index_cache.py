@@ -318,3 +318,97 @@ def test_dim_mismatch_in_meta_discards_the_cache(tmp_path):
     embed = CountingEmbed()
     load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
     assert embed.calls == 3  # integrity check failed -> full rebuild
+
+
+# --------------------------------------------------------------------------
+# Increment 5 -- B4: never crash the edit + cache integrity (AC4)
+# --------------------------------------------------------------------------
+
+def test_garbage_cache_bytes_fall_back_to_full_build(tmp_path):
+    from src.dup_repo_index import _cache_path, load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+
+    path = _cache_path(str(repo), str(cache))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x00\x01not an npz at all\xff")
+
+    embed = CountingEmbed()
+    idx = load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
+    assert embed.calls == 3      # corrupt cache ignored -> full build
+    assert len(idx) == 3
+    # and it recovered: the cache is now a valid, reusable .npz
+    embed2 = CountingEmbed()
+    load_or_build_dup_index(str(repo), embed_fn=embed2, cache_dir=str(cache))
+    assert embed2.calls == 0
+
+
+def test_manifest_shape_mismatch_falls_back_to_full_build(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+
+    # Add a phantom function to a file's manifest so the claimed function count
+    # exceeds the vector-matrix rows.
+    def add_phantom(m):
+        rel, entry = next(iter(m["files"].items()))
+        entry["functions"].append({"name": "ghost", "line": 1, "logic_tokens": []})
+    _rewrite_manifest(_the_cache_file(cache), add_phantom)
+
+    embed = CountingEmbed()
+    idx = load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
+    assert embed.calls == 3  # shape inconsistency -> full rebuild, no crash
+    assert len(idx) == 3
+
+
+def test_write_failure_is_swallowed_and_index_still_returned(tmp_path, monkeypatch):
+    import src.dup_repo_index as dri
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+
+    def boom_savez(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(dri.np, "savez", boom_savez)
+    embed = CountingEmbed()
+    idx = dri.load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
+    assert len(idx) == 3          # a save failure never blocks the build
+    assert embed.calls == 3
+    assert not list(cache.glob("dup-index.*.npz"))  # nothing persisted
+
+
+def test_mid_build_error_propagates_and_leaves_prior_cache_intact(tmp_path, monkeypatch):
+    import src.dup_repo_index as dri
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    dri.load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+    before = _the_cache_file(cache).read_bytes()
+
+    # Change one file so its hash misses the cache and _index_file is called for
+    # it -- then make extraction blow up systemically mid-build.
+    (repo / "a.ts").write_text(
+        'export function toSlug(s) {\n  return s.toUpperCase().split(SEP).join("_");\n}\n'
+    )
+
+    def boom(rel, src):
+        raise RuntimeError("tree-sitter ABI mismatch")
+
+    monkeypatch.setattr(dri, "extract_functions", boom)
+    with pytest.raises(RuntimeError):
+        dri.load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+
+    after = _the_cache_file(cache).read_bytes()
+    assert after == before  # no truncated write; the previous cache is untouched
