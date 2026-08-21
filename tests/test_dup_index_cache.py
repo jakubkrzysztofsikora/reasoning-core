@@ -7,6 +7,7 @@ to the real ``~/.cache`` during the suite.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -242,3 +243,78 @@ def test_over_cap_file_is_carried_forward_not_re_embedded(tmp_path):
     idx3 = load_or_build_dup_index(str(repo), embed_fn=embed3, cache_dir=str(cache), max_funcs=3)
     assert embed3.calls == 0  # a, b, c all reused -- carry-forward saved c's vectors
     assert {r.name for r in idx3.records} == {"a", "b", "c"}
+
+
+# --------------------------------------------------------------------------
+# Increment 4 -- B3: contract-change invalidation (AC3)
+# --------------------------------------------------------------------------
+
+def _the_cache_file(cache: Path) -> Path:
+    files = list(cache.glob("dup-index.*.npz"))
+    assert len(files) == 1
+    return files[0]
+
+
+def _read_manifest(cache_path: Path) -> dict:
+    with np.load(cache_path, allow_pickle=False) as npz:
+        return json.loads(bytes(npz["manifest"]).decode("utf-8"))
+
+
+def _rewrite_manifest(cache_path: Path, mutate) -> None:
+    """Load the cache, mutate its manifest in place, resave (same .npz shape)."""
+    with np.load(cache_path, allow_pickle=False) as npz:
+        vectors = np.asarray(npz["vectors"], dtype=np.float32)
+        manifest = json.loads(bytes(npz["manifest"]).decode("utf-8"))
+    mutate(manifest)
+    mbytes = np.frombuffer(json.dumps(manifest).encode("utf-8"), dtype=np.uint8)
+    with open(cache_path, "wb") as fh:
+        np.savez(fh, vectors=vectors, manifest=mbytes)
+
+
+def test_changing_embedder_id_discards_the_cache(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache), embedder_id="model-A")
+
+    embed = CountingEmbed()
+    load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache), embedder_id="model-B")
+    assert embed.calls == 3  # stale vectors from model-A never reused
+    assert _read_manifest(_the_cache_file(cache))["meta"]["embedder_id"] == "model-B"
+
+
+def test_bumping_cache_format_version_discards_the_cache(tmp_path, monkeypatch):
+    import src.dup_repo_index as dri
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+
+    dri.load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+
+    monkeypatch.setattr(dri, "CACHE_FORMAT_VERSION", dri.CACHE_FORMAT_VERSION + 1)
+    embed = CountingEmbed()
+    dri.load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
+    assert embed.calls == 3  # old-format cache discarded, everything re-embedded
+
+
+def test_dim_mismatch_in_meta_discards_the_cache(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+    # Corrupt the recorded dim so it no longer matches the vector matrix.
+    _rewrite_manifest(_the_cache_file(cache), lambda m: m["meta"].__setitem__("dim", 999))
+
+    embed = CountingEmbed()
+    load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
+    assert embed.calls == 3  # integrity check failed -> full rebuild
