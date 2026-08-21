@@ -62,15 +62,18 @@ back to a full build on any corrupt/unreadable cache, never crashing the edit.
    `_index_file` → assemble the **full** in-memory index → **cap at assembly** →
    save cache atomically **only on success** → return. Prunes cache entries only
    for files **deleted from disk**.
-3. **max_funcs is an assembly cap, not a walk truncation.** The cache stores
-   every walked file's vectors, independent of `max_funcs`. The walk is over the
-   **sorted** `_iter_repo_files` order (stable); the returned `DupOracleIndex`
-   takes functions in that order up to `max_funcs`. So a file gaining/losing
-   functions shifts only which functions land in the capped *returned* index — it
-   never expires another file's cache entry (deterministic reuse; no churn).
-   Tradeoff (accepted): first build embeds all in-scope functions; the cap bounds
-   returned-index/query size, not first-build embedding cost. A hard embedding
-   ceiling for pathological monorepos is a noted follow-up.
+3. **max_funcs is a bounded embedding ceiling over the stable sorted walk.**
+   The walk is over the **sorted** `_iter_repo_files` order (stable); functions
+   are embedded (or reused) in that order until `max_funcs` is reached, then the
+   walk stops. So the **first build is always bounded** — a huge repo indexes its
+   first N functions (partial coverage) instead of timing out and silently doing
+   nothing. The cache stores exactly what it embeds. Over-cap entries are **not
+   deleted**: cache entries are pruned only for files **deleted from disk**; a
+   file pushed outside the cap this run keeps its cached vectors (carried forward)
+   so a later boundary shift reuses them instead of re-embedding — deterministic,
+   no churn. When the cap is hit, emit **one** stderr line
+   (`dup-oracle: repo exceeds N functions, indexing first N — coverage partial`)
+   so partial coverage is visible, not guessed.
 4. Cache file: a **single atomic `.npz`** at
    `<cache_dir>/dup-index.<repo_hash>.npz` (`np.savez`, `allow_pickle=False`):
    `vectors` = `(M,d)` float32 matrix (binary — no base64), `manifest` = uint8
@@ -134,15 +137,16 @@ back to a full build on any corrupt/unreadable cache, never crashing the edit.
    (same records/embeddings/token_df). → impl: `.npz` load/save (binary vectors +
    uint8-JSON manifest, atomic `os.replace`), per-file hash reuse, assemble +
    persist on success.
-3. **B2 — selective recompute + prune + cap-at-assembly.** test (red): after a
+3. **B2 — selective recompute + prune + bounded cap.** test (red): after a
    cached build, edit one file (add/rename a function) and delete another →
    rebuild embeds only the changed file's functions (counter == that file's fn
    count), the changed function appears in records, the deleted file's records
-   are gone. Plus: with `max_funcs` below the total, growing an early (sorted)
-   file's function count does **not** re-embed or expire a later file's cached
-   vectors (cap applies at assembly over sorted order, cache stores all files).
-   → impl: per-file hash invalidation, prune only disk-deleted files, cap the
-   returned index at assembly over `_iter_repo_files` sorted order.
+   are gone. Plus cap tests: with `max_funcs` below the repo total, first build
+   embeds exactly `max_funcs` functions (bounded, not the total) and emits one
+   `coverage partial` stderr line; a file pushed outside the cap keeps its cached
+   vectors (no re-embed, not deleted). → impl: per-file hash invalidation, prune
+   only disk-deleted files, bounded embedding over sorted walk, carry-forward of
+   over-cap entries, stderr warning on cap-hit.
 4. **B3 — contract-change invalidation.** test (red): build with
    `embedder_id="A"`, rebuild with `embedder_id="B"` → all N re-embedded, meta
    updated; same for a bumped `CACHE_FORMAT_VERSION` and a stored `dim` mismatch.
@@ -180,9 +184,10 @@ follow-up, already scoped in `docs/dup-oracle.md`. Detection quality (TB-88) and
 the statusline list (TB-90) are siblings, untouched here.
 
 **Risks:**
-- `max_funcs` cap applies deterministically at **assembly** over sorted
-  `_iter_repo_files` order; the cache stores all files, so cap-boundary shifts
-  never expire cached vectors (point 3 above).
+- `max_funcs` is a bounded embedding ceiling over sorted `_iter_repo_files`
+  order (first build always terminates); over-cap entries are carried forward,
+  never deleted, so cap-boundary shifts never expire cached vectors or re-embed
+  (point 3 above). Partial coverage is surfaced on stderr.
 - Concurrent hook processes racing on one cache file → atomic `os.replace` keeps
   writes safe; a lost update just costs a little recompute next edit (acceptable
   for an advisory). Noted, not locked.
@@ -198,5 +203,6 @@ the statusline list (TB-90) are siblings, untouched here.
   (function-level keying would need stable per-function identity across line
   shifts) — accepted for v1; a file rarely holds many in-scope functions.
 - **No cache eviction** → stale per-repo `.npz` files accumulate in
-  `~/.cache/reasoning-core`. Follow-up (alongside a hard first-build embedding
-  ceiling for pathological monorepos).
+  `~/.cache/reasoning-core`, and carry-forward lets one repo's cache grow past
+  `max_funcs` over many boundary-shifting edits. Follow-up (LRU/size cap). The
+  first-build *embedding* cost is already bounded by `max_funcs` (point 3).

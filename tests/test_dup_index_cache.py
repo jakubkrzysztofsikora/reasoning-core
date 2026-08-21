@@ -96,3 +96,68 @@ def test_index_file_propagates_systemic_grammar_error(tmp_path, monkeypatch):
     monkeypatch.setattr(dri, "extract_functions", boom)
     with pytest.raises(RuntimeError):
         dri._index_file(str(tmp_path), "a.ts", CountingEmbed())
+
+
+# --------------------------------------------------------------------------
+# Increment 2 -- B1: persist + reuse unchanged (AC1)
+# --------------------------------------------------------------------------
+
+def _same_index(a, b) -> None:
+    """Assert two indexes are equivalent (records, embeddings, token_df)."""
+    assert [(r.path, r.name, r.lineno, r.logic_tokens) for r in a.records] == \
+           [(r.path, r.name, r.lineno, r.logic_tokens) for r in b.records]
+    assert np.allclose(a.embeddings, b.embeddings)
+    assert a.token_df == b.token_df
+
+
+def test_second_build_reuses_cache_and_re_embeds_nothing(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+
+    embed1 = CountingEmbed()
+    idx1 = load_or_build_dup_index(str(repo), embed_fn=embed1, cache_dir=str(cache))
+    assert len(idx1) == 3
+    assert embed1.calls == 3  # first build embeds every function
+
+    # A fresh embedder counter stands in for the next hook process. With nothing
+    # changed, the persisted vectors must be reused -- zero repo re-embeds.
+    embed2 = CountingEmbed()
+    idx2 = load_or_build_dup_index(str(repo), embed_fn=embed2, cache_dir=str(cache))
+    assert embed2.calls == 0
+    assert len(idx2) == 3
+    _same_index(idx1, idx2)
+
+
+def test_cache_file_is_written_under_cache_dir(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+    written = list(cache.glob("dup-index.*.npz"))
+    assert len(written) == 1
+
+
+def test_reused_index_still_finds_the_planted_duplicate(tmp_path):
+    from src.dup_oracle import find_near_duplicates
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+    idx = load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+
+    i = next(k for k, r in enumerate(idx.records) if r.name == "toSlug")
+    hits = find_near_duplicates(
+        idx.embeddings[i], idx.records[i].logic_tokens, idx.records,
+        idx.embeddings, idx.token_df, skip=lambda k, rec: k == i,
+    )
+    assert [h.name for h in hits] == ["slugify"]  # dup survives the cache round-trip
