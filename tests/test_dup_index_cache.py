@@ -412,3 +412,47 @@ def test_mid_build_error_propagates_and_leaves_prior_cache_intact(tmp_path, monk
 
     after = _the_cache_file(cache).read_bytes()
     assert after == before  # no truncated write; the previous cache is untouched
+
+
+# --------------------------------------------------------------------------
+# Observability -- a breadcrumb when an existing cache is discarded (fail-open)
+# --------------------------------------------------------------------------
+
+def test_first_build_does_not_warn_about_a_discarded_cache(tmp_path, capsys):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+    assert "cache discarded" not in capsys.readouterr().err  # no file existed -> no warning
+
+
+def test_discarding_a_corrupt_cache_emits_a_breadcrumb(tmp_path, capsys):
+    from src.dup_repo_index import _cache_path, load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    path = _cache_path(str(repo), str(cache))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"garbage, not an npz")
+
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+    assert "cache discarded" in capsys.readouterr().err
+
+
+def test_discarding_an_incompatible_cache_emits_a_breadcrumb(tmp_path, capsys):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache), embedder_id="model-A")
+    capsys.readouterr()  # drop the first-build output
+
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache), embedder_id="model-B")
+    assert "cache discarded" in capsys.readouterr().err  # embedder swap -> incompatible

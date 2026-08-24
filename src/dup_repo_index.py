@@ -336,8 +336,19 @@ def load_or_build_dup_index(
     if embedder_id is None:
         embedder_id = _default_embedder_id()
     cache_enabled = os.environ.get("RC_DUP_ORACLE_CACHE", "1") != "0"
+    cache_path = _cache_path(repo_root, cache_dir)
 
-    loaded = _load_cache(_cache_path(repo_root, cache_dir), embedder_id) if cache_enabled else None
+    loaded = _load_cache(cache_path, embedder_id) if cache_enabled else None
+    if cache_enabled and loaded is None and cache_path.exists():
+        # A cache file was present but unusable -- corrupt, or an incompatible
+        # embedding contract (embedder id / format version / dim). We fall back to
+        # a full rebuild; surface it on stderr so an unexpected, repeated full
+        # re-embed isn't invisible. Fail-open breadcrumb, not an error -- a strict
+        # raise-instead mode is the RC_DUP_ORACLE_STRICT follow-up.
+        print(
+            "dup-oracle: cache discarded (corrupt or incompatible) — rebuilding index",
+            file=sys.stderr,
+        )
     old_manifest, old_vectors = loaded if loaded else (None, None)
     old_files: dict = old_manifest["files"] if old_manifest else {}
 
@@ -400,7 +411,7 @@ def load_or_build_dup_index(
         row += len(vecs)
 
     if cache_enabled:
-        _save_cache(_cache_path(repo_root, cache_dir), out_files, out_vecs, embedder_id)
+        _save_cache(cache_path, out_files, out_vecs, embedder_id)
 
     # Returned index: the within-cap walked functions, sorted-walk order, capped.
     ret_records: list[FunctionRecord] = []

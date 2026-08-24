@@ -206,3 +206,19 @@ the statusline list (TB-90) are siblings, untouched here.
   `~/.cache/reasoning-core`, and carry-forward lets one repo's cache grow past
   `max_funcs` over many boundary-shifting edits. Follow-up (LRU/size cap). The
   first-build *embedding* cost is already bounded by `max_funcs` (point 3).
+
+**Observability + fail-fast (agreed):** the library fails **open** on cache
+trouble (corrupt/incompatible → silent full rebuild), which is correct for an
+advisory. Added a one-line stderr **breadcrumb** when an *existing* cache is
+discarded (never on a clean first build) so a surprise re-embed isn't invisible.
+The hook boundary stays fail-open **permanently** (a raising PreToolUse hook
+would block every edit — contract, tested). **Follow-up ticket:**
+`RC_DUP_ORACLE_STRICT=1` — opt-in strict mode that **raises** on cache
+discard/corruption instead of rebuilding (mirrors `RC_ADAPTER_REQUIRED`), to be
+flipped on in CI/dev once the cache is trusted.
+
+**Feature-flag convention:** the repo uses **env-var flags** (`RC_*`,
+default-off), no flag service. This feature: `RC_DUP_ORACLE=1` gates the whole
+oracle (the "agreed working" switch); `RC_DUP_ORACLE_CACHE=0` disables the disk
+cache; `RC_DUP_ORACLE_MAX_FUNCS` the ceiling; `RC_DUP_ORACLE_STRICT` (follow-up)
+the fail-fast lever.
