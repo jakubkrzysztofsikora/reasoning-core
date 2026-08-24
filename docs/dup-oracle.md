@@ -39,17 +39,41 @@ Two stages, so it stays fast and low-noise:
 
 Function embeddings are held in a `DupOracleIndex` (`src/dup_repo_index.py`).
 
-**Current limitation + planned fix.** The advisory hook builds that index on
-demand and caches it in-process, but the hook runs as a fresh process per edit —
-so a large repo pays two costs each time: re-embedding every function, and
-reloading the encoder. Persisting the index removes both. The natural home is the
-**sidecar**: it already holds the model in memory and already keeps embedding
-state across requests (`/baseline`), so a `/dup-check` endpoint alongside it would
-drop the per-edit cost to just "embed the new function + a cosine query". A
-self-contained **disk cache** (reload vectors, re-embed only touched files) is a
-lighter fallback for runs without the sidecar — it removes the re-embed cost but
-not the model load. This is the main follow-up before default-enable; scoped and
-ready to build into the sidecar once the approach is agreed.
+**Index persistence (disk cache).** The hook runs as a fresh process per edit, so
+an in-process cache never survives — early on, every edit re-embedded the whole
+repo (~19s on 452 fns). The index is now **persisted to disk** per repo
+(`load_or_build_dup_index` in `src/dup_repo_index.py`): a single atomic `.npz`
+(binary vectors + a small JSON manifest) keyed per file by content hash. On each
+edit, unchanged files reuse their cached vectors and only changed/new files are
+re-embedded, so the dominant re-embed cost is paid once, not every edit.
+
+- **Bounded first build.** `max_funcs` (`RC_DUP_ORACLE_MAX_FUNCS`, default 5000)
+  is an embedding ceiling over a stable sorted walk, so even a huge repo
+  terminates — it indexes the first N functions and prints one
+  `coverage partial` line to stderr. Over-cap entries are carried forward, never
+  deleted; only files deleted from disk are pruned.
+- **Invalidation.** The manifest records `{format_version, embedder_id, dim}`; a
+  mismatch on any discards the whole cache and rebuilds. **Bump
+  `CACHE_FORMAT_VERSION` on ANY change to the embedding pipeline** — the model
+  id, the model **weights**, or `dup_embed`'s normalisation — because weights
+  can't be fingerprinted offline; this manual bump is the contract that
+  guarantees incompatible vectors are never reused.
+- **Fail-open.** A corrupt/unreadable cache falls back to a full build and never
+  crashes the edit; a mid-build systemic error (e.g. a tree-sitter ABI mismatch)
+  propagates *without* writing a truncated cache, leaving the previous one
+  intact. When an existing cache is discarded, one stderr breadcrumb is emitted.
+- **Flags.** `RC_DUP_ORACLE_CACHE=0` disables persistence. A strict mode that
+  *raises* instead of silently rebuilding on cache trouble
+  (`RC_DUP_ORACLE_STRICT`, mirroring `RC_ADAPTER_REQUIRED`) is a planned
+  follow-up, for policing the cache in CI once it's trusted.
+
+**Remaining floor + the sidecar follow-up.** The disk cache removes the re-embed
+cost but not the per-edit model load, and the hook still embeds the one **new**
+function being written. Removing both needs a persistent process holding the
+model in memory: the **sidecar** already does (it keeps embedding state across
+requests via `/baseline`), so a `/dup-check` endpoint alongside it would drop the
+per-edit cost to just "embed the new function + a cosine query". That is the next
+follow-up before default-enable.
 
 ## Acceptance test (the anchor)
 
@@ -80,7 +104,8 @@ if that's wanted before merge.
 - `src/dup_index.py` — normaliser, logic-token diff, distinctiveness ranking,
   function extraction (pure; tree-sitter only).
 - `src/dup_oracle.py` — the two-stage query (`find_near_duplicates`).
-- `src/dup_repo_index.py` — builds the repo function+embedding index.
+- `src/dup_repo_index.py` — builds the repo function+embedding index and
+  persists it to disk (`load_or_build_dup_index`; per-file content-hash cache).
 - `src/dup_embed.py` — L2-normalising wrapper over `ssm_backbone.embed`
   (the only torch-touching module).
 - `src/hooks/pre_edit_dup_advisory.py` — the PreToolUse advisory.
@@ -94,3 +119,8 @@ Off by default. To turn it on, set `RC_DUP_ORACLE=1` and wire the hook as a
 
 It reads the tool payload on stdin and, when a duplicate is found, prints a
 `hookSpecificOutput.additionalContext` blurb (exit 0, never blocks).
+
+The index is cached to disk automatically (see **Index persistence** above).
+Relevant env: `RC_DUP_ORACLE_CACHE=0` disables the cache, `RC_DUP_ORACLE_MAX_FUNCS`
+sets the embedding ceiling, `RC_CACHE_DIR` relocates the cache
+(default `~/.cache/reasoning-core/dup-index.<repo-hash>.npz`).

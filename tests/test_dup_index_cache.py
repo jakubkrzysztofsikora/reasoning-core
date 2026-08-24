@@ -456,3 +456,26 @@ def test_discarding_an_incompatible_cache_emits_a_breadcrumb(tmp_path, capsys):
 
     load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache), embedder_id="model-B")
     assert "cache discarded" in capsys.readouterr().err  # embedder swap -> incompatible
+
+
+# --------------------------------------------------------------------------
+# Kill-switch -- RC_DUP_ORACLE_CACHE=0 disables persistence entirely
+# --------------------------------------------------------------------------
+
+def test_cache_disabled_env_writes_nothing_and_never_reuses(tmp_path, monkeypatch):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    monkeypatch.setenv("RC_DUP_ORACLE_CACHE", "0")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+
+    embed1 = CountingEmbed()
+    idx1 = load_or_build_dup_index(str(repo), embed_fn=embed1, cache_dir=str(cache))
+    assert len(idx1) == 3 and embed1.calls == 3
+    assert not list(cache.glob("dup-index.*.npz"))  # nothing persisted
+
+    embed2 = CountingEmbed()
+    load_or_build_dup_index(str(repo), embed_fn=embed2, cache_dir=str(cache))
+    assert embed2.calls == 3  # no cache -> full re-embed every time
