@@ -10,9 +10,13 @@ re-inventing. **Never blocks** -- always exits 0, fails open on any error.
 
 See ``docs/dup-oracle.md``. Modelled on ``post_assistant_diff_audit.py``.
 
-Note: the repo index is built lazily on first use and cached per repo for the
-process. Wiring it onto ``project_index``'s background-build lifecycle (so the
-very first edit of a session doesn't pay the build) is a follow-up.
+Note: the repo index is **persisted to disk** per repo (keyed per file by content
+hash) via ``load_or_build_dup_index`` -- a fresh hook process reuses cached
+vectors and embeds only changed/new files, so the advisory is a cached lookup.
+It is also cached in-process for the (single) run. Set ``RC_DUP_ORACLE_CACHE=0``
+to disable the disk cache. The remaining per-edit floor (embedding the one new
+function + loading the model) needs a persistent sidecar process -- a separate
+follow-up scoped in ``docs/dup-oracle.md``.
 """
 from __future__ import annotations
 
@@ -26,14 +30,24 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[2])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+_IMPORT_ERROR: Optional[str] = None
 try:  # a PreToolUse hook must never crash at import, even when it's disabled
     from src.dup_index import extract_functions, logic_tokens
     from src.dup_oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, find_near_duplicates
-    from src.dup_repo_index import DupOracleIndex, build_dup_index
+    from src.dup_repo_index import (
+        DupOracleIndex,
+        build_dup_index,
+        load_or_build_dup_index,
+    )
     from src.grammars import UnsupportedLanguageError
-except Exception:  # noqa: BLE001 - hook must never crash
+except Exception as exc:  # noqa: BLE001 - hook must never crash
+    # Capture WHY so that, when the feature is explicitly enabled but a
+    # dependency is missing, main() can say so instead of silently checking
+    # nothing (see _warn_stderr in main()).
+    _IMPORT_ERROR = repr(exc)
     extract_functions = logic_tokens = find_near_duplicates = None  # type: ignore
-    build_dup_index = DupOracleIndex = UnsupportedLanguageError = None  # type: ignore
+    build_dup_index = load_or_build_dup_index = None  # type: ignore
+    DupOracleIndex = UnsupportedLanguageError = None  # type: ignore
     RECALL_DEFAULT, CONFIRM_DEFAULT = 0.80, 0.97
 
 TOP_K = 3
@@ -140,7 +154,10 @@ def _emit_additional_context(text: str, event_name: str) -> None:
 def _get_index(repo_root: str) -> DupOracleIndex:
     index = _INDEX_CACHE.get(repo_root)
     if index is None:
-        index = build_dup_index(repo_root)  # real embedder (lazy torch import)
+        # Disk-persisted: reuses cached vectors, re-embeds only changed/new files
+        # (real embedder via lazy torch import). The in-process cache still helps
+        # if this process ever indexes twice.
+        index = load_or_build_dup_index(repo_root)
         _INDEX_CACHE[repo_root] = index
     return index
 
@@ -153,8 +170,22 @@ def _embedder():
     return embed_function
 
 
+def _warn_stderr(msg: str) -> None:
+    """Best-effort one-liner to stderr; never raises (this is a fail-open hook)."""
+    try:
+        print(f"dup-oracle: {msg}", file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> None:
-    if os.environ.get("RC_DUP_ORACLE") != "1" or build_dup_index is None:  # opt-in + import guard
+    if os.environ.get("RC_DUP_ORACLE") != "1":
+        sys.exit(0)  # feature off -> silent, do nothing
+    if build_dup_index is None or load_or_build_dup_index is None:
+        # Enabled, but the feature failed to import (missing dependency?). Stay
+        # fail-open, but SAY SO -- otherwise it silently checks nothing while the
+        # operator believes the reuse advisory is active.
+        _warn_stderr(f"enabled (RC_DUP_ORACLE=1) but inactive — import failed: {_IMPORT_ERROR}")
         sys.exit(0)
     try:
         payload = _read_payload()
@@ -169,8 +200,10 @@ def main() -> None:
         )
         if text:
             _emit_additional_context(text, payload.get("hookEventName") or "PreToolUse")
-    except Exception:
-        pass  # fail open -- an advisory must never block an edit
+    except Exception as exc:  # noqa: BLE001
+        # Fail open -- an advisory must never block an edit -- but leave a trace
+        # so a broken run isn't invisible when the operator enabled it.
+        _warn_stderr(f"advisory skipped (fail-open): {exc!r}")
     sys.exit(0)
 
 
