@@ -368,7 +368,7 @@ def test_manifest_shape_mismatch_falls_back_to_full_build(tmp_path):
     assert len(idx) == 3
 
 
-def test_write_failure_is_swallowed_and_index_still_returned(tmp_path, monkeypatch):
+def test_write_failure_is_surfaced_and_index_still_returned(tmp_path, monkeypatch, capsys):
     import src.dup_repo_index as dri
 
     repo = tmp_path / "repo"
@@ -385,6 +385,47 @@ def test_write_failure_is_swallowed_and_index_still_returned(tmp_path, monkeypat
     assert len(idx) == 3          # a save failure never blocks the build
     assert embed.calls == 3
     assert not list(cache.glob("dup-index.*.npz"))  # nothing persisted
+    assert "cache not saved" in capsys.readouterr().err  # ...but the degrade is surfaced
+
+
+def test_out_of_bounds_row_start_falls_back_to_full_build(tmp_path):
+    from src.dup_repo_index import load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)
+    load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+
+    # Corrupt one entry's row_start so its window runs off the end of the matrix,
+    # while the total function count still matches the row count.
+    _rewrite_manifest(_the_cache_file(cache), lambda m: next(iter(m["files"].values())).__setitem__("row_start", 9999))
+
+    embed = CountingEmbed()
+    idx = load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(cache))
+    assert embed.calls == 3  # rejected before _reuse_entry -> full rebuild, no IndexError
+    assert len(idx) == 3
+
+
+def test_each_file_is_read_once_per_build(tmp_path, monkeypatch):
+    import src.dup_repo_index as dri
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cache = tmp_path / "cache"
+    _make_repo(repo)  # a.ts, b.ts, c.ts
+
+    reads: list[str] = []
+    real = dri._read_source
+
+    def spy(root, rel):
+        reads.append(rel)
+        return real(root, rel)
+
+    monkeypatch.setattr(dri, "_read_source", spy)
+    dri.load_or_build_dup_index(str(repo), embed_fn=CountingEmbed(), cache_dir=str(cache))
+    # Exactly one read per file -- the hash and the extraction share it (no double read).
+    assert sorted(reads) == ["a.ts", "b.ts", "c.ts"]
 
 
 def test_mid_build_error_propagates_and_leaves_prior_cache_intact(tmp_path, monkeypatch):

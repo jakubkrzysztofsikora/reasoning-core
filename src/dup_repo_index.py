@@ -85,6 +85,8 @@ def _index_file(
     repo_root: str,
     rel: str,
     embed_fn: Callable[[str], "np.ndarray"],
+    *,
+    src: Optional[str] = None,
 ) -> tuple[list[FunctionRecord], list["np.ndarray"]]:
     """Extract, tokenise and embed every named function in one repo file.
 
@@ -100,12 +102,16 @@ def _index_file(
       rather than masking it as a silently-empty index. This is also why callers
       must assemble fully *before* persisting: a mid-build raise here must never
       leave a truncated cache behind.
+
+    ``src`` lets a caller that has already read the file (to hash it) pass the
+    decoded text in, so a changed file is read from disk once, not twice.
     """
-    try:
-        with open(os.path.join(repo_root, rel), encoding="utf-8", errors="replace") as fh:
-            src = fh.read()
-    except OSError:
-        return [], []
+    if src is None:
+        try:
+            with open(os.path.join(repo_root, rel), encoding="utf-8", errors="replace") as fh:
+                src = fh.read()
+        except OSError:
+            return [], []
     try:
         funcs = extract_functions(rel, src)
     except UnsupportedLanguageError:
@@ -173,11 +179,17 @@ def build_dup_index(
 # (no sidecar, no network) and offline-testable via the injectable stub embedder.
 # See docs/dup-oracle.md.
 
-# BUMP THIS on ANY change to the embedding pipeline -- the model id, the model
-# weights, OR dup_embed's normalisation. Model weights can't be fingerprinted
-# offline, so this manual bump is the enforced contract that guarantees
-# incompatible vectors can never be reused across a pipeline change. The
-# embedder_id + dim fields in meta are automatic belt-and-braces on top.
+# BUMP THIS on ANY change to what the cache stores or how it is produced:
+#   - the embedding pipeline -- the model id, the model weights, or dup_embed's
+#     vector normalisation; AND
+#   - the logic-token normaliser (dup_index.normalize / logic_tokens -- e.g. the
+#     _OPERATORS set, bound-name handling, pruned subtrees), because the cache
+#     also persists each function's logic_tokens and reuses them for the Stage-2
+#     logic_ratio confirm + distinctiveness ranking.
+# Neither weights nor the normaliser can be fingerprinted from the cache alone,
+# so this manual bump is the enforced contract that guarantees stale vectors OR
+# stale tokens can never be reused across such a change. The embedder_id + dim
+# fields in meta are automatic belt-and-braces on top (they catch a model swap).
 CACHE_FORMAT_VERSION = 1
 
 
@@ -200,13 +212,17 @@ def _cache_path(repo_root: str, cache_dir: Optional[str]) -> Path:
     return base / f"dup-index.{key}.npz"
 
 
-def _file_hash(repo_root: str, rel: str) -> Optional[str]:
-    """SHA-256 of a file's raw bytes, or ``None`` if unreadable (skip it)."""
+def _read_source(repo_root: str, rel: str) -> Optional[tuple[str, str]]:
+    """Read a file once, returning ``(content_hash, decoded_text)`` or ``None`` if
+    unreadable (skip it). One read serves both the cache key (hash of raw bytes)
+    and extraction (decoded text), so a changed file isn't opened twice per run.
+    """
     try:
         with open(os.path.join(repo_root, rel), "rb") as fh:
-            return hashlib.sha256(fh.read()).hexdigest()
+            data = fh.read()
     except OSError:
         return None
+    return hashlib.sha256(data).hexdigest(), data.decode("utf-8", errors="replace")
 
 
 def _load_cache(
@@ -237,15 +253,26 @@ def _load_cache(
         or not isinstance(files, dict)
     ):
         return None
-    # Integrity: the matrix shape must match what the manifest claims, else a
-    # reuse would read the wrong rows.
+    # Integrity: the matrix shape must match what the manifest claims, AND every
+    # entry's [row_start, row_start + n) window must sit inside the matrix -- else
+    # _reuse_entry's ``vectors[rs + j]`` would read the wrong rows or raise
+    # IndexError (which escapes the un-guarded build path -> a persistent dead
+    # oracle). A count-matching manifest with a corrupt row_start must be rejected
+    # here, not trip later.
+    if vectors.ndim != 2:
+        return None
+    rows = int(vectors.shape[0])
     total = 0
     for entry in files.values():
         fns = entry.get("functions") if isinstance(entry, dict) else None
-        if not isinstance(fns, list) or not isinstance(entry.get("row_start"), int):
+        rs = entry.get("row_start") if isinstance(entry, dict) else None
+        if not isinstance(fns, list) or not isinstance(rs, int):
             return None
-        total += len(fns)
-    if vectors.ndim != 2 or vectors.shape[0] != total or vectors.shape[1] != dim:
+        n = len(fns)
+        if rs < 0 or rs + n > rows:  # window must be in-bounds
+            return None
+        total += n
+    if total != rows or vectors.shape[1] != dim:
         return None
     return manifest, vectors
 
@@ -277,8 +304,9 @@ def _save_cache(
     embedder_id: str,
 ) -> None:
     """Atomically write the cache as a single ``.npz`` (binary vectors + a uint8
-    JSON manifest). A write failure is swallowed -- an advisory must never block
-    an edit (AC4, write side). Callers assemble the whole index *before* calling
+    JSON manifest). A write failure never blocks the edit (AC4, write side) but is
+    a real degrade (the next edit re-embeds), so it is surfaced on stderr rather
+    than swallowed silently. Callers assemble the whole index *before* calling
     this, so a mid-build error never reaches here with a truncated result.
     """
     if out_vecs:
@@ -305,11 +333,15 @@ def _save_cache(
             os.replace(tmp, path)
         except OSError:
             try:
-                os.unlink(tmp)
+                os.unlink(tmp)  # don't leave a half-written temp behind
             except OSError:
                 pass
-    except OSError:
-        pass  # fail open -- persistence is best-effort
+            raise
+    except OSError as exc:
+        # silent-ok: persistence is best-effort -- a write failure must never
+        # block an edit. But it IS a degrade (the next edit re-embeds), so make
+        # it observable rather than swallowing it.
+        print(f"dup-oracle: cache not saved ({exc}) — will rebuild next edit", file=sys.stderr)
 
 
 def load_or_build_dup_index(
@@ -367,16 +399,20 @@ def load_or_build_dup_index(
         if embedded_funcs >= max_funcs:
             stopped_early = True
             break
-        fhash = _file_hash(repo_root, rel)
-        if fhash is None:
+        # One read per file serves both the cache key (hash) and, on a miss, the
+        # extraction text -- so a changed file is never opened twice.
+        read = _read_source(repo_root, rel)
+        if read is None:
             continue  # unreadable -- skip, don't cache
+        fhash, src_text = read
         entry = old_files.get(rel)
         if entry is not None and entry.get("hash") == fhash and old_vectors is not None:
             recs, vecs = _reuse_entry(rel, entry, old_vectors)
         else:
-            # May raise a systemic RuntimeError -- deliberately propagates BEFORE
-            # any cache write, so the previous cache stays intact (AC4).
-            recs, vecs = _index_file(repo_root, rel, embed_fn)
+            # Changed/new file: re-embed from the text we just read. May raise a
+            # systemic RuntimeError -- deliberately propagates BEFORE any cache
+            # write, so the previous cache stays intact (AC4).
+            recs, vecs = _index_file(repo_root, rel, embed_fn, src=src_text)
         walked.append(rel)
         walked_records[rel] = recs
         walked_vecs[rel] = vecs
