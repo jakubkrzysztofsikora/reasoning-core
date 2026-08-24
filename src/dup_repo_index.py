@@ -162,15 +162,16 @@ def build_dup_index(
 
 
 # ---------------------------------------------------------------------------
-# Persistent disk cache (TB-94)
+# Persistent disk cache
 # ---------------------------------------------------------------------------
 #
 # The advisory hook runs as a fresh process per edit, so an in-process cache
-# never survives -- every edit re-embedded the whole repo (~19s on 452 fns).
-# This cache persists the function+embedding index per repo, keyed per file by
-# content hash: unchanged files reuse their cached vectors, only changed/new
-# files are re-embedded. Self-contained (no sidecar, no network) and offline-
-# testable via the injectable stub embedder. See docs/dup-oracle.md.
+# cannot survive between edits. This cache persists the function+embedding index
+# to disk per repo, keyed per file by content hash: unchanged files reuse their
+# cached vectors and only changed/new files are embedded, so an edit's advisory
+# is a cached lookup (~seconds) rather than a whole-repo re-embed. Self-contained
+# (no sidecar, no network) and offline-testable via the injectable stub embedder.
+# See docs/dup-oracle.md.
 
 # BUMP THIS on ANY change to the embedding pipeline -- the model id, the model
 # weights, OR dup_embed's normalisation. Model weights can't be fingerprinted

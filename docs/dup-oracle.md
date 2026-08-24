@@ -40,12 +40,12 @@ Two stages, so it stays fast and low-noise:
 Function embeddings are held in a `DupOracleIndex` (`src/dup_repo_index.py`).
 
 **Index persistence (disk cache).** The hook runs as a fresh process per edit, so
-an in-process cache never survives — early on, every edit re-embedded the whole
-repo (~19s on 452 fns). The index is now **persisted to disk** per repo
-(`load_or_build_dup_index` in `src/dup_repo_index.py`): a single atomic `.npz`
-(binary vectors + a small JSON manifest) keyed per file by content hash. On each
-edit, unchanged files reuse their cached vectors and only changed/new files are
-re-embedded, so the dominant re-embed cost is paid once, not every edit.
+the index is **persisted to disk** per repo (`load_or_build_dup_index` in
+`src/dup_repo_index.py`): a single atomic `.npz` (binary vectors + a small JSON
+manifest) keyed per file by content hash. On each edit, unchanged files reuse
+their cached vectors and only changed/new files are embedded — so the advisory is
+a cached lookup (seconds) rather than a whole-repo re-embed, which is what makes
+it practical to leave enabled.
 
 - **Bounded first build.** `max_funcs` (`RC_DUP_ORACLE_MAX_FUNCS`, default 5000)
   is an embedding ceiling over a stable sorted walk, so even a huge repo

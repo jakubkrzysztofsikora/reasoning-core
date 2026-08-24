@@ -1,4 +1,4 @@
-"""Tests for the persisted dup-oracle index (TB-94).
+"""Tests for the persisted dup-oracle index.
 
 Offline: a deterministic, call-counting stub embedder stands in for the model,
 so the disk-cache reuse/invalidation/fallback logic is exercised with no torch
