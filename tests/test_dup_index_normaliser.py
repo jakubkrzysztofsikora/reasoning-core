@@ -1,0 +1,213 @@
+"""Unit tests for the near-duplicate logic-token normaliser (src/dup_index.py).
+
+Pure / fast: tree-sitter only, no model. These pin the Stage-2 (precision)
+behaviour -- a renamed or rewritten duplicate collapses to the same logic
+stream, while a same-shape sibling that differs by one real operator/callee
+does not.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.dup_index import (  # noqa: E402
+    extract_functions,
+    logic_ratio,
+    logic_tokens,
+    normalize,
+)
+
+# Confirm bar the oracle uses; kept in sync with the pipeline default.
+CONFIRM = 0.97
+
+# --- Python renamed copy (same behaviour, different name + var) --------------
+TO_SLUG_PY = 'def to_slug(s):\n    import re\n    return re.sub(r"[^a-z0-9]+","-",s.lower()).strip("-")'
+SLUGIFY_PY = 'def slugify(value):\n    import re\n    return re.sub(r"[^a-z0-9]+","-",value.lower()).strip("-")'
+
+# --- TS renamed copy, one with type annotations --------------------------------
+TO_SLUG_TS = 'function toSlug(s: string): string {\n  return s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");\n}'
+SLUGIFY_TS = 'function slugify(value) {\n  return value.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");\n}'
+
+# --- Same-shape siblings that differ by ONE operator / callee -----------------
+MIN_TS = 'function min(xs) {\n  let r;\n  for (const d of xs) { if (r === undefined || d < r) r = d; }\n  return r;\n}'
+MAX_TS = 'function max(xs) {\n  let r;\n  for (const d of xs) { if (r === undefined || d > r) r = d; }\n  return r;\n}'
+ADD_WEEKS_TS = 'function addWeeks(date, amount) {\n  return addDays(date, amount * 7);\n}'
+SUB_WEEKS_TS = 'function subWeeks(date, amount) {\n  return addWeeks(date, -amount);\n}'
+
+# --- Renamed copy differing ONLY in a loop-variable name ----------------------
+PICK_A_TS = 'function pickA(xs) {\n  let r;\n  for (const d of xs) { if (r === undefined || d < r) r = d; }\n  return r;\n}'
+PICK_B_TS = 'function pickB(items) {\n  let acc;\n  for (const el of items) { if (acc === undefined || el < acc) acc = el; }\n  return acc;\n}'
+
+# --- Same behaviour, wholesale structural rewrite (Stage-2 is NOT meant to
+#     confirm this; Stage-1 embedding shortlist is what catches rewrites) ------
+SUM_LOOP_TS = 'function sumA(xs) {\n  let total = 0;\n  for (const x of xs) { total += x; }\n  return total;\n}'
+SUM_REDUCE_TS = 'function sumB(xs) {\n  return xs.reduce((a, b) => a + b, 0);\n}'
+
+# --- Object-destructuring shorthand: `{id}` is a property READ, not a pure
+#     local rename. Different keys read different fields -> different function;
+#     same key with renamed surrounding locals -> a duplicate. Canonicalising
+#     the shorthand key would wrongly collapse the first pair (false positive). -
+DESTR_ID_TS = 'function sa(rows) {\n  let t = 0;\n  for (const {id} of rows) { t += id; }\n  return t;\n}'
+DESTR_AMOUNT_TS = 'function sb(rows) {\n  let t = 0;\n  for (const {amount} of rows) { t += amount; }\n  return t;\n}'
+DESTR_ID_RENAMED_TS = 'function sc(list) {\n  let s = 0;\n  for (const {id} of list) { s += id; }\n  return s;\n}'
+
+
+def test_renamed_python_copy_is_a_duplicate():
+    assert logic_ratio("a.py", TO_SLUG_PY, "b.py", SLUGIFY_PY) >= CONFIRM
+
+
+def test_renamed_ts_copy_is_a_duplicate_despite_type_annotations():
+    # toSlug is annotated (: string), slugify is not -- stripping annotations +
+    # the own-name must make them identical logic.
+    assert logic_ratio("a.ts", TO_SLUG_TS, "b.ts", SLUGIFY_TS) >= CONFIRM
+
+
+def test_min_vs_max_is_not_a_duplicate():
+    # Differ only by `<` vs `>` -- the classic case raw similarity misses.
+    assert logic_ratio("a.ts", MIN_TS, "b.ts", MAX_TS) < CONFIRM
+
+
+def test_addweeks_vs_subweeks_is_not_a_duplicate():
+    assert logic_ratio("a.ts", ADD_WEEKS_TS, "b.ts", SUB_WEEKS_TS) < CONFIRM
+
+
+def test_loop_variable_rename_is_a_duplicate():
+    # Differ only in loop + local variable names -> must confirm as a duplicate.
+    assert logic_ratio("a.ts", PICK_A_TS, "b.ts", PICK_B_TS) >= CONFIRM
+
+
+def test_structural_rewrite_is_not_confirmed_by_logic_alone():
+    # A wholesale rewrite (loop-accumulate vs .reduce) is NOT Stage-2's job to
+    # confirm -- it must fall well below the bar; Stage-1 cosine catches these.
+    assert logic_ratio("a.ts", SUM_LOOP_TS, "b.ts", SUM_REDUCE_TS) < CONFIRM
+
+
+def test_string_operator_char_does_not_leak_into_logic():
+    # A string containing an operator character must be pruned, not emitted as a
+    # logic operator -- otherwise g("<") and g(">") would look different.
+    assert "K:<" not in logic_tokens("a.ts", 'function f() { return g("<"); }')
+
+
+def test_string_constant_differences_do_not_break_duplicate_detection():
+    # Two functions differing ONLY in a string literal are still duplicates.
+    a = 'function log(x) {\n  return prefix("A") + x;\n}'
+    b = 'function log(x) {\n  return prefix("B") + x;\n}'
+    assert logic_ratio("a.ts", a, "b.ts", b) >= CONFIRM
+
+
+def test_union_type_operator_does_not_leak_into_logic():
+    # Type annotations are pruned, so a union type's `|` must NOT surface as a
+    # logic operator (removing the prune would leak it).
+    assert "K:|" not in logic_tokens("a.ts", "function pick(x): A | B {\n  return x.first;\n}")
+
+
+def test_different_destructured_key_is_not_a_duplicate():
+    # {id} vs {amount} read different fields -> must NOT collapse.
+    assert logic_ratio("a.ts", DESTR_ID_TS, "b.ts", DESTR_AMOUNT_TS) < CONFIRM
+
+
+def test_same_destructured_key_with_renamed_locals_is_a_duplicate():
+    # Same field, only surrounding locals renamed -> a duplicate.
+    assert logic_ratio("a.ts", DESTR_ID_TS, "b.ts", DESTR_ID_RENAMED_TS) >= CONFIRM
+
+
+def test_own_name_is_dropped():
+    # Each function's own name must not appear in its own token stream.
+    assert "N:toSlug" not in normalize("a.ts", TO_SLUG_TS)
+    assert "N:slugify" not in normalize("b.ts", SLUGIFY_TS)
+
+
+def test_local_variables_are_canonicalised():
+    # `s` vs `value` collapse to the bound-var placeholder V, not distinct names.
+    toks = normalize("a.py", SLUGIFY_PY)
+    assert "N:value" not in toks and "V" in toks
+
+
+def test_type_annotations_are_pruned():
+    # The `string` type name must not survive into the logic tokens.
+    assert not any("string" in t for t in logic_tokens("a.ts", TO_SLUG_TS))
+
+
+def test_operators_survive_as_logic_tokens():
+    # min keeps its comparison operator -- that's the discriminating signal.
+    assert "K:<" in logic_tokens("a.ts", MIN_TS)
+
+
+# --- extract_functions --------------------------------------------------------
+_MODULE_TS = (
+    'export function toSlug(s) {\n  return s.toLowerCase().replace(/ /g, "-");\n}\n'
+    'const helper = (x) => {\n  const y = x + 1;\n  return y * 2;\n};\n'
+    'items.forEach((v) => { console.log(v); });\n'  # unnamed callback -> skipped
+)
+
+
+def test_extract_functions_finds_named_functions():
+    funcs = extract_functions("m.ts", _MODULE_TS)
+    names = {name for name, _line, _src in funcs}
+    assert "toSlug" in names          # function_declaration
+    assert "helper" in names          # variable-bound arrow
+
+
+def test_extract_functions_skips_unnamed_callbacks():
+    funcs = extract_functions("m.ts", _MODULE_TS)
+    names = [name for name, _line, _src in funcs]
+    assert "anonymous" not in names
+    assert len(funcs) == 2
+
+
+def test_extract_functions_returns_source_and_line():
+    funcs = extract_functions("m.ts", _MODULE_TS)
+    by_name = {name: (line, src) for name, line, src in funcs}
+    line, src = by_name["toSlug"]
+    assert line == 1 and "toLowerCase" in src
+
+
+def test_extract_functions_is_robust_to_junk_input():
+    # The runtime hook feeds arbitrary / partial edit content -> must return [],
+    # never crash (fail-open).
+    for src in ("", "   \n", "function {{{ ]] not valid", "const x = 1;"):
+        assert extract_functions("x.ts", src) == []
+
+
+def test_extract_functions_skips_tiny_functions():
+    # Below the 40-char floor -> not indexed (one-liners are noise). Isolates the
+    # size gate: this arrow is variable-bound (passes the name gate) but short.
+    assert extract_functions("m.ts", "const f = () => 1;\n") == []
+
+
+def test_extract_functions_skips_long_unnamed_callback():
+    # A LONG unnamed callback (well over the size floor) is still skipped because
+    # it isn't a named, reusable unit -- isolates the parent gate from the size gate.
+    cb = "arr.forEach((item) => {\n  const doubled = item.value * 2;\n  logIt(doubled, item.id);\n});\n"
+    assert extract_functions("m.ts", cb) == []
+
+
+def test_extract_functions_skips_oversized_functions():
+    # Above the 3000-char ceiling -> not indexed (machine-generated / minified
+    # blobs shouldn't be embedded). Isolates the UPPER size bound.
+    huge = "export function big(x) {\n" + "  x.step();\n" * 400 + "  return x;\n}\n"
+    assert len(huge) > 3000
+    assert extract_functions("m.ts", huge) == []
+
+
+@pytest.mark.parametrize("expr", ["x + y", "x * y", "x / y", "x === y", "x && y", "x | y", "x ** y"])
+def test_an_operator_is_load_bearing_logic(expr):
+    # An operator carries logic: `x <op> y` must NOT collapse to `x`. Deleting the
+    # operator from the recognised set would make these two look identical.
+    a = f"function withOp(x, y) {{\n  return {expr};\n}}"
+    b = "function firstArg(x, y) {\n  return x;\n}"
+    assert logic_ratio("a.ts", a, "b.ts", b) < CONFIRM
+
+
+def test_destructured_key_distinguishes_even_when_not_re_read():
+    # `const {id} = o` reads property `id`; two functions destructuring DIFFERENT
+    # keys are different even if the binding is never used again in the body.
+    a = "function f(o) {\n  const {id} = o;\n  return compute();\n}"
+    b = "function f(o) {\n  const {amount} = o;\n  return compute();\n}"
+    assert logic_ratio("a.ts", a, "b.ts", b) < CONFIRM

@@ -24,7 +24,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src import baselines
+# Make `src` importable when run as a script (`python src/rc_cli.py`): the repo
+# root -- not just src/ -- must be on sys.path before importing the package.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from src import baselines  # noqa: E402
 
 # Make hook helpers importable without installing the package.
 _HOOKS_DIR = Path(__file__).resolve().parent / "hooks"

@@ -1,0 +1,1592 @@
+[
+ {
+  "path": "add/index.ts",
+  "name": "add",
+  "line": 73,
+  "source": "function add<DateType extends Date, ResultDate extends Date = DateType>(\n  date: DateArg<DateType>,\n  duration: Duration,\n  options?: AddOptions<ResultDate> | undefined,\n): ResultDate {\n  const {\n    years = 0,\n    months = 0,\n    weeks = 0,\n    days = 0,\n    hours = 0,\n    minutes = 0,\n    seconds = 0,\n  } = duration;\n\n  // Add years and months\n  const _date = toDate(date, options?.in);\n  const dateWithMonths =\n    months || years ? addMonths(_date, months + years * 12) : _date;\n\n  // Add weeks and days\n  const dateWithDays =\n    days || weeks ? addDays(dateWithMonths, days + weeks * 7) : dateWithMonths;\n\n  // Add days, hours, minutes, and seconds\n  const minutesToAdd = minutes + hours * 60;\n  const secondsToAdd = seconds + minutesToAdd * 60;\n  const msToAdd = secondsToAdd * 1000;\n\n  return constructFrom(options?.in || date, +dateWithDays + msToAdd);\n}"
+ },
+ {
+  "path": "addBusinessDays/index.ts",
+  "name": "addBusinessDays",
+  "line": 43,
+  "source": "function addBusinessDays<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddBusinessDaysOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const startedOnWeekend = isWeekend(_date, options);\n\n  if (isNaN(amount)) return constructFrom(options?.in, NaN);\n\n  const hours = _date.getHours();\n  const sign = amount < 0 ? -1 : 1;\n  const fullWeeks = Math.trunc(amount / 5);\n\n  _date.setDate(_date.getDate() + fullWeeks * 7);\n\n  // Get remaining days not part of a full week\n  let restDays = Math.abs(amount % 5);\n\n  // Loops over remaining days\n  while (restDays > 0) {\n    _date.setDate(_date.getDate() + sign);\n    if (!isWeekend(_date, options)) restDays -= 1;\n  }\n\n  // If the date is a weekend day and we reduce a dividable of\n  // 5 from it, we land on a weekend date.\n  // To counter this, we add days accordingly to land on the next business day\n  if (startedOnWeekend && isWeekend(_date, options) && amount !== 0) {\n    // If we're reducing days, we want to add days until we land on a weekday\n    // If we're adding days we want to reduce days until we land on a weekday\n    if (isSaturday(_date, options))\n      _date.setDate(_date.getDate() + (sign < 0 ? 2 : -1));\n    if (isSunday(_date, options))\n      _date.setDate(_date.getDate() + (sign < 0 ? 1 : -2));\n  }\n\n  // Restore hours to avoid DST lag\n  _date.setHours(hours);\n\n  return _date;\n}"
+ },
+ {
+  "path": "addDays/index.ts",
+  "name": "addDays",
+  "line": 53,
+  "source": "function addDays<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddDaysOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  if (isNaN(amount)) return constructFrom(options?.in || date, NaN);\n\n  // If 0 days, no-op to avoid changing times in the hour before end of DST\n  if (!amount) return _date;\n\n  _date.setDate(_date.getDate() + amount);\n  return _date;\n}"
+ },
+ {
+  "path": "addHours/index.ts",
+  "name": "addHours",
+  "line": 34,
+  "source": "function addHours<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddHoursOptions<ResultDate> | undefined,\n): ResultDate {\n  return addMilliseconds(date, amount * millisecondsInHour, options);\n}"
+ },
+ {
+  "path": "addISOWeekYears/index.ts",
+  "name": "addISOWeekYears",
+  "line": 35,
+  "source": "function addISOWeekYears<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddISOWeekYearsOptions<ResultDate> | undefined,\n): ResultDate {\n  return setISOWeekYear(date, getISOWeekYear(date, options) + amount, options);\n}"
+ },
+ {
+  "path": "addMilliseconds/index.ts",
+  "name": "addMilliseconds",
+  "line": 33,
+  "source": "function addMilliseconds<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddMillisecondsOptions<ResultDate> | undefined,\n): ResultDate {\n  return constructFrom(options?.in || date, +toDate(date) + amount);\n}"
+ },
+ {
+  "path": "addMinutes/index.ts",
+  "name": "addMinutes",
+  "line": 34,
+  "source": "function addMinutes<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddMinutesOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setTime(_date.getTime() + amount * millisecondsInMinute);\n  return _date;\n}"
+ },
+ {
+  "path": "addMonths/index.ts",
+  "name": "addMonths",
+  "line": 38,
+  "source": "function addMonths<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddMonthsOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  if (isNaN(amount)) return constructFrom(options?.in || date, NaN);\n  if (!amount) {\n    // If 0 months, no-op to avoid changing times in the hour before end of DST\n    return _date;\n  }\n  const dayOfMonth = _date.getDate();\n\n  // The JS Date object supports date math by accepting out-of-bounds values for\n  // month, day, etc. For example, new Date(2020, 0, 0) returns 31 Dec 2019 and\n  // new Date(2020, 13, 1) returns 1 Feb 2021.  This is *almost* the behavior we\n  // want except that dates will wrap around the end of a month, meaning that\n  // new Date(2020, 13, 31) will return 3 Mar 2021 not 28 Feb 2021 as desired. So\n  // we'll default to the end of the desired month by adding 1 to the desired\n  // month and using a date of 0 to back up one day to the end of the desired\n  // month.\n  const endOfDesiredMonth = constructFrom(options?.in || date, _date.getTime());\n  endOfDesiredMonth.setMonth(_date.getMonth() + amount + 1, 0);\n  const daysInMonth = endOfDesiredMonth.getDate();\n  if (dayOfMonth >= daysInMonth) {\n    // If we're already at the end of the month, then this is the correct date\n    // and we're done.\n    return endOfDesiredMonth;\n  } else {\n    // Otherwise, we now know that setting the original day-of-month value won't\n    // cause an overflow, so set the desired day-of-month. Note that we can't\n    // just set the date of `endOfDesiredMonth` because that object may have had\n    // its time changed in the unusual case where where a DST transition was on\n    // the last day of the month and its local time was in the hour skipped or\n    // repeated next to a DST transition.  So we use `date` instead which is\n    // guaranteed to still have the original time.\n    _date.setFullYear(\n      endOfDesiredMonth.getFullYear(),\n      endOfDesiredMonth.getMonth(),\n      dayOfMonth,\n    );\n    return _date;\n  }\n}"
+ },
+ {
+  "path": "addQuarters/index.ts",
+  "name": "addQuarters",
+  "line": 33,
+  "source": "function addQuarters<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddQuartersOptions<ResultDate> | undefined,\n): ResultDate {\n  return addMonths(date, amount * 3, options);\n}"
+ },
+ {
+  "path": "addSeconds/index.ts",
+  "name": "addSeconds",
+  "line": 33,
+  "source": "function addSeconds<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddSecondsOptions<ResultDate> | undefined,\n): ResultDate {\n  return addMilliseconds(date, amount * 1000, options);\n}"
+ },
+ {
+  "path": "addWeeks/index.ts",
+  "name": "addWeeks",
+  "line": 33,
+  "source": "function addWeeks<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddWeeksOptions<ResultDate> | undefined,\n): ResultDate {\n  return addDays(date, amount * 7, options);\n}"
+ },
+ {
+  "path": "addYears/index.ts",
+  "name": "addYears",
+  "line": 33,
+  "source": "function addYears<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: AddYearsOptions<ResultDate> | undefined,\n): ResultDate {\n  return addMonths(date, amount * 12, options);\n}"
+ },
+ {
+  "path": "areIntervalsOverlapping/index.ts",
+  "name": "areIntervalsOverlapping",
+  "line": 59,
+  "source": "function areIntervalsOverlapping(\n  intervalLeft: Interval,\n  intervalRight: Interval,\n  options?: AreIntervalsOverlappingOptions,\n): boolean {\n  const [leftStartTime, leftEndTime] = [\n    +toDate(intervalLeft.start, options?.in),\n    +toDate(intervalLeft.end, options?.in),\n  ].sort((a, b) => a - b);\n  const [rightStartTime, rightEndTime] = [\n    +toDate(intervalRight.start, options?.in),\n    +toDate(intervalRight.end, options?.in),\n  ].sort((a, b) => a - b);\n\n  if (options?.inclusive)\n    return leftStartTime <= rightEndTime && rightStartTime <= leftEndTime;\n\n  return leftStartTime < rightEndTime && rightStartTime < leftEndTime;\n}"
+ },
+ {
+  "path": "clamp/index.ts",
+  "name": "clamp",
+  "line": 65,
+  "source": "function clamp<\n  DateType extends DateArg<Date>,\n  IntervalType extends Interval,\n  Options extends ClampOptions | undefined = undefined,\n>(\n  date: DateType,\n  interval: IntervalType,\n  options?: Options,\n): ClampResult<DateType, IntervalType, Options> {\n  const [date_, start, end] = normalizeDates(\n    options?.in,\n    date,\n    interval.start,\n    interval.end,\n  );\n\n  return min([max([date_, start], options), end], options) as ClampResult<\n    DateType,\n    IntervalType,\n    Options\n  >;\n}"
+ },
+ {
+  "path": "closestIndexTo/index.ts",
+  "name": "closestIndexTo",
+  "line": 28,
+  "source": "function closestIndexTo(\n  dateToCompare: DateArg<Date> & {},\n  dates: Array<DateArg<Date> & {}>,\n): number | undefined {\n  // [TODO] It would be better to return -1 here rather than undefined, as this\n  // is how JS behaves, but it would be a breaking change, so we need\n  // to consider it for v4.\n  const timeToCompare = +toDate(dateToCompare);\n\n  if (isNaN(timeToCompare)) return NaN;\n\n  let result: number | undefined;\n  let minDistance: number;\n  dates.forEach((date, index) => {\n    const date_ = toDate(date);\n\n    if (isNaN(+date_)) {\n      result = NaN;\n      minDistance = NaN;\n      return;\n    }\n\n    const distance = Math.abs(timeToCompare - +date_);\n    if (result == null || distance < minDistance) {\n      result = index;\n      minDistance = distance;\n    }\n  });\n\n  return result;\n}"
+ },
+ {
+  "path": "closestTo/index.ts",
+  "name": "closestTo",
+  "line": 58,
+  "source": "function closestTo<\n  DateToCompare extends DateArg<Date>,\n  DatesType extends DateArg<Date>[],\n  Options extends ClosestToOptions | undefined = undefined,\n>(\n  dateToCompare: DateToCompare,\n  dates: DatesType,\n  options?: Options | undefined,\n): ClosestToResult<DateToCompare, DatesType, Options> | undefined {\n  const [dateToCompare_, ...dates_] = normalizeDates(\n    options?.in,\n    dateToCompare,\n    ...dates,\n  );\n\n  const index = closestIndexTo(dateToCompare_, dates_);\n\n  if (typeof index === \"number\" && isNaN(index))\n    return constructFrom(dateToCompare_, NaN) as ClosestToResult<\n      DateToCompare,\n      DatesType,\n      Options\n    >;\n\n  if (index !== undefined)\n    return dates_[index] as ClosestToResult<DateToCompare, DatesType, Options>;\n}"
+ },
+ {
+  "path": "compareAsc/index.ts",
+  "name": "compareAsc",
+  "line": 36,
+  "source": "function compareAsc(\n  dateLeft: DateArg<Date> & {},\n  dateRight: DateArg<Date> & {},\n): number {\n  const diff = +toDate(dateLeft) - +toDate(dateRight);\n\n  if (diff < 0) return -1;\n  else if (diff > 0) return 1;\n\n  // Return 0 if diff is 0; return NaN if diff is NaN\n  return diff;\n}"
+ },
+ {
+  "path": "compareDesc/index.ts",
+  "name": "compareDesc",
+  "line": 36,
+  "source": "function compareDesc(\n  dateLeft: DateArg<Date> & {},\n  dateRight: DateArg<Date> & {},\n): number {\n  const diff = +toDate(dateLeft) - +toDate(dateRight);\n\n  if (diff > 0) return -1;\n  else if (diff < 0) return 1;\n\n  // Return 0 if diff is 0; return NaN if diff is NaN\n  return diff;\n}"
+ },
+ {
+  "path": "constructFrom/index.ts",
+  "name": "constructFrom",
+  "line": 44,
+  "source": "function constructFrom<\n  DateType extends Date | ConstructableDate,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType> | ContextFn<ResultDate> | undefined,\n  value: DateArg<Date> & {},\n): ResultDate {\n  if (typeof date === \"function\") return date(value);\n\n  if (date && typeof date === \"object\" && constructFromSymbol in date)\n    return date[constructFromSymbol](value);\n\n  if (date instanceof Date)\n    return new (date.constructor as GenericDateConstructor<ResultDate>)(value);\n\n  return new Date(value) as ResultDate;\n}"
+ },
+ {
+  "path": "constructNow/index.ts",
+  "name": "constructNow",
+  "line": 32,
+  "source": "function constructNow<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(date: DateArg<DateType> | ContextFn<ResultDate> | undefined): ResultDate {\n  return constructFrom(date, Date.now());\n}"
+ },
+ {
+  "path": "daysToWeeks/index.ts",
+  "name": "daysToWeeks",
+  "line": 25,
+  "source": "function daysToWeeks(days: number): number {\n  const result = Math.trunc(days / daysInWeek);\n  // Prevent negative zero\n  return result === 0 ? 0 : result;\n}"
+ },
+ {
+  "path": "differenceInBusinessDays/index.ts",
+  "name": "differenceInBusinessDays",
+  "line": 64,
+  "source": "function differenceInBusinessDays(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInBusinessDaysOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  if (!isValid(laterDate_) || !isValid(earlierDate_)) return NaN;\n\n  const diff = differenceInCalendarDays(laterDate_, earlierDate_);\n  const sign = diff < 0 ? -1 : 1;\n  const weeks = Math.trunc(diff / 7);\n\n  let result = weeks * 5;\n  let movingDate = addDays(earlierDate_, weeks * 7);\n\n  // the loop below will run at most 6 times to account for the remaining days that don't makeup a full week\n  while (!isSameDay(laterDate_, movingDate)) {\n    // sign is used to account for both negative and positive differences\n    result += isWeekend(movingDate, options) ? 0 : sign;\n    movingDate = addDays(movingDate, sign);\n  }\n\n  // Prevent negative zero\n  return result === 0 ? 0 : result;\n}"
+ },
+ {
+  "path": "differenceInCalendarDays/index.ts",
+  "name": "differenceInCalendarDays",
+  "line": 43,
+  "source": "function differenceInCalendarDays(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInCalendarDaysOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  const laterStartOfDay = startOfDay(laterDate_);\n  const earlierStartOfDay = startOfDay(earlierDate_);\n\n  const laterTimestamp =\n    +laterStartOfDay - getTimezoneOffsetInMilliseconds(laterStartOfDay);\n  const earlierTimestamp =\n    +earlierStartOfDay - getTimezoneOffsetInMilliseconds(earlierStartOfDay);\n\n  // Round the number of days to the nearest integer because the number of\n  // milliseconds in a day is not constant (e.g. it's different in the week of\n  // the daylight saving time clock shift).\n  return Math.round((laterTimestamp - earlierTimestamp) / millisecondsInDay);\n}"
+ },
+ {
+  "path": "differenceInCalendarISOWeekYears/index.ts",
+  "name": "differenceInCalendarISOWeekYears",
+  "line": 34,
+  "source": "function differenceInCalendarISOWeekYears(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInCalendarISOWeekYearsOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return (\n    getISOWeekYear(laterDate_, options) - getISOWeekYear(earlierDate_, options)\n  );\n}"
+ },
+ {
+  "path": "differenceInCalendarISOWeeks/index.ts",
+  "name": "differenceInCalendarISOWeeks",
+  "line": 36,
+  "source": "function differenceInCalendarISOWeeks(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInCalendarISOWeeksOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  const startOfISOWeekLeft = startOfISOWeek(laterDate_);\n  const startOfISOWeekRight = startOfISOWeek(earlierDate_);\n\n  const timestampLeft =\n    +startOfISOWeekLeft - getTimezoneOffsetInMilliseconds(startOfISOWeekLeft);\n  const timestampRight =\n    +startOfISOWeekRight - getTimezoneOffsetInMilliseconds(startOfISOWeekRight);\n\n  // Round the number of weeks to the nearest integer because the number of\n  // milliseconds in a week is not constant (e.g. it's different in the week of\n  // the daylight saving time clock shift).\n  return Math.round((timestampLeft - timestampRight) / millisecondsInWeek);\n}"
+ },
+ {
+  "path": "differenceInCalendarMonths/index.ts",
+  "name": "differenceInCalendarMonths",
+  "line": 31,
+  "source": "function differenceInCalendarMonths(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInCalendarMonthsOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  const yearsDiff = laterDate_.getFullYear() - earlierDate_.getFullYear();\n  const monthsDiff = laterDate_.getMonth() - earlierDate_.getMonth();\n\n  return yearsDiff * 12 + monthsDiff;\n}"
+ },
+ {
+  "path": "differenceInCalendarQuarters/index.ts",
+  "name": "differenceInCalendarQuarters",
+  "line": 32,
+  "source": "function differenceInCalendarQuarters(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInCalendarQuartersOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  const yearsDiff = laterDate_.getFullYear() - earlierDate_.getFullYear();\n  const quartersDiff = getQuarter(laterDate_) - getQuarter(earlierDate_);\n\n  return yearsDiff * 4 + quartersDiff;\n}"
+ },
+ {
+  "path": "differenceInCalendarWeeks/index.ts",
+  "name": "differenceInCalendarWeeks",
+  "line": 50,
+  "source": "function differenceInCalendarWeeks(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInCalendarWeeksOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  const laterStartOfWeek = startOfWeek(laterDate_, options);\n  const earlierStartOfWeek = startOfWeek(earlierDate_, options);\n\n  const laterTimestamp =\n    +laterStartOfWeek - getTimezoneOffsetInMilliseconds(laterStartOfWeek);\n  const earlierTimestamp =\n    +earlierStartOfWeek - getTimezoneOffsetInMilliseconds(earlierStartOfWeek);\n\n  return Math.round((laterTimestamp - earlierTimestamp) / millisecondsInWeek);\n}"
+ },
+ {
+  "path": "differenceInCalendarYears/index.ts",
+  "name": "differenceInCalendarYears",
+  "line": 31,
+  "source": "function differenceInCalendarYears(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInCalendarYearsOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return laterDate_.getFullYear() - earlierDate_.getFullYear();\n}"
+ },
+ {
+  "path": "differenceInDays/index.ts",
+  "name": "compareLocalAsc",
+  "line": 96,
+  "source": "function compareLocalAsc(laterDate: Date, earlierDate: Date): number {\n  const diff =\n    laterDate.getFullYear() - earlierDate.getFullYear() ||\n    laterDate.getMonth() - earlierDate.getMonth() ||\n    laterDate.getDate() - earlierDate.getDate() ||\n    laterDate.getHours() - earlierDate.getHours() ||\n    laterDate.getMinutes() - earlierDate.getMinutes() ||\n    laterDate.getSeconds() - earlierDate.getSeconds() ||\n    laterDate.getMilliseconds() - earlierDate.getMilliseconds();\n\n  if (diff < 0) return -1;\n  if (diff > 0) return 1;\n\n  // Return 0 if diff is 0; return NaN if diff is NaN\n  return diff;\n}"
+ },
+ {
+  "path": "differenceInDays/index.ts",
+  "name": "differenceInDays",
+  "line": 63,
+  "source": "function differenceInDays(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInDaysOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  const sign = compareLocalAsc(laterDate_, earlierDate_);\n  const difference = Math.abs(\n    differenceInCalendarDays(laterDate_, earlierDate_),\n  );\n\n  laterDate_.setDate(laterDate_.getDate() - sign * difference);\n\n  // Math.abs(diff in full days - diff in calendar days) === 1 if last calendar day is not full\n  // If so, result must be decreased by 1 in absolute value\n  const isLastDayNotFull = Number(\n    compareLocalAsc(laterDate_, earlierDate_) === -sign,\n  );\n\n  const result = sign * (difference - isLastDayNotFull);\n  // Prevent negative zero\n  return result === 0 ? 0 : result;\n}"
+ },
+ {
+  "path": "differenceInHours/index.ts",
+  "name": "differenceInHours",
+  "line": 34,
+  "source": "function differenceInHours(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInHoursOptions,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  const diff = (+laterDate_ - +earlierDate_) / millisecondsInHour;\n  return getRoundingMethod(options?.roundingMethod)(diff);\n}"
+ },
+ {
+  "path": "differenceInISOWeekYears/index.ts",
+  "name": "differenceInISOWeekYears",
+  "line": 36,
+  "source": "function differenceInISOWeekYears(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInISOWeekYearsOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  const sign = compareAsc(laterDate_, earlierDate_);\n  const diff = Math.abs(\n    differenceInCalendarISOWeekYears(laterDate_, earlierDate_, options),\n  );\n\n  const adjustedDate = subISOWeekYears(laterDate_, sign * diff, options);\n\n  const isLastISOWeekYearNotFull = Number(\n    compareAsc(adjustedDate, earlierDate_) === -sign,\n  );\n  const result = sign * (diff - isLastISOWeekYearNotFull);\n\n  // Prevent negative zero\n  return result === 0 ? 0 : result;\n}"
+ },
+ {
+  "path": "differenceInMilliseconds/index.ts",
+  "name": "differenceInMilliseconds",
+  "line": 26,
+  "source": "function differenceInMilliseconds(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n): number {\n  return +toDate(laterDate) - +toDate(earlierDate);\n}"
+ },
+ {
+  "path": "differenceInMinutes/index.ts",
+  "name": "differenceInMinutes",
+  "line": 41,
+  "source": "function differenceInMinutes(\n  dateLeft: DateArg<Date> & {},\n  dateRight: DateArg<Date> & {},\n  options?: DifferenceInMinutesOptions,\n): number {\n  const diff =\n    differenceInMilliseconds(dateLeft, dateRight) / millisecondsInMinute;\n  return getRoundingMethod(options?.roundingMethod)(diff);\n}"
+ },
+ {
+  "path": "differenceInMonths/index.ts",
+  "name": "differenceInMonths",
+  "line": 28,
+  "source": "function differenceInMonths(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInMonthsOptions | undefined,\n): number {\n  const [laterDate_, workingLaterDate, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    laterDate,\n    earlierDate,\n  );\n\n  const sign = compareAsc(workingLaterDate, earlierDate_);\n  const difference = Math.abs(\n    differenceInCalendarMonths(workingLaterDate, earlierDate_),\n  );\n\n  if (difference < 1) return 0;\n\n  if (workingLaterDate.getMonth() === 1 && workingLaterDate.getDate() > 27)\n    workingLaterDate.setDate(30);\n\n  workingLaterDate.setMonth(workingLaterDate.getMonth() - sign * difference);\n\n  let isLastMonthNotFull = compareAsc(workingLaterDate, earlierDate_) === -sign;\n\n  if (\n    isLastDayOfMonth(laterDate_) &&\n    difference === 1 &&\n    compareAsc(laterDate_, earlierDate_) === 1\n  ) {\n    isLastMonthNotFull = false;\n  }\n\n  const result = sign * (difference - +isLastMonthNotFull);\n  return result === 0 ? 0 : result;\n}"
+ },
+ {
+  "path": "differenceInQuarters/index.ts",
+  "name": "differenceInQuarters",
+  "line": 30,
+  "source": "function differenceInQuarters(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInQuartersOptions | undefined,\n): number {\n  const diff = differenceInMonths(laterDate, earlierDate, options) / 3;\n  return getRoundingMethod(options?.roundingMethod)(diff);\n}"
+ },
+ {
+  "path": "differenceInSeconds/index.ts",
+  "name": "differenceInSeconds",
+  "line": 33,
+  "source": "function differenceInSeconds(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInSecondsOptions,\n): number {\n  const diff = differenceInMilliseconds(laterDate, earlierDate) / 1000;\n  return getRoundingMethod(options?.roundingMethod)(diff);\n}"
+ },
+ {
+  "path": "differenceInWeeks/index.ts",
+  "name": "differenceInWeeks",
+  "line": 51,
+  "source": "function differenceInWeeks(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInWeeksOptions | undefined,\n): number {\n  const diff = differenceInDays(laterDate, earlierDate, options) / 7;\n  return getRoundingMethod(options?.roundingMethod)(diff);\n}"
+ },
+ {
+  "path": "differenceInYears/index.ts",
+  "name": "differenceInYears",
+  "line": 30,
+  "source": "function differenceInYears(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: DifferenceInYearsOptions | undefined,\n): number {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n\n  // -1 if the left date is earlier than the right date\n  // 2023-12-31 - 2024-01-01 = -1\n  const sign = compareAsc(laterDate_, earlierDate_);\n\n  // First calculate the difference in calendar years\n  // 2024-01-01 - 2023-12-31 = 1 year\n  const diff = Math.abs(differenceInCalendarYears(laterDate_, earlierDate_));\n\n  // Now we need to calculate if the difference is full. To do that we set\n  // both dates to the same year and check if the both date's month and day\n  // form a full year.\n  laterDate_.setFullYear(1584);\n  earlierDate_.setFullYear(1584);\n\n  // For it to be true, when the later date is indeed later than the earlier date\n  // (2026-02-01 - 2023-12-10 = 3 years), the difference is full if\n  // the normalized later date is also later than the normalized earlier date.\n  // In our example, 1584-02-01 is earlier than 1584-12-10, so the difference\n  // is partial, hence we need to subtract 1 from the difference 3 - 1 = 2.\n  const partial = compareAsc(laterDate_, earlierDate_) === -sign;\n\n  const result = sign * (diff - +partial);\n\n  // Prevent negative zero\n  return result === 0 ? 0 : result;\n}"
+ },
+ {
+  "path": "eachDayOfInterval/index.ts",
+  "name": "eachDayOfInterval",
+  "line": 60,
+  "source": "function eachDayOfInterval<\n  IntervalType extends Interval,\n  Options extends EachDayOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachDayOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n\n  let reversed = +start > +end;\n  const endTime = reversed ? +start : +end;\n  const date = reversed ? end : start;\n  date.setHours(0, 0, 0, 0);\n\n  let step = options?.step ?? 1;\n  if (!step) return [];\n  if (step < 0) {\n    step = -step;\n    reversed = !reversed;\n  }\n\n  const dates: EachDayOfIntervalResult<IntervalType, Options> = [];\n\n  while (+date <= endTime) {\n    dates.push(constructFrom(start, date));\n    date.setDate(date.getDate() + step);\n    date.setHours(0, 0, 0, 0);\n  }\n\n  return reversed ? dates.reverse() : dates;\n}"
+ },
+ {
+  "path": "eachHourOfInterval/index.ts",
+  "name": "eachHourOfInterval",
+  "line": 57,
+  "source": "function eachHourOfInterval<\n  IntervalType extends Interval,\n  Options extends EachHourOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachHourOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n\n  let reversed = +start > +end;\n  const endTime = reversed ? +start : +end;\n  const date = reversed ? end : start;\n  date.setMinutes(0, 0, 0);\n\n  let step = options?.step ?? 1;\n  if (!step) return [];\n  if (step < 0) {\n    step = -step;\n    reversed = !reversed;\n  }\n\n  const dates: EachHourOfIntervalResult<IntervalType, Options> = [];\n\n  while (+date <= endTime) {\n    dates.push(constructFrom(start, date));\n    date.setHours(date.getHours() + step);\n  }\n\n  return reversed ? dates.reverse() : dates;\n}"
+ },
+ {
+  "path": "eachMinuteOfInterval/index.ts",
+  "name": "eachMinuteOfInterval",
+  "line": 60,
+  "source": "function eachMinuteOfInterval<\n  IntervalType extends Interval,\n  Options extends EachMinuteOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachMinuteOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n  // Set to the start of the minute\n  start.setSeconds(0, 0);\n\n  let reversed = +start > +end;\n  const endTime = reversed ? +start : +end;\n  let date = reversed ? end : start;\n\n  let step = options?.step ?? 1;\n  if (!step) return [];\n  if (step < 0) {\n    step = -step;\n    reversed = !reversed;\n  }\n\n  const dates: EachMinuteOfIntervalResult<IntervalType, Options> = [];\n\n  while (+date <= endTime) {\n    dates.push(constructFrom(start, date));\n    date = addMinutes(date, step);\n  }\n\n  return reversed ? dates.reverse() : dates;\n}"
+ },
+ {
+  "path": "eachMonthOfInterval/index.ts",
+  "name": "eachMonthOfInterval",
+  "line": 59,
+  "source": "function eachMonthOfInterval<\n  IntervalType extends Interval,\n  Options extends EachMonthOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachMonthOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n\n  let reversed = +start > +end;\n  const endTime = reversed ? +start : +end;\n  const date = reversed ? end : start;\n  date.setHours(0, 0, 0, 0);\n  date.setDate(1);\n\n  let step = options?.step ?? 1;\n  if (!step) return [];\n  if (step < 0) {\n    step = -step;\n    reversed = !reversed;\n  }\n\n  const dates: EachMonthOfIntervalResult<IntervalType, Options> = [];\n\n  while (+date <= endTime) {\n    dates.push(constructFrom(start, date));\n    date.setMonth(date.getMonth() + step);\n  }\n\n  return reversed ? dates.reverse() : dates;\n}"
+ },
+ {
+  "path": "eachQuarterOfInterval/index.ts",
+  "name": "eachQuarterOfInterval",
+  "line": 60,
+  "source": "function eachQuarterOfInterval<\n  IntervalType extends Interval,\n  Options extends EachQuarterOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachQuarterOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n\n  let reversed = +start > +end;\n  const endTime = reversed ? +startOfQuarter(start) : +startOfQuarter(end);\n  let date = reversed ? startOfQuarter(end) : startOfQuarter(start);\n\n  let step = options?.step ?? 1;\n  if (!step) return [];\n  if (step < 0) {\n    step = -step;\n    reversed = !reversed;\n  }\n\n  const dates: EachQuarterOfIntervalResult<IntervalType, Options> = [];\n\n  while (+date <= endTime) {\n    dates.push(constructFrom(start, date));\n    date = addQuarters(date, step);\n  }\n\n  return reversed ? dates.reverse() : dates;\n}"
+ },
+ {
+  "path": "eachWeekOfInterval/index.ts",
+  "name": "eachWeekOfInterval",
+  "line": 71,
+  "source": "function eachWeekOfInterval<\n  IntervalType extends Interval,\n  Options extends EachWeekOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachWeekOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n\n  let reversed = +start > +end;\n  const startDateWeek = reversed\n    ? startOfWeek(end, options)\n    : startOfWeek(start, options);\n  const endDateWeek = reversed\n    ? startOfWeek(start, options)\n    : startOfWeek(end, options);\n\n  startDateWeek.setHours(15);\n  endDateWeek.setHours(15);\n\n  const endTime = +endDateWeek.getTime();\n  let currentDate = startDateWeek;\n\n  let step = options?.step ?? 1;\n  if (!step) return [];\n  if (step < 0) {\n    step = -step;\n    reversed = !reversed;\n  }\n\n  const dates: EachWeekOfIntervalResult<IntervalType, Options> = [];\n\n  while (+currentDate <= endTime) {\n    currentDate.setHours(0);\n    dates.push(constructFrom(start, currentDate));\n    currentDate = addWeeks(currentDate, step);\n    currentDate.setHours(15);\n  }\n\n  return reversed ? dates.reverse() : dates;\n}"
+ },
+ {
+  "path": "eachWeekendOfInterval/index.ts",
+  "name": "eachWeekendOfInterval",
+  "line": 59,
+  "source": "function eachWeekendOfInterval<\n  IntervalType extends Interval,\n  Options extends EachWeekendOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachWeekendOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n  const dateInterval = eachDayOfInterval({ start, end }, options);\n  const weekends: EachWeekendOfIntervalResult<IntervalType, Options> = [];\n  let index = 0;\n  while (index < dateInterval.length) {\n    const date = dateInterval[index++];\n    if (isWeekend(date)) weekends.push(constructFrom(start, date));\n  }\n  return weekends;\n}"
+ },
+ {
+  "path": "eachWeekendOfMonth/index.ts",
+  "name": "eachWeekendOfMonth",
+  "line": 43,
+  "source": "function eachWeekendOfMonth<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EachWeekendOfMonthOptions<ResultDate>,\n): ResultDate[] {\n  const start = startOfMonth(date, options);\n  const end = endOfMonth(date, options);\n  return eachWeekendOfInterval({ start, end }, options);\n}"
+ },
+ {
+  "path": "eachWeekendOfYear/index.ts",
+  "name": "eachWeekendOfYear",
+  "line": 40,
+  "source": "function eachWeekendOfYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EachWeekendOfYearOptions<ResultDate>,\n): ResultDate[] {\n  const start = startOfYear(date, options);\n  const end = endOfYear(date, options);\n  return eachWeekendOfInterval({ start, end }, options);\n}"
+ },
+ {
+  "path": "eachYearOfInterval/index.ts",
+  "name": "eachYearOfInterval",
+  "line": 59,
+  "source": "function eachYearOfInterval<\n  IntervalType extends Interval,\n  Options extends EachYearOfIntervalOptions | undefined = undefined,\n>(\n  interval: IntervalType,\n  options?: Options,\n): EachYearOfIntervalResult<IntervalType, Options> {\n  const { start, end } = normalizeInterval(options?.in, interval);\n\n  let reversed = +start > +end;\n  const endTime = reversed ? +start : +end;\n  const date = reversed ? end : start;\n  date.setHours(0, 0, 0, 0);\n  date.setMonth(0, 1);\n\n  let step = options?.step ?? 1;\n  if (!step) return [];\n  if (step < 0) {\n    step = -step;\n    reversed = !reversed;\n  }\n\n  const dates: EachYearOfIntervalResult<IntervalType, Options> = [];\n\n  while (+date <= endTime) {\n    dates.push(constructFrom(start, date));\n    date.setFullYear(date.getFullYear() + step);\n  }\n\n  return reversed ? dates.reverse() : dates;\n}"
+ },
+ {
+  "path": "endOfDay/index.ts",
+  "name": "endOfDay",
+  "line": 33,
+  "source": "function endOfDay<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfDayOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setHours(23, 59, 59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfDecade/index.ts",
+  "name": "endOfDecade",
+  "line": 32,
+  "source": "function endOfDecade<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfDecadeOptions<ResultDate> | undefined,\n): ResultDate {\n  // TODO: Switch to more technical definition in of decades that start with 1\n  // end with 0. I.e. 2001-2010 instead of current 2000-2009. It's a breaking\n  // change, so it can only be done in 4.0.\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  const decade = 9 + Math.floor(year / 10) * 10;\n  _date.setFullYear(decade, 11, 31);\n  _date.setHours(23, 59, 59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfHour/index.ts",
+  "name": "endOfHour",
+  "line": 33,
+  "source": "function endOfHour<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfHourOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setMinutes(59, 59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfISOWeek/index.ts",
+  "name": "endOfISOWeek",
+  "line": 35,
+  "source": "function endOfISOWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfISOWeekOptions<ResultDate> | undefined,\n): ResultDate {\n  return endOfWeek(date, { ...options, weekStartsOn: 1 });\n}"
+ },
+ {
+  "path": "endOfISOWeekYear/index.ts",
+  "name": "endOfISOWeekYear",
+  "line": 38,
+  "source": "function endOfISOWeekYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfISOWeekYearOptions<ResultDate> | undefined,\n): ResultDate {\n  const year = getISOWeekYear(date, options);\n  const fourthOfJanuaryOfNextYear = constructFrom(options?.in || date, 0);\n  fourthOfJanuaryOfNextYear.setFullYear(year + 1, 0, 4);\n  fourthOfJanuaryOfNextYear.setHours(0, 0, 0, 0);\n  const _date = startOfISOWeek(fourthOfJanuaryOfNextYear, options);\n  _date.setMilliseconds(_date.getMilliseconds() - 1);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfMinute/index.ts",
+  "name": "endOfMinute",
+  "line": 33,
+  "source": "function endOfMinute<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfMinuteOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setSeconds(59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfMonth/index.ts",
+  "name": "endOfMonth",
+  "line": 33,
+  "source": "function endOfMonth<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfMonthOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const month = _date.getMonth();\n  _date.setFullYear(_date.getFullYear(), month + 1, 0);\n  _date.setHours(23, 59, 59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfQuarter/index.ts",
+  "name": "endOfQuarter",
+  "line": 33,
+  "source": "function endOfQuarter<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfQuarterOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const currentMonth = _date.getMonth();\n  const month = currentMonth - (currentMonth % 3) + 3;\n  _date.setMonth(month, 0);\n  _date.setHours(23, 59, 59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfSecond/index.ts",
+  "name": "endOfSecond",
+  "line": 33,
+  "source": "function endOfSecond<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: EndOfSecondOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setMilliseconds(999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfToday/index.ts",
+  "name": "endOfToday",
+  "line": 32,
+  "source": "function endOfToday<ResultDate extends Date = Date>(\n  options?: EndOfTodayOptions<ResultDate>,\n): ResultDate {\n  return endOfDay(Date.now(), options);\n}"
+ },
+ {
+  "path": "endOfTomorrow/index.ts",
+  "name": "endOfTomorrow",
+  "line": 31,
+  "source": "function endOfTomorrow<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(options?: EndOfTomorrowOptions<ResultDate> | undefined): ResultDate {\n  const now = constructNow(options?.in);\n  const year = now.getFullYear();\n  const month = now.getMonth();\n  const day = now.getDate();\n\n  const date = constructNow(options?.in);\n  date.setFullYear(year, month, day + 1);\n  date.setHours(23, 59, 59, 999);\n  return options?.in ? options.in(date) : (date as ResultDate);\n}"
+ },
+ {
+  "path": "endOfWeek/index.ts",
+  "name": "endOfWeek",
+  "line": 43,
+  "source": "function endOfWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(date: DateArg<DateType>, options?: EndOfWeekOptions<ResultDate>): ResultDate {\n  const defaultOptions = getDefaultOptions();\n  const weekStartsOn =\n    options?.weekStartsOn ??\n    options?.locale?.options?.weekStartsOn ??\n    defaultOptions.weekStartsOn ??\n    defaultOptions.locale?.options?.weekStartsOn ??\n    0;\n\n  const _date = toDate(date, options?.in);\n  const day = _date.getDay();\n  const diff = (day < weekStartsOn ? -7 : 0) + 6 - (day - weekStartsOn);\n\n  _date.setDate(_date.getDate() + diff);\n  _date.setHours(23, 59, 59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfYear/index.ts",
+  "name": "endOfYear",
+  "line": 33,
+  "source": "function endOfYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(date: DateArg<DateType>, options?: EndOfYearOptions<ResultDate>): ResultDate {\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  _date.setFullYear(year + 1, 0, 0);\n  _date.setHours(23, 59, 59, 999);\n  return _date;\n}"
+ },
+ {
+  "path": "endOfYesterday/index.ts",
+  "name": "endOfYesterday",
+  "line": 31,
+  "source": "function endOfYesterday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(options?: EndOfYesterdayOptions<ResultDate> | undefined): ResultDate {\n  const now = constructNow(options?.in);\n  const date = constructFrom(options?.in, 0);\n  date.setFullYear(now.getFullYear(), now.getMonth(), now.getDate() - 1);\n  date.setHours(23, 59, 59, 999);\n  return date;\n}"
+ },
+ {
+  "path": "format/index.ts",
+  "name": "cleanEscapedString",
+  "line": 444,
+  "source": "function cleanEscapedString(input: string): string {\n  const matched = input.match(escapedStringRegExp);\n\n  if (!matched) {\n    return input;\n  }\n\n  return matched[1].replace(doubleQuoteRegExp, \"'\");\n}"
+ },
+ {
+  "path": "format/index.ts",
+  "name": "format",
+  "line": 346,
+  "source": "function format(\n  date: DateArg<Date> & {},\n  formatStr: string,\n  options?: FormatOptions,\n): string {\n  const defaultOptions = getDefaultOptions();\n  const locale = options?.locale ?? defaultOptions.locale ?? defaultLocale;\n\n  const firstWeekContainsDate =\n    options?.firstWeekContainsDate ??\n    options?.locale?.options?.firstWeekContainsDate ??\n    defaultOptions.firstWeekContainsDate ??\n    defaultOptions.locale?.options?.firstWeekContainsDate ??\n    1;\n\n  const weekStartsOn =\n    options?.weekStartsOn ??\n    options?.locale?.options?.weekStartsOn ??\n    defaultOptions.weekStartsOn ??\n    defaultOptions.locale?.options?.weekStartsOn ??\n    0;\n\n  const originalDate = toDate(date, options?.in);\n\n  if (!isValid(originalDate)) {\n    throw new RangeError(\"Invalid time value\");\n  }\n\n  let parts: FormatPart[] = formatStr\n    .match(longFormattingTokensRegExp)!\n    .map((substring) => {\n      const firstCharacter = substring[0];\n      if (firstCharacter === \"p\" || firstCharacter === \"P\") {\n        const longFormatter = longFormatters[firstCharacter];\n        return longFormatter(substring, locale.formatLong);\n      }\n      return substring;\n    })\n    .join(\"\")\n    .match(formattingTokensRegExp)!\n    .map((substring) => {\n      // Replace two single quote characters with one single quote character\n      if (substring === \"''\") {\n        return { isToken: false, value: \"'\" };\n      }\n\n      const firstCharacter = substring[0];\n      if (firstCharacter === \"'\") {\n        return { isToken: false, value: cleanEscapedString(substring) };\n      }\n\n      if (formatters[firstCharacter]) {\n        return { isToken: true, value: substring };\n      }\n\n      if (firstCharacter.match(unescapedLatinCharacterRegExp)) {\n        throw new RangeError(\n          \"Format string contains an unescaped latin alphabet character `\" +\n            firstCharacter +\n            \"`\",\n        );\n      }\n\n      return { isToken: false, value: substring };\n    });\n\n  // invoke localize preprocessor (only for french locales at the moment)\n  if (locale.localize.preprocessor) {\n    parts = locale.localize.preprocessor(originalDate, parts);\n  }\n\n  const formatterOptions = {\n    firstWeekContainsDate,\n    weekStartsOn,\n    locale,\n  };\n\n  return parts\n    .map((part) => {\n      if (!part.isToken) return part.value;\n\n      const token = part.value;\n\n      if (\n        (!options?.useAdditionalWeekYearTokens &&\n          isProtectedWeekYearToken(token)) ||\n        (!options?.useAdditionalDayOfYearTokens &&\n          isProtectedDayOfYearToken(token))\n      ) {\n        warnOrThrowProtectedError(token, formatStr, String(date));\n      }\n\n      const formatter = formatters[token[0]];\n      return formatter(originalDate, token, locale.localize, formatterOptions);\n    })\n    .join(\"\");\n}"
+ },
+ {
+  "path": "formatDistanceToNow/index.ts",
+  "name": "formatDistanceToNow",
+  "line": 93,
+  "source": "function formatDistanceToNow(\n  date: DateArg<Date> & {},\n  options?: FormatDistanceToNowOptions,\n): string {\n  return formatDistance(date, constructNow(date), options);\n}"
+ },
+ {
+  "path": "formatDistanceToNowStrict/index.ts",
+  "name": "formatDistanceToNowStrict",
+  "line": 83,
+  "source": "function formatDistanceToNowStrict(\n  date: DateArg<Date> & {},\n  options?: FormatDistanceToNowStrictOptions,\n): string {\n  return formatDistanceStrict(date, constructNow(date), options);\n}"
+ },
+ {
+  "path": "formatDuration/index.ts",
+  "name": "formatDuration",
+  "line": 86,
+  "source": "function formatDuration(\n  duration: Duration,\n  options?: FormatDurationOptions,\n): string {\n  const defaultOptions = getDefaultOptions();\n  const locale = options?.locale ?? defaultOptions.locale ?? defaultLocale;\n  const format = options?.format ?? defaultFormat;\n  const zero = options?.zero ?? false;\n  const delimiter = options?.delimiter ?? \" \";\n\n  if (!locale.formatDistance) {\n    return \"\";\n  }\n\n  const result = format\n    .reduce((acc, unit) => {\n      const token = `x${unit.replace(/(^.)/, (m) =>\n        m.toUpperCase(),\n      )}` as FormatDistanceToken;\n      const value = duration[unit];\n      if (value !== undefined && (zero || duration[unit])) {\n        return acc.concat(locale.formatDistance(token, value));\n      }\n      return acc;\n    }, [] as string[])\n    .join(delimiter);\n\n  return result;\n}"
+ },
+ {
+  "path": "formatISO/index.ts",
+  "name": "formatISO",
+  "line": 46,
+  "source": "function formatISO(\n  date: DateArg<Date> & {},\n  options?: FormatISOOptions,\n): string {\n  const date_ = toDate(date, options?.in);\n\n  if (isNaN(+date_)) {\n    throw new RangeError(\"Invalid time value\");\n  }\n\n  const format = options?.format ?? \"extended\";\n  const representation = options?.representation ?? \"complete\";\n\n  let result = \"\";\n  let tzOffset = \"\";\n\n  const dateDelimiter = format === \"extended\" ? \"-\" : \"\";\n  const timeDelimiter = format === \"extended\" ? \":\" : \"\";\n\n  // Representation is either 'date' or 'complete'\n  if (representation !== \"time\") {\n    const day = addLeadingZeros(date_.getDate(), 2);\n    const month = addLeadingZeros(date_.getMonth() + 1, 2);\n    const year = addLeadingZeros(date_.getFullYear(), 4);\n\n    // yyyyMMdd or yyyy-MM-dd.\n    result = `${year}${dateDelimiter}${month}${dateDelimiter}${day}`;\n  }\n\n  // Representation is either 'time' or 'complete'\n  if (representation !== \"date\") {\n    // Add the timezone.\n    const offset = date_.getTimezoneOffset();\n\n    if (offset !== 0) {\n      const absoluteOffset = Math.abs(offset);\n      const hourOffset = addLeadingZeros(Math.trunc(absoluteOffset / 60), 2);\n      const minuteOffset = addLeadingZeros(absoluteOffset % 60, 2);\n      // If less than 0, the sign is +, because it is ahead of time.\n      const sign = offset < 0 ? \"+\" : \"-\";\n\n      tzOffset = `${sign}${hourOffset}:${minuteOffset}`;\n    } else {\n      tzOffset = \"Z\";\n    }\n\n    const hour = addLeadingZeros(date_.getHours(), 2);\n    const minute = addLeadingZeros(date_.getMinutes(), 2);\n    const second = addLeadingZeros(date_.getSeconds(), 2);\n\n    // If there's also date, separate it with time with 'T'\n    const separator = result === \"\" ? \"\" : \"T\";\n\n    // Creates a time string consisting of hour, minute, and second, separated by delimiters, if defined.\n    const time = [hour, minute, second].join(timeDelimiter);\n\n    // HHmmss or HH:mm:ss.\n    result = `${result}${separator}${time}${tzOffset}`;\n  }\n\n  return result;\n}"
+ },
+ {
+  "path": "formatISO9075/index.ts",
+  "name": "formatISO9075",
+  "line": 47,
+  "source": "function formatISO9075(\n  date: DateArg<Date> & {},\n  options?: FormatISO9075Options,\n): string {\n  const date_ = toDate(date, options?.in);\n\n  if (!isValid(date_)) {\n    throw new RangeError(\"Invalid time value\");\n  }\n\n  const format = options?.format ?? \"extended\";\n  const representation = options?.representation ?? \"complete\";\n\n  let result = \"\";\n\n  const dateDelimiter = format === \"extended\" ? \"-\" : \"\";\n  const timeDelimiter = format === \"extended\" ? \":\" : \"\";\n\n  // Representation is either 'date' or 'complete'\n  if (representation !== \"time\") {\n    const day = addLeadingZeros(date_.getDate(), 2);\n    const month = addLeadingZeros(date_.getMonth() + 1, 2);\n    const year = addLeadingZeros(date_.getFullYear(), 4);\n\n    // yyyyMMdd or yyyy-MM-dd.\n    result = `${year}${dateDelimiter}${month}${dateDelimiter}${day}`;\n  }\n\n  // Representation is either 'time' or 'complete'\n  if (representation !== \"date\") {\n    const hour = addLeadingZeros(date_.getHours(), 2);\n    const minute = addLeadingZeros(date_.getMinutes(), 2);\n    const second = addLeadingZeros(date_.getSeconds(), 2);\n\n    // If there's also date, separate it with time with a space\n    const separator = result === \"\" ? \"\" : \" \";\n\n    // HHmmss or HH:mm:ss.\n    result = `${result}${separator}${hour}${timeDelimiter}${minute}${timeDelimiter}${second}`;\n  }\n\n  return result;\n}"
+ },
+ {
+  "path": "formatISODuration/index.ts",
+  "name": "formatISODuration",
+  "line": 27,
+  "source": "function formatISODuration(duration: Duration): string {\n  const {\n    years = 0,\n    months = 0,\n    days = 0,\n    hours = 0,\n    minutes = 0,\n    seconds = 0,\n  } = duration;\n\n  return `P${years}Y${months}M${days}DT${hours}H${minutes}M${seconds}S`;\n}"
+ },
+ {
+  "path": "formatRFC3339/index.ts",
+  "name": "formatRFC3339",
+  "line": 41,
+  "source": "function formatRFC3339(\n  date: DateArg<Date> & {},\n  options?: FormatRFC3339Options,\n): string {\n  const date_ = toDate(date, options?.in);\n\n  if (!isValid(date_)) {\n    throw new RangeError(\"Invalid time value\");\n  }\n\n  const fractionDigits = options?.fractionDigits ?? 0;\n\n  const day = addLeadingZeros(date_.getDate(), 2);\n  const month = addLeadingZeros(date_.getMonth() + 1, 2);\n  const year = date_.getFullYear();\n\n  const hour = addLeadingZeros(date_.getHours(), 2);\n  const minute = addLeadingZeros(date_.getMinutes(), 2);\n  const second = addLeadingZeros(date_.getSeconds(), 2);\n\n  let fractionalSecond = \"\";\n  if (fractionDigits > 0) {\n    const milliseconds = date_.getMilliseconds();\n    const fractionalSeconds = Math.trunc(\n      milliseconds * Math.pow(10, fractionDigits - 3),\n    );\n    fractionalSecond = \".\" + addLeadingZeros(fractionalSeconds, fractionDigits);\n  }\n\n  let offset = \"\";\n  const tzOffset = date_.getTimezoneOffset();\n\n  if (tzOffset !== 0) {\n    const absoluteOffset = Math.abs(tzOffset);\n    const hourOffset = addLeadingZeros(Math.trunc(absoluteOffset / 60), 2);\n    const minuteOffset = addLeadingZeros(absoluteOffset % 60, 2);\n    // If less than 0, the sign is +, because it is ahead of time.\n    const sign = tzOffset < 0 ? \"+\" : \"-\";\n\n    offset = `${sign}${hourOffset}:${minuteOffset}`;\n  } else {\n    offset = \"Z\";\n  }\n\n  return `${year}-${month}-${day}T${hour}:${minute}:${second}${fractionalSecond}${offset}`;\n}"
+ },
+ {
+  "path": "formatRFC7231/index.ts",
+  "name": "formatRFC7231",
+  "line": 43,
+  "source": "function formatRFC7231(date: DateArg<Date> & {}): string {\n  const _date = toDate(date);\n\n  if (!isValid(_date)) {\n    throw new RangeError(\"Invalid time value\");\n  }\n\n  const dayName = days[_date.getUTCDay()];\n  const dayOfMonth = addLeadingZeros(_date.getUTCDate(), 2);\n  const monthName = months[_date.getUTCMonth()];\n  const year = _date.getUTCFullYear();\n\n  const hour = addLeadingZeros(_date.getUTCHours(), 2);\n  const minute = addLeadingZeros(_date.getUTCMinutes(), 2);\n  const second = addLeadingZeros(_date.getUTCSeconds(), 2);\n\n  // Result variables.\n  return `${dayName}, ${dayOfMonth} ${monthName} ${year} ${hour}:${minute}:${second} GMT`;\n}"
+ },
+ {
+  "path": "formatRelative/index.ts",
+  "name": "formatRelative",
+  "line": 57,
+  "source": "function formatRelative(\n  date: DateArg<Date> & {},\n  baseDate: DateArg<Date> & {},\n  options?: FormatRelativeOptions,\n): string {\n  const [date_, baseDate_] = normalizeDates(options?.in, date, baseDate);\n\n  const defaultOptions = getDefaultOptions();\n  const locale = options?.locale ?? defaultOptions.locale ?? defaultLocale;\n  const weekStartsOn =\n    options?.weekStartsOn ??\n    options?.locale?.options?.weekStartsOn ??\n    defaultOptions.weekStartsOn ??\n    defaultOptions.locale?.options?.weekStartsOn ??\n    0;\n\n  const diff = differenceInCalendarDays(date_, baseDate_);\n\n  if (isNaN(diff)) {\n    throw new RangeError(\"Invalid time value\");\n  }\n\n  let token: FormatRelativeToken;\n  if (diff < -6) {\n    token = \"other\";\n  } else if (diff < -1) {\n    token = \"lastWeek\";\n  } else if (diff < 0) {\n    token = \"yesterday\";\n  } else if (diff < 1) {\n    token = \"today\";\n  } else if (diff < 2) {\n    token = \"tomorrow\";\n  } else if (diff < 7) {\n    token = \"nextWeek\";\n  } else {\n    token = \"other\";\n  }\n\n  const formatStr = locale.formatRelative(token, date_, baseDate_, {\n    locale,\n    weekStartsOn,\n  });\n  return format(date_, formatStr, { locale, weekStartsOn });\n}"
+ },
+ {
+  "path": "fromUnixTime/index.ts",
+  "name": "fromUnixTime",
+  "line": 31,
+  "source": "function fromUnixTime<DateType extends Date = Date>(\n  unixTime: number,\n  options?: FromUnixTimeOptions<DateType> | undefined,\n): DateType {\n  return toDate(unixTime * 1000, options?.in);\n}"
+ },
+ {
+  "path": "getDate/index.ts",
+  "name": "getDate",
+  "line": 27,
+  "source": "function getDate(\n  date: DateArg<Date> & {},\n  options?: GetDateOptions | undefined,\n): number {\n  return toDate(date, options?.in).getDate();\n}"
+ },
+ {
+  "path": "getDay/index.ts",
+  "name": "getDay",
+  "line": 27,
+  "source": "function getDay(\n  date: DateArg<Date> & {},\n  options?: GetDayOptions | undefined,\n): number {\n  return toDate(date, options?.in).getDay();\n}"
+ },
+ {
+  "path": "getDayOfYear/index.ts",
+  "name": "getDayOfYear",
+  "line": 29,
+  "source": "function getDayOfYear(\n  date: DateArg<Date> & {},\n  options?: GetDayOfYearOptions | undefined,\n): number {\n  const _date = toDate(date, options?.in);\n  const diff = differenceInCalendarDays(_date, startOfYear(_date));\n  const dayOfYear = diff + 1;\n  return dayOfYear;\n}"
+ },
+ {
+  "path": "getDaysInMonth/index.ts",
+  "name": "getDaysInMonth",
+  "line": 28,
+  "source": "function getDaysInMonth(\n  date: DateArg<Date> & {},\n  options?: GetDaysInMonthOptions | undefined,\n): number {\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  const monthIndex = _date.getMonth();\n  const lastDayOfMonth = constructFrom(_date, 0);\n  lastDayOfMonth.setFullYear(year, monthIndex + 1, 0);\n  lastDayOfMonth.setHours(0, 0, 0, 0);\n  return lastDayOfMonth.getDate();\n}"
+ },
+ {
+  "path": "getDaysInYear/index.ts",
+  "name": "getDaysInYear",
+  "line": 28,
+  "source": "function getDaysInYear(\n  date: DateArg<Date> & {},\n  options?: GetDaysInYearOptions | undefined,\n): number {\n  const _date = toDate(date, options?.in);\n  if (Number.isNaN(+_date)) return NaN;\n  return isLeapYear(_date) ? 366 : 365;\n}"
+ },
+ {
+  "path": "getDecade/index.ts",
+  "name": "getDecade",
+  "line": 27,
+  "source": "function getDecade(\n  date: DateArg<Date> & {},\n  options?: GetDecadeOptions | undefined,\n): number {\n  // TODO: Switch to more technical definition in of decades that start with 1\n  // end with 0. I.e. 2001-2010 instead of current 2000-2009. It's a breaking\n  // change, so it can only be done in 4.0.\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  const decade = Math.floor(year / 10) * 10;\n  return decade;\n}"
+ },
+ {
+  "path": "getDefaultOptions/index.ts",
+  "name": "getDefaultOptions",
+  "line": 28,
+  "source": "function getDefaultOptions(): DefaultOptions {\n  return Object.assign({}, getInternalDefaultOptions());\n}"
+ },
+ {
+  "path": "getHours/index.ts",
+  "name": "getHours",
+  "line": 27,
+  "source": "function getHours(\n  date: DateArg<Date> & {},\n  options?: GetHoursOptions | undefined,\n): number {\n  return toDate(date, options?.in).getHours();\n}"
+ },
+ {
+  "path": "getISODay/index.ts",
+  "name": "getISODay",
+  "line": 30,
+  "source": "function getISODay(\n  date: DateArg<Date> & {},\n  options?: GetISODayOptions,\n): number {\n  const day = toDate(date, options?.in).getDay();\n  return day === 0 ? 7 : day;\n}"
+ },
+ {
+  "path": "getISOWeek/index.ts",
+  "name": "getISOWeek",
+  "line": 32,
+  "source": "function getISOWeek(\n  date: DateArg<Date> & {},\n  options?: GetISOWeekOptions | undefined,\n): number {\n  const _date = toDate(date, options?.in);\n  const diff = +startOfISOWeek(_date) - +startOfISOWeekYear(_date);\n\n  // Round the number of weeks to the nearest integer because the number of\n  // milliseconds in a week is not constant (e.g. it's different in the week of\n  // the daylight saving time clock shift).\n  return Math.round(diff / millisecondsInWeek) + 1;\n}"
+ },
+ {
+  "path": "getISOWeekYear/index.ts",
+  "name": "getISOWeekYear",
+  "line": 31,
+  "source": "function getISOWeekYear(\n  date: DateArg<Date> & {},\n  options?: GetISOWeekYearOptions | undefined,\n): number {\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n\n  const fourthOfJanuaryOfNextYear = constructFrom(_date, 0);\n  fourthOfJanuaryOfNextYear.setFullYear(year + 1, 0, 4);\n  fourthOfJanuaryOfNextYear.setHours(0, 0, 0, 0);\n  const startOfNextYear = startOfISOWeek(fourthOfJanuaryOfNextYear);\n\n  const fourthOfJanuaryOfThisYear = constructFrom(_date, 0);\n  fourthOfJanuaryOfThisYear.setFullYear(year, 0, 4);\n  fourthOfJanuaryOfThisYear.setHours(0, 0, 0, 0);\n  const startOfThisYear = startOfISOWeek(fourthOfJanuaryOfThisYear);\n\n  if (_date.getTime() >= startOfNextYear.getTime()) {\n    return year + 1;\n  } else if (_date.getTime() >= startOfThisYear.getTime()) {\n    return year;\n  } else {\n    return year - 1;\n  }\n}"
+ },
+ {
+  "path": "getISOWeeksInYear/index.ts",
+  "name": "getISOWeeksInYear",
+  "line": 31,
+  "source": "function getISOWeeksInYear(\n  date: DateArg<Date> & {},\n  options?: GetISOWeeksInYearOptions | undefined,\n): number {\n  const thisYear = startOfISOWeekYear(date, options);\n  const nextYear = startOfISOWeekYear(addWeeks(thisYear, 60));\n  const diff = +nextYear - +thisYear;\n\n  // Round the number of weeks to the nearest integer because the number of\n  // milliseconds in a week is not constant (e.g. it's different in the week of\n  // the daylight saving time clock shift).\n  return Math.round(diff / millisecondsInWeek);\n}"
+ },
+ {
+  "path": "getMilliseconds/index.ts",
+  "name": "getMilliseconds",
+  "line": 21,
+  "source": "function getMilliseconds(date: DateArg<Date> & {}): number {\n  return toDate(date).getMilliseconds();\n}"
+ },
+ {
+  "path": "getMinutes/index.ts",
+  "name": "getMinutes",
+  "line": 27,
+  "source": "function getMinutes(\n  date: DateArg<Date> & {},\n  options?: GetMinutesOptions | undefined,\n): number {\n  return toDate(date, options?.in).getMinutes();\n}"
+ },
+ {
+  "path": "getMonth/index.ts",
+  "name": "getMonth",
+  "line": 27,
+  "source": "function getMonth(\n  date: DateArg<Date> & {},\n  options?: GetMonthOptions | undefined,\n): number {\n  return toDate(date, options?.in).getMonth();\n}"
+ },
+ {
+  "path": "getOverlappingDaysInIntervals/index.ts",
+  "name": "getOverlappingDaysInIntervals",
+  "line": 42,
+  "source": "function getOverlappingDaysInIntervals(\n  intervalLeft: Interval,\n  intervalRight: Interval,\n): number {\n  const [leftStart, leftEnd] = [\n    +toDate(intervalLeft.start),\n    +toDate(intervalLeft.end),\n  ].sort((a, b) => a - b);\n  const [rightStart, rightEnd] = [\n    +toDate(intervalRight.start),\n    +toDate(intervalRight.end),\n  ].sort((a, b) => a - b);\n\n  // Prevent NaN result if intervals don't overlap at all.\n  const isOverlapping = leftStart < rightEnd && rightStart < leftEnd;\n  if (!isOverlapping) return 0;\n\n  // Remove the timezone offset to negate the DST effect on calculations.\n  const overlapLeft = rightStart < leftStart ? leftStart : rightStart;\n  const left = overlapLeft - getTimezoneOffsetInMilliseconds(overlapLeft);\n  const overlapRight = rightEnd > leftEnd ? leftEnd : rightEnd;\n  const right = overlapRight - getTimezoneOffsetInMilliseconds(overlapRight);\n\n  // Ceil the number to include partial days too.\n  return Math.ceil((right - left) / millisecondsInDay);\n}"
+ },
+ {
+  "path": "getQuarter/index.ts",
+  "name": "getQuarter",
+  "line": 27,
+  "source": "function getQuarter(\n  date: DateArg<Date> & {},\n  options?: GetQuarterOptions | undefined,\n): number {\n  const _date = toDate(date, options?.in);\n  const quarter = Math.trunc(_date.getMonth() / 3) + 1;\n  return quarter;\n}"
+ },
+ {
+  "path": "getSeconds/index.ts",
+  "name": "getSeconds",
+  "line": 21,
+  "source": "function getSeconds(date: DateArg<Date> & {}): number {\n  return toDate(date).getSeconds();\n}"
+ },
+ {
+  "path": "getTime/index.ts",
+  "name": "getTime",
+  "line": 21,
+  "source": "function getTime(date: DateArg<Date> & {}): number {\n  return +toDate(date);\n}"
+ },
+ {
+  "path": "getUnixTime/index.ts",
+  "name": "getUnixTime",
+  "line": 21,
+  "source": "function getUnixTime(date: DateArg<Date> & {}): number {\n  return Math.trunc(+toDate(date) / 1000);\n}"
+ },
+ {
+  "path": "getWeek/index.ts",
+  "name": "getWeek",
+  "line": 57,
+  "source": "function getWeek(\n  date: DateArg<Date> & {},\n  options?: GetWeekOptions | undefined,\n): number {\n  const _date = toDate(date, options?.in);\n  const diff = +startOfWeek(_date, options) - +startOfWeekYear(_date, options);\n\n  // Round the number of weeks to the nearest integer because the number of\n  // milliseconds in a week is not constant (e.g. it's different in the week of\n  // the daylight saving time clock shift).\n  return Math.round(diff / millisecondsInWeek) + 1;\n}"
+ },
+ {
+  "path": "getWeekOfMonth/index.ts",
+  "name": "getWeekOfMonth",
+  "line": 37,
+  "source": "function getWeekOfMonth(\n  date: DateArg<Date> & {},\n  options?: GetWeekOfMonthOptions,\n): number {\n  const defaultOptions = getDefaultOptions();\n  const weekStartsOn =\n    options?.weekStartsOn ??\n    options?.locale?.options?.weekStartsOn ??\n    defaultOptions.weekStartsOn ??\n    defaultOptions.locale?.options?.weekStartsOn ??\n    0;\n\n  const currentDayOfMonth = getDate(toDate(date, options?.in));\n  if (isNaN(currentDayOfMonth)) return NaN;\n\n  const startWeekDay = getDay(startOfMonth(date, options));\n\n  let lastDayOfFirstWeek = weekStartsOn - startWeekDay;\n  if (lastDayOfFirstWeek <= 0) lastDayOfFirstWeek += 7;\n\n  const remainingDaysAfterFirstWeek = currentDayOfMonth - lastDayOfFirstWeek;\n  return Math.ceil(remainingDaysAfterFirstWeek / 7) + 1;\n}"
+ },
+ {
+  "path": "getWeekYear/index.ts",
+  "name": "getWeekYear",
+  "line": 57,
+  "source": "function getWeekYear(\n  date: DateArg<Date> & {},\n  options?: GetWeekYearOptions,\n): number {\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n\n  const defaultOptions = getDefaultOptions();\n  const firstWeekContainsDate =\n    options?.firstWeekContainsDate ??\n    options?.locale?.options?.firstWeekContainsDate ??\n    defaultOptions.firstWeekContainsDate ??\n    defaultOptions.locale?.options?.firstWeekContainsDate ??\n    1;\n\n  const firstWeekOfNextYear = constructFrom(options?.in || date, 0);\n  firstWeekOfNextYear.setFullYear(year + 1, 0, firstWeekContainsDate);\n  firstWeekOfNextYear.setHours(0, 0, 0, 0);\n  const startOfNextYear = startOfWeek(firstWeekOfNextYear, options);\n\n  const firstWeekOfThisYear = constructFrom(options?.in || date, 0);\n  firstWeekOfThisYear.setFullYear(year, 0, firstWeekContainsDate);\n  firstWeekOfThisYear.setHours(0, 0, 0, 0);\n  const startOfThisYear = startOfWeek(firstWeekOfThisYear, options);\n\n  if (+_date >= +startOfNextYear) {\n    return year + 1;\n  } else if (+_date >= +startOfThisYear) {\n    return year;\n  } else {\n    return year - 1;\n  }\n}"
+ },
+ {
+  "path": "getWeeksInMonth/index.ts",
+  "name": "getWeeksInMonth",
+  "line": 42,
+  "source": "function getWeeksInMonth(\n  date: DateArg<Date> & {},\n  options?: GetWeeksInMonthOptions | undefined,\n): number {\n  const contextDate = toDate(date, options?.in);\n  return (\n    differenceInCalendarWeeks(\n      lastDayOfMonth(contextDate, options),\n      startOfMonth(contextDate, options),\n      options,\n    ) + 1\n  );\n}"
+ },
+ {
+  "path": "getYear/index.ts",
+  "name": "getYear",
+  "line": 27,
+  "source": "function getYear(\n  date: DateArg<Date> & {},\n  options?: GetYearOptions | undefined,\n): number {\n  return toDate(date, options?.in).getFullYear();\n}"
+ },
+ {
+  "path": "hoursToMilliseconds/index.ts",
+  "name": "hoursToMilliseconds",
+  "line": 20,
+  "source": "function hoursToMilliseconds(hours: number): number {\n  return Math.trunc(hours * millisecondsInHour);\n}"
+ },
+ {
+  "path": "hoursToMinutes/index.ts",
+  "name": "hoursToMinutes",
+  "line": 20,
+  "source": "function hoursToMinutes(hours: number): number {\n  return Math.trunc(hours * minutesInHour);\n}"
+ },
+ {
+  "path": "hoursToSeconds/index.ts",
+  "name": "hoursToSeconds",
+  "line": 20,
+  "source": "function hoursToSeconds(hours: number): number {\n  return Math.trunc(hours * secondsInHour);\n}"
+ },
+ {
+  "path": "interval/index.ts",
+  "name": "interval",
+  "line": 56,
+  "source": "function interval<\n  StartDate extends DateArg<Date>,\n  EndDate extends DateArg<Date>,\n  Options extends IntervalOptions | undefined = undefined,\n>(\n  start: StartDate,\n  end: EndDate,\n  options?: Options,\n): IntervalResult<StartDate, EndDate, Options> {\n  const [_start, _end] = normalizeDates(options?.in, start, end);\n\n  if (isNaN(+_start)) throw new TypeError(\"Start date is invalid\");\n  if (isNaN(+_end)) throw new TypeError(\"End date is invalid\");\n\n  if (options?.assertPositive && +_start > +_end)\n    throw new TypeError(\"End date must be after start date\");\n\n  return { start: _start, end: _end } as IntervalResult<\n    StartDate,\n    EndDate,\n    Options\n  >;\n}"
+ },
+ {
+  "path": "intervalToDuration/index.ts",
+  "name": "intervalToDuration",
+  "line": 37,
+  "source": "function intervalToDuration(\n  interval: Interval,\n  options?: IntervalToDurationOptions | undefined,\n): Duration {\n  const { start, end } = normalizeInterval(options?.in, interval);\n  const duration: Duration = {};\n\n  const years = differenceInYears(end, start);\n  if (years) duration.years = years;\n\n  const remainingMonths = add(start, { years: duration.years });\n  const months = differenceInMonths(end, remainingMonths);\n  if (months) duration.months = months;\n\n  const remainingDays = add(remainingMonths, { months: duration.months });\n  const days = differenceInDays(end, remainingDays);\n  if (days) duration.days = days;\n\n  const remainingHours = add(remainingDays, { days: duration.days });\n  const hours = differenceInHours(end, remainingHours);\n  if (hours) duration.hours = hours;\n\n  const remainingMinutes = add(remainingHours, { hours: duration.hours });\n  const minutes = differenceInMinutes(end, remainingMinutes);\n  if (minutes) duration.minutes = minutes;\n\n  const remainingSeconds = add(remainingMinutes, { minutes: duration.minutes });\n  const seconds = differenceInSeconds(end, remainingSeconds);\n  if (seconds) duration.seconds = seconds;\n\n  return duration;\n}"
+ },
+ {
+  "path": "intlFormat/index.ts",
+  "name": "isFormatOptions",
+  "line": 141,
+  "source": "function isFormatOptions(\n  opts: IntlFormatLocaleOptions | IntlFormatFormatOptions | undefined,\n): opts is IntlFormatFormatOptions {\n  return opts !== undefined && !(\"locale\" in opts);\n}"
+ },
+ {
+  "path": "intlFormat/index.ts",
+  "name": "intlFormat",
+  "line": 123,
+  "source": "function intlFormat(\n  date: DateArg<Date> & {},\n  formatOrLocale?: IntlFormatFormatOptions | IntlFormatLocaleOptions,\n  localeOptions?: IntlFormatLocaleOptions,\n): string {\n  let formatOptions: IntlFormatFormatOptions | undefined;\n\n  if (isFormatOptions(formatOrLocale)) {\n    formatOptions = formatOrLocale;\n  } else {\n    localeOptions = formatOrLocale;\n  }\n\n  return new Intl.DateTimeFormat(localeOptions?.locale, formatOptions).format(\n    toDate(date),\n  );\n}"
+ },
+ {
+  "path": "isAfter/index.ts",
+  "name": "isAfter",
+  "line": 22,
+  "source": "function isAfter(\n  date: DateArg<Date> & {},\n  dateToCompare: DateArg<Date> & {},\n): boolean {\n  return +toDate(date) > +toDate(dateToCompare);\n}"
+ },
+ {
+  "path": "isBefore/index.ts",
+  "name": "isBefore",
+  "line": 22,
+  "source": "function isBefore(\n  date: DateArg<Date> & {},\n  dateToCompare: DateArg<Date> & {},\n): boolean {\n  return +toDate(date) < +toDate(dateToCompare);\n}"
+ },
+ {
+  "path": "isDate/index.ts",
+  "name": "isDate",
+  "line": 33,
+  "source": "function isDate(value: unknown): value is Date {\n  return (\n    value instanceof Date ||\n    (typeof value === \"object\" &&\n      Object.prototype.toString.call(value) === \"[object Date]\")\n  );\n}"
+ },
+ {
+  "path": "isEqual/index.ts",
+  "name": "isEqual",
+  "line": 25,
+  "source": "function isEqual(\n  leftDate: DateArg<Date> & {},\n  rightDate: DateArg<Date> & {},\n): boolean {\n  return +toDate(leftDate) === +toDate(rightDate);\n}"
+ },
+ {
+  "path": "isExists/index.ts",
+  "name": "isExists",
+  "line": 25,
+  "source": "function isExists(year: number, month: number, day: number): boolean {\n  const date = new Date(year, month, day);\n  return (\n    date.getFullYear() === year &&\n    date.getMonth() === month &&\n    date.getDate() === day\n  );\n}"
+ },
+ {
+  "path": "isFirstDayOfMonth/index.ts",
+  "name": "isFirstDayOfMonth",
+  "line": 27,
+  "source": "function isFirstDayOfMonth(\n  date: DateArg<Date> & {},\n  options?: IsFirstDayOfMonthOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDate() === 1;\n}"
+ },
+ {
+  "path": "isFriday/index.ts",
+  "name": "isFriday",
+  "line": 27,
+  "source": "function isFriday(\n  date: DateArg<Date> & {},\n  options?: IsFridayOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDay() === 5;\n}"
+ },
+ {
+  "path": "isFuture/index.ts",
+  "name": "isFuture",
+  "line": 22,
+  "source": "function isFuture(date: DateArg<Date> & {}): boolean {\n  return +toDate(date) > Date.now();\n}"
+ },
+ {
+  "path": "isLastDayOfMonth/index.ts",
+  "name": "isLastDayOfMonth",
+  "line": 26,
+  "source": "function isLastDayOfMonth(\n  date: DateArg<Date> & {},\n  options?: IsLastDayOfMonthOptions | undefined,\n): boolean {\n  const _date = toDate(date, options?.in);\n  return +endOfDay(_date, options) === +endOfMonth(_date, options);\n}"
+ },
+ {
+  "path": "isLeapYear/index.ts",
+  "name": "isLeapYear",
+  "line": 24,
+  "source": "function isLeapYear(\n  date: DateArg<Date> & {},\n  options?: IsLeapYearOptions | undefined,\n): boolean {\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  return year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0);\n}"
+ },
+ {
+  "path": "isMatch/index.ts",
+  "name": "isMatch",
+  "line": 304,
+  "source": "function isMatch(\n  dateStr: string,\n  formatStr: string,\n  options?: IsMatchOptions,\n): boolean {\n  return isValid(parse(dateStr, formatStr, new Date(), options));\n}"
+ },
+ {
+  "path": "isMonday/index.ts",
+  "name": "isMonday",
+  "line": 27,
+  "source": "function isMonday(\n  date: DateArg<Date> & {},\n  options?: IsMondayOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDay() === 1;\n}"
+ },
+ {
+  "path": "isPast/index.ts",
+  "name": "isPast",
+  "line": 22,
+  "source": "function isPast(date: DateArg<Date> & {}): boolean {\n  return +toDate(date) < Date.now();\n}"
+ },
+ {
+  "path": "isSameDay/index.ts",
+  "name": "isSameDay",
+  "line": 39,
+  "source": "function isSameDay(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: IsSameDayOptions | undefined,\n): boolean {\n  const [dateLeft_, dateRight_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return +startOfDay(dateLeft_) === +startOfDay(dateRight_);\n}"
+ },
+ {
+  "path": "isSameHour/index.ts",
+  "name": "isSameHour",
+  "line": 34,
+  "source": "function isSameHour(\n  dateLeft: DateArg<Date> & {},\n  dateRight: DateArg<Date> & {},\n  options?: IsSameHourOptions | undefined,\n): boolean {\n  const [dateLeft_, dateRight_] = normalizeDates(\n    options?.in,\n    dateLeft,\n    dateRight,\n  );\n  return +startOfHour(dateLeft_) === +startOfHour(dateRight_);\n}"
+ },
+ {
+  "path": "isSameISOWeek/index.ts",
+  "name": "isSameISOWeek",
+  "line": 35,
+  "source": "function isSameISOWeek(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: IsSameISOWeekOptions | undefined,\n): boolean {\n  return isSameWeek(laterDate, earlierDate, { ...options, weekStartsOn: 1 });\n}"
+ },
+ {
+  "path": "isSameISOWeekYear/index.ts",
+  "name": "isSameISOWeekYear",
+  "line": 31,
+  "source": "function isSameISOWeekYear(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: IsSameISOWeekYearOptions | undefined,\n): boolean {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return +startOfISOWeekYear(laterDate_) === +startOfISOWeekYear(earlierDate_);\n}"
+ },
+ {
+  "path": "isSameMinute/index.ts",
+  "name": "isSameMinute",
+  "line": 33,
+  "source": "function isSameMinute(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n): boolean {\n  return +startOfMinute(laterDate) === +startOfMinute(earlierDate);\n}"
+ },
+ {
+  "path": "isSameMonth/index.ts",
+  "name": "isSameMonth",
+  "line": 33,
+  "source": "function isSameMonth(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: IsSameMonthOptions | undefined,\n): boolean {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return (\n    laterDate_.getFullYear() === earlierDate_.getFullYear() &&\n    laterDate_.getMonth() === earlierDate_.getMonth()\n  );\n}"
+ },
+ {
+  "path": "isSameQuarter/index.ts",
+  "name": "isSameQuarter",
+  "line": 34,
+  "source": "function isSameQuarter(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: IsSameQuarterOptions | undefined,\n): boolean {\n  const [dateLeft_, dateRight_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return +startOfQuarter(dateLeft_) === +startOfQuarter(dateRight_);\n}"
+ },
+ {
+  "path": "isSameSecond/index.ts",
+  "name": "isSameSecond",
+  "line": 41,
+  "source": "function isSameSecond(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n): boolean {\n  return +startOfSecond(laterDate) === +startOfSecond(earlierDate);\n}"
+ },
+ {
+  "path": "isSameWeek/index.ts",
+  "name": "isSameWeek",
+  "line": 44,
+  "source": "function isSameWeek(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: IsSameWeekOptions,\n): boolean {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return (\n    +startOfWeek(laterDate_, options) === +startOfWeek(earlierDate_, options)\n  );\n}"
+ },
+ {
+  "path": "isSameYear/index.ts",
+  "name": "isSameYear",
+  "line": 28,
+  "source": "function isSameYear(\n  laterDate: DateArg<Date> & {},\n  earlierDate: DateArg<Date> & {},\n  options?: IsSameYearOptions | undefined,\n): boolean {\n  const [laterDate_, earlierDate_] = normalizeDates(\n    options?.in,\n    laterDate,\n    earlierDate,\n  );\n  return laterDate_.getFullYear() === earlierDate_.getFullYear();\n}"
+ },
+ {
+  "path": "isSaturday/index.ts",
+  "name": "isSaturday",
+  "line": 27,
+  "source": "function isSaturday(\n  date: DateArg<Date> & {},\n  options?: IsSaturdayOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDay() === 6;\n}"
+ },
+ {
+  "path": "isSunday/index.ts",
+  "name": "isSunday",
+  "line": 27,
+  "source": "function isSunday(\n  date: DateArg<Date> & {},\n  options?: IsSundayOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDay() === 0;\n}"
+ },
+ {
+  "path": "isThisHour/index.ts",
+  "name": "isThisHour",
+  "line": 31,
+  "source": "function isThisHour(\n  date: DateArg<Date> & {},\n  options?: IsThisHourOptions,\n): boolean {\n  return isSameHour(\n    toDate(date, options?.in),\n    constructNow(options?.in || date),\n  );\n}"
+ },
+ {
+  "path": "isThisISOWeek/index.ts",
+  "name": "isThisISOWeek",
+  "line": 32,
+  "source": "function isThisISOWeek(\n  date: DateArg<Date> & {},\n  options?: IsThisISOWeekOptions | undefined,\n): boolean {\n  return isSameISOWeek(\n    constructFrom(options?.in || date, date),\n    constructNow(options?.in || date),\n  );\n}"
+ },
+ {
+  "path": "isThisMinute/index.ts",
+  "name": "isThisMinute",
+  "line": 25,
+  "source": "function isThisMinute(date: DateArg<Date> & {}): boolean {\n  return isSameMinute(date, constructNow(date));\n}"
+ },
+ {
+  "path": "isThisMonth/index.ts",
+  "name": "isThisMonth",
+  "line": 30,
+  "source": "function isThisMonth(\n  date: DateArg<Date> & {},\n  options?: IsThisMonthOptions | undefined,\n): boolean {\n  return isSameMonth(\n    constructFrom(options?.in || date, date),\n    constructNow(options?.in || date),\n  );\n}"
+ },
+ {
+  "path": "isThisQuarter/index.ts",
+  "name": "isThisQuarter",
+  "line": 30,
+  "source": "function isThisQuarter(\n  date: DateArg<Date> & {},\n  options?: IsThisQuarterOptions,\n): boolean {\n  return isSameQuarter(\n    constructFrom(options?.in || date, date),\n    constructNow(options?.in || date),\n  );\n}"
+ },
+ {
+  "path": "isThisSecond/index.ts",
+  "name": "isThisSecond",
+  "line": 24,
+  "source": "function isThisSecond(date: DateArg<Date> & {}): boolean {\n  return isSameSecond(date, constructNow(date));\n}"
+ },
+ {
+  "path": "isThisWeek/index.ts",
+  "name": "isThisWeek",
+  "line": 42,
+  "source": "function isThisWeek(\n  date: DateArg<Date> & {},\n  options?: IsThisWeekOptions,\n): boolean {\n  return isSameWeek(\n    constructFrom(options?.in || date, date),\n    constructNow(options?.in || date),\n    options,\n  );\n}"
+ },
+ {
+  "path": "isThisYear/index.ts",
+  "name": "isThisYear",
+  "line": 30,
+  "source": "function isThisYear(\n  date: DateArg<Date> & {},\n  options?: IsThisYearOptions | undefined,\n): boolean {\n  return isSameYear(\n    constructFrom(options?.in || date, date),\n    constructNow(options?.in || date),\n  );\n}"
+ },
+ {
+  "path": "isThursday/index.ts",
+  "name": "isThursday",
+  "line": 27,
+  "source": "function isThursday(\n  date: DateArg<Date> & {},\n  options?: IsThursdayOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDay() === 4;\n}"
+ },
+ {
+  "path": "isToday/index.ts",
+  "name": "isToday",
+  "line": 30,
+  "source": "function isToday(\n  date: DateArg<Date> & {},\n  options?: IsTodayOptions | undefined,\n): boolean {\n  return isSameDay(\n    constructFrom(options?.in || date, date),\n    constructNow(options?.in || date),\n  );\n}"
+ },
+ {
+  "path": "isTomorrow/index.ts",
+  "name": "isTomorrow",
+  "line": 30,
+  "source": "function isTomorrow(\n  date: DateArg<Date> & {},\n  options?: IsTomorrowOptions | undefined,\n): boolean {\n  return isSameDay(\n    date,\n    addDays(constructNow(options?.in || date), 1),\n    options,\n  );\n}"
+ },
+ {
+  "path": "isTuesday/index.ts",
+  "name": "isTuesday",
+  "line": 27,
+  "source": "function isTuesday(\n  date: DateArg<Date> & {},\n  options?: IsTuesdayOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDay() === 2;\n}"
+ },
+ {
+  "path": "isValid/index.ts",
+  "name": "isValid",
+  "line": 35,
+  "source": "function isValid(date: unknown): boolean {\n  return !((!isDate(date) && typeof date !== \"number\") || isNaN(+toDate(date)));\n}"
+ },
+ {
+  "path": "isWednesday/index.ts",
+  "name": "isWednesday",
+  "line": 27,
+  "source": "function isWednesday(\n  date: DateArg<Date> & {},\n  options?: IsWednesdayOptions | undefined,\n): boolean {\n  return toDate(date, options?.in).getDay() === 3;\n}"
+ },
+ {
+  "path": "isWeekend/index.ts",
+  "name": "isWeekend",
+  "line": 27,
+  "source": "function isWeekend(\n  date: DateArg<Date> & {},\n  options?: IsWeekendOptions | undefined,\n): boolean {\n  const day = toDate(date, options?.in).getDay();\n  return day === 0 || day === 6;\n}"
+ },
+ {
+  "path": "isWithinInterval/index.ts",
+  "name": "isWithinInterval",
+  "line": 49,
+  "source": "function isWithinInterval(\n  date: DateArg<Date> & {},\n  interval: Interval,\n  options?: IsWithinIntervalOptions | undefined,\n): boolean {\n  const time = +toDate(date, options?.in);\n  const [startTime, endTime] = [\n    +toDate(interval.start, options?.in),\n    +toDate(interval.end, options?.in),\n  ].sort((a, b) => a - b);\n\n  return time >= startTime && time <= endTime;\n}"
+ },
+ {
+  "path": "isYesterday/index.ts",
+  "name": "isYesterday",
+  "line": 31,
+  "source": "function isYesterday(\n  date: DateArg<Date> & {},\n  options?: IsYesterdayOptions | undefined,\n): boolean {\n  return isSameDay(\n    constructFrom(options?.in || date, date),\n    subDays(constructNow(options?.in || date), 1),\n  );\n}"
+ },
+ {
+  "path": "lastDayOfDecade/index.ts",
+  "name": "lastDayOfDecade",
+  "line": 32,
+  "source": "function lastDayOfDecade<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: LastDayOfDecadeOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  const decade = 9 + Math.floor(year / 10) * 10;\n  _date.setFullYear(decade + 1, 0, 0);\n  _date.setHours(0, 0, 0, 0);\n  return toDate(_date, options?.in);\n}"
+ },
+ {
+  "path": "lastDayOfISOWeek/index.ts",
+  "name": "lastDayOfISOWeek",
+  "line": 35,
+  "source": "function lastDayOfISOWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: LastDayOfISOWeekOptions<ResultDate> | undefined,\n): ResultDate {\n  return lastDayOfWeek(date, { ...options, weekStartsOn: 1 });\n}"
+ },
+ {
+  "path": "lastDayOfISOWeekYear/index.ts",
+  "name": "lastDayOfISOWeekYear",
+  "line": 38,
+  "source": "function lastDayOfISOWeekYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: LastDayOfISOWeekYearOptions<ResultDate> | undefined,\n): ResultDate {\n  const year = getISOWeekYear(date, options);\n  const fourthOfJanuary = constructFrom(options?.in || date, 0);\n  fourthOfJanuary.setFullYear(year + 1, 0, 4);\n  fourthOfJanuary.setHours(0, 0, 0, 0);\n\n  const date_ = startOfISOWeek(fourthOfJanuary, options);\n  date_.setDate(date_.getDate() - 1);\n  return date_;\n}"
+ },
+ {
+  "path": "lastDayOfMonth/index.ts",
+  "name": "lastDayOfMonth",
+  "line": 33,
+  "source": "function lastDayOfMonth<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: LastDayOfMonthOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const month = _date.getMonth();\n  _date.setFullYear(_date.getFullYear(), month + 1, 0);\n  _date.setHours(0, 0, 0, 0);\n  return toDate(_date, options?.in) as ResultDate;\n}"
+ },
+ {
+  "path": "lastDayOfQuarter/index.ts",
+  "name": "lastDayOfQuarter",
+  "line": 33,
+  "source": "function lastDayOfQuarter<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: LastDayOfQuarterOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  const currentMonth = date_.getMonth();\n  const month = currentMonth - (currentMonth % 3) + 3;\n  date_.setMonth(month, 0);\n  date_.setHours(0, 0, 0, 0);\n  return date_;\n}"
+ },
+ {
+  "path": "lastDayOfWeek/index.ts",
+  "name": "lastDayOfWeek",
+  "line": 33,
+  "source": "function lastDayOfWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: LastDayOfWeekOptions<ResultDate>,\n): ResultDate {\n  const defaultOptions = getDefaultOptions();\n  const weekStartsOn =\n    options?.weekStartsOn ??\n    options?.locale?.options?.weekStartsOn ??\n    defaultOptions.weekStartsOn ??\n    defaultOptions.locale?.options?.weekStartsOn ??\n    0;\n\n  const _date = toDate(date, options?.in);\n  const day = _date.getDay();\n  const diff = (day < weekStartsOn ? -7 : 0) + 6 - (day - weekStartsOn);\n\n  _date.setHours(0, 0, 0, 0);\n  _date.setDate(_date.getDate() + diff);\n\n  return _date;\n}"
+ },
+ {
+  "path": "lastDayOfYear/index.ts",
+  "name": "lastDayOfYear",
+  "line": 33,
+  "source": "function lastDayOfYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: LastDayOfYearOptions<ResultDate>,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  const year = date_.getFullYear();\n  date_.setFullYear(year + 1, 0, 0);\n  date_.setHours(0, 0, 0, 0);\n  return date_;\n}"
+ },
+ {
+  "path": "lightFormat/index.ts",
+  "name": "cleanEscapedString",
+  "line": 134,
+  "source": "function cleanEscapedString(input: string) {\n  const matches = input.match(escapedStringRegExp);\n  if (!matches) return input;\n  return matches[1].replace(doubleQuoteRegExp, \"'\");\n}"
+ },
+ {
+  "path": "lightFormat/index.ts",
+  "name": "lightFormat",
+  "line": 87,
+  "source": "function lightFormat(\n  date: DateArg<Date> & {},\n  formatStr: string,\n): string {\n  const date_ = toDate(date);\n\n  if (!isValid(date_)) {\n    throw new RangeError(\"Invalid time value\");\n  }\n\n  const tokens = formatStr.match(formattingTokensRegExp);\n\n  // The only case when formattingTokensRegExp doesn't match the string is when it's empty\n  if (!tokens) return \"\";\n\n  const result = tokens\n    .map((substring) => {\n      // Replace two single quote characters with one single quote character\n      if (substring === \"''\") {\n        return \"'\";\n      }\n\n      const firstCharacter = substring[0];\n      if (firstCharacter === \"'\") {\n        return cleanEscapedString(substring);\n      }\n\n      const formatter = lightFormatters[firstCharacter as Token];\n      if (formatter) {\n        return formatter(date_, substring);\n      }\n\n      if (firstCharacter.match(unescapedLatinCharacterRegExp)) {\n        throw new RangeError(\n          \"Format string contains an unescaped latin alphabet character `\" +\n            firstCharacter +\n            \"`\",\n        );\n      }\n\n      return substring;\n    })\n    .join(\"\");\n\n  return result;\n}"
+ },
+ {
+  "path": "max/index.ts",
+  "name": "max",
+  "line": 37,
+  "source": "function max<DateType extends Date, ResultDate extends Date = DateType>(\n  dates: DateArg<DateType>[],\n  options?: MaxOptions<ResultDate> | undefined,\n): ResultDate {\n  let result: ResultDate | undefined;\n  let context = options?.in;\n\n  dates.forEach((date) => {\n    // Use the first date object as the context function\n    if (!context && typeof date === \"object\")\n      context = constructFrom.bind(null, date) as ContextFn<ResultDate>;\n\n    const date_ = toDate(date, context);\n    if (!result || result < date_ || isNaN(+date_)) result = date_;\n  });\n\n  return constructFrom(context, result || NaN);\n}"
+ },
+ {
+  "path": "milliseconds/index.ts",
+  "name": "milliseconds",
+  "line": 33,
+  "source": "function milliseconds({\n  years,\n  months,\n  weeks,\n  days,\n  hours,\n  minutes,\n  seconds,\n}: Duration): number {\n  let totalDays = 0;\n\n  if (years) totalDays += years * daysInYear;\n  if (months) totalDays += months * (daysInYear / 12);\n  if (weeks) totalDays += weeks * 7;\n  if (days) totalDays += days;\n\n  let totalSeconds = totalDays * 24 * 60 * 60;\n\n  if (hours) totalSeconds += hours * 60 * 60;\n  if (minutes) totalSeconds += minutes * 60;\n  if (seconds) totalSeconds += seconds;\n\n  return Math.trunc(totalSeconds * 1000);\n}"
+ },
+ {
+  "path": "millisecondsToHours/index.ts",
+  "name": "millisecondsToHours",
+  "line": 25,
+  "source": "function millisecondsToHours(milliseconds: number): number {\n  const hours = milliseconds / millisecondsInHour;\n  return Math.trunc(hours);\n}"
+ },
+ {
+  "path": "millisecondsToMinutes/index.ts",
+  "name": "millisecondsToMinutes",
+  "line": 25,
+  "source": "function millisecondsToMinutes(milliseconds: number): number {\n  const minutes = milliseconds / millisecondsInMinute;\n  return Math.trunc(minutes);\n}"
+ },
+ {
+  "path": "millisecondsToSeconds/index.ts",
+  "name": "millisecondsToSeconds",
+  "line": 25,
+  "source": "function millisecondsToSeconds(milliseconds: number): number {\n  const seconds = milliseconds / millisecondsInSecond;\n  return Math.trunc(seconds);\n}"
+ },
+ {
+  "path": "min/index.ts",
+  "name": "min",
+  "line": 37,
+  "source": "function min<DateType extends Date, ResultDate extends Date = DateType>(\n  dates: Array<DateArg<DateType>>,\n  options?: MinOptions<ResultDate> | undefined,\n): ResultDate {\n  let result: ResultDate | undefined;\n  let context = options?.in;\n\n  dates.forEach((date) => {\n    // Use the first date object as the context function\n    if (!context && typeof date === \"object\")\n      context = constructFrom.bind(null, date) as ContextFn<ResultDate>;\n\n    const date_ = toDate(date, context);\n    if (!result || result > date_ || isNaN(+date_)) result = date_;\n  });\n\n  return constructFrom(context, result || NaN);\n}"
+ },
+ {
+  "path": "minutesToHours/index.ts",
+  "name": "minutesToHours",
+  "line": 25,
+  "source": "function minutesToHours(minutes: number): number {\n  const hours = minutes / minutesInHour;\n  return Math.trunc(hours);\n}"
+ },
+ {
+  "path": "minutesToMilliseconds/index.ts",
+  "name": "minutesToMilliseconds",
+  "line": 20,
+  "source": "function minutesToMilliseconds(minutes: number): number {\n  return Math.trunc(minutes * millisecondsInMinute);\n}"
+ },
+ {
+  "path": "minutesToSeconds/index.ts",
+  "name": "minutesToSeconds",
+  "line": 20,
+  "source": "function minutesToSeconds(minutes: number): number {\n  return Math.trunc(minutes * secondsInMinute);\n}"
+ },
+ {
+  "path": "monthsToQuarters/index.ts",
+  "name": "monthsToQuarters",
+  "line": 25,
+  "source": "function monthsToQuarters(months: number): number {\n  const quarters = months / monthsInQuarter;\n  return Math.trunc(quarters);\n}"
+ },
+ {
+  "path": "monthsToYears/index.ts",
+  "name": "monthsToYears",
+  "line": 24,
+  "source": "function monthsToYears(months: number): number {\n  const years = months / monthsInYear;\n  return Math.trunc(years);\n}"
+ },
+ {
+  "path": "nextDay/index.ts",
+  "name": "nextDay",
+  "line": 36,
+  "source": "function nextDay<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  day: Day,\n  options?: NextDayOptions<ResultDate> | undefined,\n): ResultDate {\n  let delta = day - getDay(date, options);\n  if (delta <= 0) delta += 7;\n\n  return addDays(date, delta, options);\n}"
+ },
+ {
+  "path": "nextFriday/index.ts",
+  "name": "nextFriday",
+  "line": 32,
+  "source": "function nextFriday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: NextFridayOptions<ResultDate>,\n): ResultDate {\n  return nextDay(date, 5, options);\n}"
+ },
+ {
+  "path": "nextMonday/index.ts",
+  "name": "nextMonday",
+  "line": 32,
+  "source": "function nextMonday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: NextMondayOptions<ResultDate> | undefined,\n): ResultDate {\n  return nextDay(date, 1, options);\n}"
+ },
+ {
+  "path": "nextSaturday/index.ts",
+  "name": "nextSaturday",
+  "line": 32,
+  "source": "function nextSaturday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: NextSaturdayOptions<ResultDate>,\n): ResultDate {\n  return nextDay(date, 6, options);\n}"
+ },
+ {
+  "path": "nextSunday/index.ts",
+  "name": "nextSunday",
+  "line": 32,
+  "source": "function nextSunday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: NextSundayOptions<ResultDate> | undefined,\n): ResultDate {\n  return nextDay(date, 0, options);\n}"
+ },
+ {
+  "path": "nextThursday/index.ts",
+  "name": "nextThursday",
+  "line": 32,
+  "source": "function nextThursday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: NextThursdayOptions<ResultDate> | undefined,\n): ResultDate {\n  return nextDay(date, 4, options);\n}"
+ },
+ {
+  "path": "nextTuesday/index.ts",
+  "name": "nextTuesday",
+  "line": 32,
+  "source": "function nextTuesday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: NextTuesdayOptions<ResultDate>,\n): ResultDate {\n  return nextDay(date, 2, options);\n}"
+ },
+ {
+  "path": "nextWednesday/index.ts",
+  "name": "nextWednesday",
+  "line": 32,
+  "source": "function nextWednesday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: NextWednesdayOptions<ResultDate> | undefined,\n): ResultDate {\n  return nextDay(date, 3, options);\n}"
+ },
+ {
+  "path": "parse/index.ts",
+  "name": "cleanEscapedString",
+  "line": 534,
+  "source": "function cleanEscapedString(input: string) {\n  return input.match(escapedStringRegExp)![1].replace(doubleQuoteRegExp, \"'\");\n}"
+ },
+ {
+  "path": "parse/index.ts",
+  "name": "invalidDate",
+  "line": 370,
+  "source": "() => constructFrom(options?.in || referenceDate, NaN)"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "validateTimezone",
+  "line": 318,
+  "source": "function validateTimezone(_hours: number, minutes: number): boolean {\n  return minutes >= 0 && minutes <= 59;\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "validateTime",
+  "line": 299,
+  "source": "function validateTime(\n  hours: number,\n  minutes: number,\n  seconds: number,\n): boolean {\n  if (hours === 24) {\n    return minutes === 0 && seconds === 0;\n  }\n\n  return (\n    seconds >= 0 &&\n    seconds < 60 &&\n    minutes >= 0 &&\n    minutes < 60 &&\n    hours >= 0 &&\n    hours < 25\n  );\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "validateWeekDate",
+  "line": 295,
+  "source": "function validateWeekDate(_year: number, week: number, day: number): boolean {\n  return week >= 1 && week <= 53 && day >= 0 && day <= 6;\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "validateDayOfYearDate",
+  "line": 291,
+  "source": "function validateDayOfYearDate(year: number, dayOfYear: number): boolean {\n  return dayOfYear >= 1 && dayOfYear <= (isLeapYearIndex(year) ? 366 : 365);\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "validateDate",
+  "line": 282,
+  "source": "function validateDate(year: number, month: number, date: number): boolean {\n  return (\n    month >= 0 &&\n    month <= 11 &&\n    date >= 1 &&\n    date <= (daysInMonths[month] || (isLeapYearIndex(year) ? 29 : 28))\n  );\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "isLeapYearIndex",
+  "line": 278,
+  "source": "function isLeapYearIndex(year: number): boolean {\n  return year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0);\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "dayOfISOWeekYear",
+  "line": 260,
+  "source": "function dayOfISOWeekYear(\n  isoWeekYear: number,\n  week: number,\n  day: number,\n): Date {\n  const date = new Date(0);\n  date.setUTCFullYear(isoWeekYear, 0, 4);\n  const fourthOfJanuaryDay = date.getUTCDay() || 7;\n  const diff = (week - 1) * 7 + day + 1 - fourthOfJanuaryDay;\n  date.setUTCDate(date.getUTCDate() + diff);\n  return date;\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "parseTimezone",
+  "line": 243,
+  "source": "function parseTimezone(timezoneString: string): number {\n  if (timezoneString === \"Z\") return 0;\n\n  const captures = timezoneString.match(timezoneRegex);\n  if (!captures) return 0;\n\n  const sign = captures[1] === \"+\" ? -1 : 1;\n  const hours = parseInt(captures[2]);\n  const minutes = (captures[3] && parseInt(captures[3])) || 0;\n\n  if (!validateTimezone(hours, minutes)) {\n    return NaN;\n  }\n\n  return sign * (hours * millisecondsInHour + minutes * millisecondsInMinute);\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "parseTimeUnit",
+  "line": 239,
+  "source": "function parseTimeUnit(value: string): number {\n  return (value && parseFloat(value.replace(\",\", \".\"))) || 0;\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "parseTime",
+  "line": 222,
+  "source": "function parseTime(timeString: string): number {\n  const captures = timeString.match(timeRegex);\n  if (!captures) return NaN; // Invalid ISO-formatted time\n\n  const hours = parseTimeUnit(captures[1]);\n  const minutes = parseTimeUnit(captures[2]);\n  const seconds = parseTimeUnit(captures[3]);\n\n  if (!validateTime(hours, minutes, seconds)) {\n    return NaN;\n  }\n\n  return (\n    hours * millisecondsInHour + minutes * millisecondsInMinute + seconds * 1000\n  );\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "parseDateUnit",
+  "line": 218,
+  "source": "function parseDateUnit(value: string): number {\n  return value ? parseInt(value) : 1;\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "parseDate",
+  "line": 185,
+  "source": "function parseDate(dateString: string, year: number): Date {\n  // Invalid ISO-formatted year\n  if (year === null) return new Date(NaN);\n\n  const captures = dateString.match(dateRegex);\n  // Invalid ISO-formatted string\n  if (!captures) return new Date(NaN);\n\n  const isWeekDate = !!captures[4];\n  const dayOfYear = parseDateUnit(captures[1]);\n  const month = parseDateUnit(captures[2]) - 1;\n  const day = parseDateUnit(captures[3]);\n  const week = parseDateUnit(captures[4]);\n  const dayOfWeek = parseDateUnit(captures[5]) - 1;\n\n  if (isWeekDate) {\n    if (!validateWeekDate(year, week, dayOfWeek)) {\n      return new Date(NaN);\n    }\n    return dayOfISOWeekYear(year, week, dayOfWeek);\n  } else {\n    const date = new Date(0);\n    if (\n      !validateDate(year, month, day) ||\n      !validateDayOfYearDate(year, dayOfYear)\n    ) {\n      return new Date(NaN);\n    }\n    date.setUTCFullYear(year, month, Math.max(dayOfYear, day));\n    return date;\n  }\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "parseYear",
+  "line": 162,
+  "source": "function parseYear(dateString: string, additionalDigits: number): ParsedYear {\n  const regex = new RegExp(\n    \"^(?:(\\\\d{4}|[+-]\\\\d{\" +\n      (4 + additionalDigits) +\n      \"})|(\\\\d{2}|[+-]\\\\d{\" +\n      (2 + additionalDigits) +\n      \"})$)\",\n  );\n\n  const captures = dateString.match(regex);\n  // Invalid ISO-formatted year\n  if (!captures) return { year: NaN, restDateString: \"\" };\n\n  const year = captures[1] ? parseInt(captures[1]) : null;\n  const century = captures[2] ? parseInt(captures[2]) : null;\n\n  // either year or century is null, not both\n  return {\n    year: century === null ? (year as number) : century * 100,\n    restDateString: dateString.slice((captures[1] || captures[2]).length),\n  };\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "splitDateString",
+  "line": 124,
+  "source": "function splitDateString(dateString: string): DateString {\n  const dateStrings: DateString = {};\n  const array = dateString.split(patterns.dateTimeDelimiter);\n  let timeString;\n\n  // The regex match should only return at maximum two array elements.\n  // [date], [time], or [date, time].\n  if (array.length > 2) {\n    return dateStrings;\n  }\n\n  if (/:/.test(array[0])) {\n    timeString = array[0];\n  } else {\n    dateStrings.date = array[0];\n    timeString = array[1];\n    if (patterns.timeZoneDelimiter.test(dateStrings.date)) {\n      dateStrings.date = dateString.split(patterns.timeZoneDelimiter)[0];\n      timeString = dateString.substr(\n        dateStrings.date.length,\n        dateString.length,\n      );\n    }\n  }\n\n  if (timeString) {\n    const token = patterns.timezone.exec(timeString);\n    if (token) {\n      dateStrings.time = timeString.replace(token[1], \"\");\n      dateStrings.timezone = token[1];\n    } else {\n      dateStrings.time = timeString;\n    }\n  }\n\n  return dateStrings;\n}"
+ },
+ {
+  "path": "parseISO/index.ts",
+  "name": "parseISO",
+  "line": 52,
+  "source": "function parseISO<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(argument: string, options?: ParseISOOptions<ResultDate>): ResultDate {\n  const invalidDate = () => constructFrom(options?.in, NaN);\n\n  const additionalDigits = options?.additionalDigits ?? 2;\n  const dateStrings = splitDateString(argument);\n\n  let date;\n  if (dateStrings.date) {\n    const parseYearResult = parseYear(dateStrings.date, additionalDigits);\n    date = parseDate(parseYearResult.restDateString, parseYearResult.year);\n  }\n\n  if (!date || isNaN(+date)) return invalidDate();\n\n  const timestamp = +date;\n  let time = 0;\n  let offset;\n\n  if (dateStrings.time) {\n    time = parseTime(dateStrings.time);\n    if (isNaN(time)) return invalidDate();\n  }\n\n  if (dateStrings.timezone) {\n    offset = parseTimezone(dateStrings.timezone);\n    if (isNaN(offset)) return invalidDate();\n  } else {\n    const tmpDate = new Date(timestamp + time);\n    const result = toDate(0, options?.in);\n    result.setFullYear(\n      tmpDate.getUTCFullYear(),\n      tmpDate.getUTCMonth(),\n      tmpDate.getUTCDate(),\n    );\n    result.setHours(\n      tmpDate.getUTCHours(),\n      tmpDate.getUTCMinutes(),\n      tmpDate.getUTCSeconds(),\n      tmpDate.getUTCMilliseconds(),\n    );\n    return result;\n  }\n\n  return toDate(timestamp + time + offset, options?.in);\n}"
+ },
+ {
+  "path": "parseJSON/index.ts",
+  "name": "parseJSON",
+  "line": 43,
+  "source": "function parseJSON<ResultDate extends Date = Date>(\n  dateStr: string,\n  options?: ParseJSONOptions<ResultDate> | undefined,\n): ResultDate {\n  const parts = dateStr.match(\n    /(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2}):(\\d{2})(?:\\.(\\d{0,7}))?(?:Z|(.)(\\d{2}):?(\\d{2})?)?/,\n  );\n\n  if (!parts) return toDate(NaN, options?.in);\n\n  return toDate(\n    Date.UTC(\n      +parts[1],\n      +parts[2] - 1,\n      +parts[3],\n      +parts[4] - (+parts[9] || 0) * (parts[8] == \"-\" ? -1 : 1),\n      +parts[5] - (+parts[10] || 0) * (parts[8] == \"-\" ? -1 : 1),\n      +parts[6],\n      +((parts[7] || \"0\") + \"00\").substring(0, 3),\n    ),\n    options?.in,\n  );\n}"
+ },
+ {
+  "path": "previousDay/index.ts",
+  "name": "previousDay",
+  "line": 39,
+  "source": "function previousDay<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  day: Day,\n  options?: PreviousDayOptions<ResultDate> | undefined,\n): ResultDate {\n  let delta = getDay(date, options) - day;\n  if (delta <= 0) delta += 7;\n\n  return subDays(date, delta, options);\n}"
+ },
+ {
+  "path": "previousFriday/index.ts",
+  "name": "previousFriday",
+  "line": 32,
+  "source": "function previousFriday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: PreviousFridayOptions<ResultDate> | undefined,\n): ResultDate {\n  return previousDay(date, 5, options);\n}"
+ },
+ {
+  "path": "previousMonday/index.ts",
+  "name": "previousMonday",
+  "line": 32,
+  "source": "function previousMonday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: PreviousMondayOptions<ResultDate> | undefined,\n): ResultDate {\n  return previousDay(date, 1, options);\n}"
+ },
+ {
+  "path": "previousSaturday/index.ts",
+  "name": "previousSaturday",
+  "line": 32,
+  "source": "function previousSaturday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: PreviousSaturdayOptions<ResultDate> | undefined,\n): ResultDate {\n  return previousDay(date, 6, options);\n}"
+ },
+ {
+  "path": "previousSunday/index.ts",
+  "name": "previousSunday",
+  "line": 32,
+  "source": "function previousSunday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: PreviousSundayOptions<ResultDate> | undefined,\n): ResultDate {\n  return previousDay(date, 0, options);\n}"
+ },
+ {
+  "path": "previousThursday/index.ts",
+  "name": "previousThursday",
+  "line": 32,
+  "source": "function previousThursday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: PreviousThursdayOptions<ResultDate> | undefined,\n): ResultDate {\n  return previousDay(date, 4, options);\n}"
+ },
+ {
+  "path": "previousTuesday/index.ts",
+  "name": "previousTuesday",
+  "line": 32,
+  "source": "function previousTuesday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: PreviousTuesdayOptions<ResultDate> | undefined,\n): ResultDate {\n  return previousDay(date, 2, options);\n}"
+ },
+ {
+  "path": "previousWednesday/index.ts",
+  "name": "previousWednesday",
+  "line": 32,
+  "source": "function previousWednesday<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: PreviousWednesdayOptions<ResultDate> | undefined,\n): ResultDate {\n  return previousDay(date, 3, options);\n}"
+ },
+ {
+  "path": "quartersToMonths/index.ts",
+  "name": "quartersToMonths",
+  "line": 20,
+  "source": "function quartersToMonths(quarters: number): number {\n  return Math.trunc(quarters * monthsInQuarter);\n}"
+ },
+ {
+  "path": "quartersToYears/index.ts",
+  "name": "quartersToYears",
+  "line": 25,
+  "source": "function quartersToYears(quarters: number): number {\n  const years = quarters / quartersInYear;\n  return Math.trunc(years);\n}"
+ },
+ {
+  "path": "roundToNearestHours/index.ts",
+  "name": "roundToNearestHours",
+  "line": 63,
+  "source": "function roundToNearestHours<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: RoundToNearestHoursOptions<ResultDate>,\n): ResultDate {\n  const nearestTo = options?.nearestTo ?? 1;\n\n  if (nearestTo < 1 || nearestTo > 12)\n    return constructFrom(options?.in || date, NaN);\n\n  const date_ = toDate(date, options?.in);\n  const fractionalMinutes = date_.getMinutes() / 60;\n  const fractionalSeconds = date_.getSeconds() / 60 / 60;\n  const fractionalMilliseconds = date_.getMilliseconds() / 1000 / 60 / 60;\n  const hours =\n    date_.getHours() +\n    fractionalMinutes +\n    fractionalSeconds +\n    fractionalMilliseconds;\n\n  const method = options?.roundingMethod ?? \"round\";\n  const roundingMethod = getRoundingMethod(method);\n\n  const roundedHours = roundingMethod(hours / nearestTo) * nearestTo;\n\n  date_.setHours(roundedHours, 0, 0, 0);\n  return date_;\n}"
+ },
+ {
+  "path": "roundToNearestMinutes/index.ts",
+  "name": "roundToNearestMinutes",
+  "line": 58,
+  "source": "function roundToNearestMinutes<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: RoundToNearestMinutesOptions<ResultDate>,\n): ResultDate {\n  const nearestTo = options?.nearestTo ?? 1;\n\n  if (nearestTo < 1 || nearestTo > 30) return constructFrom(date, NaN);\n\n  const date_ = toDate(date, options?.in);\n  const fractionalSeconds = date_.getSeconds() / 60;\n  const fractionalMilliseconds = date_.getMilliseconds() / 1000 / 60;\n  const minutes =\n    date_.getMinutes() + fractionalSeconds + fractionalMilliseconds;\n\n  const method = options?.roundingMethod ?? \"round\";\n  const roundingMethod = getRoundingMethod(method);\n\n  const roundedMinutes = roundingMethod(minutes / nearestTo) * nearestTo;\n\n  date_.setMinutes(roundedMinutes, 0, 0);\n  return date_;\n}"
+ },
+ {
+  "path": "secondsToHours/index.ts",
+  "name": "secondsToHours",
+  "line": 25,
+  "source": "function secondsToHours(seconds: number): number {\n  const hours = seconds / secondsInHour;\n  return Math.trunc(hours);\n}"
+ },
+ {
+  "path": "secondsToMilliseconds/index.ts",
+  "name": "secondsToMilliseconds",
+  "line": 20,
+  "source": "function secondsToMilliseconds(seconds: number): number {\n  return seconds * millisecondsInSecond;\n}"
+ },
+ {
+  "path": "secondsToMinutes/index.ts",
+  "name": "secondsToMinutes",
+  "line": 25,
+  "source": "function secondsToMinutes(seconds: number): number {\n  const minutes = seconds / secondsInMinute;\n  return Math.trunc(minutes);\n}"
+ },
+ {
+  "path": "set/index.ts",
+  "name": "set",
+  "line": 47,
+  "source": "function set<DateType extends Date, ResultDate extends Date = DateType>(\n  date: DateArg<DateType>,\n  values: DateValues,\n  options?: SetOptions<ResultDate>,\n): ResultDate {\n  let _date = toDate(date, options?.in);\n\n  // Check if date is Invalid Date because Date.prototype.setFullYear ignores the value of Invalid Date\n  if (isNaN(+_date)) return constructFrom(options?.in || date, NaN);\n\n  if (values.year != null) _date.setFullYear(values.year);\n  if (values.month != null) _date = setMonth(_date, values.month);\n  if (values.date != null) _date.setDate(values.date);\n  if (values.hours != null) _date.setHours(values.hours);\n  if (values.minutes != null) _date.setMinutes(values.minutes);\n  if (values.seconds != null) _date.setSeconds(values.seconds);\n  if (values.milliseconds != null) _date.setMilliseconds(values.milliseconds);\n\n  return _date;\n}"
+ },
+ {
+  "path": "setDate/index.ts",
+  "name": "setDate",
+  "line": 33,
+  "source": "function setDate<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  dayOfMonth: number,\n  options?: SetDateOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setDate(dayOfMonth);\n  return _date;\n}"
+ },
+ {
+  "path": "setDay/index.ts",
+  "name": "setDay",
+  "line": 44,
+  "source": "function setDay<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  day: number,\n  options?: SetDayOptions<ResultDate>,\n): ResultDate {\n  const defaultOptions = getDefaultOptions();\n  const weekStartsOn =\n    options?.weekStartsOn ??\n    options?.locale?.options?.weekStartsOn ??\n    defaultOptions.weekStartsOn ??\n    defaultOptions.locale?.options?.weekStartsOn ??\n    0;\n\n  const date_ = toDate(date, options?.in);\n  const currentDay = date_.getDay();\n\n  const remainder = day % 7;\n  const dayIndex = (remainder + 7) % 7;\n\n  const delta = 7 - weekStartsOn;\n  const diff =\n    day < 0 || day > 6\n      ? day - ((currentDay + delta) % 7)\n      : ((dayIndex + delta) % 7) - ((currentDay + delta) % 7);\n  return addDays(date_, diff, options);\n}"
+ },
+ {
+  "path": "setDayOfYear/index.ts",
+  "name": "setDayOfYear",
+  "line": 33,
+  "source": "function setDayOfYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  dayOfYear: number,\n  options?: SetDayOfYearOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  date_.setMonth(0);\n  date_.setDate(dayOfYear);\n  return date_;\n}"
+ },
+ {
+  "path": "setDefaultOptions/index.ts",
+  "name": "setDefaultOptions",
+  "line": 52,
+  "source": "function setDefaultOptions(options: DefaultOptions): void {\n  const result: DefaultOptions = {};\n  const defaultOptions = getDefaultOptions();\n\n  for (const property in defaultOptions) {\n    if (Object.prototype.hasOwnProperty.call(defaultOptions, property)) {\n      // [TODO] I challenge you to fix the type\n      (result as any)[property] =\n        defaultOptions[property as keyof DefaultOptions];\n    }\n  }\n\n  for (const property in options) {\n    if (Object.prototype.hasOwnProperty.call(options, property)) {\n      if (options[property as keyof DefaultOptions] === undefined) {\n        // [TODO] I challenge you to fix the type\n        delete (result as any)[property];\n      } else {\n        // [TODO] I challenge you to fix the type\n        (result as any)[property] = options[property as keyof DefaultOptions];\n      }\n    }\n  }\n\n  setInternalDefaultOptions(result);\n}"
+ },
+ {
+  "path": "setHours/index.ts",
+  "name": "setHours",
+  "line": 33,
+  "source": "function setHours<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  hours: number,\n  options?: SetHoursOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setHours(hours);\n  return _date;\n}"
+ },
+ {
+  "path": "setISODay/index.ts",
+  "name": "setISODay",
+  "line": 37,
+  "source": "function setISODay<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  day: number,\n  options?: SetISODayOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  const currentDay = getISODay(date_, options);\n  const diff = day - currentDay;\n  return addDays(date_, diff, options);\n}"
+ },
+ {
+  "path": "setISOWeek/index.ts",
+  "name": "setISOWeek",
+  "line": 36,
+  "source": "function setISOWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  week: number,\n  options?: SetISOWeekOptions<ResultDate>,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const diff = getISOWeek(_date, options) - week;\n  _date.setDate(_date.getDate() - diff * 7);\n  return _date;\n}"
+ },
+ {
+  "path": "setISOWeekYear/index.ts",
+  "name": "setISOWeekYear",
+  "line": 39,
+  "source": "function setISOWeekYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  weekYear: number,\n  options?: SetISOWeekYearOptions<ResultDate> | undefined,\n): ResultDate {\n  let _date = toDate(date, options?.in);\n  const diff = differenceInCalendarDays(\n    _date,\n    startOfISOWeekYear(_date, options),\n  );\n  const fourthOfJanuary = constructFrom(options?.in || date, 0);\n  fourthOfJanuary.setFullYear(weekYear, 0, 4);\n  fourthOfJanuary.setHours(0, 0, 0, 0);\n  _date = startOfISOWeekYear(fourthOfJanuary);\n  _date.setDate(_date.getDate() + diff);\n  return _date;\n}"
+ },
+ {
+  "path": "setMilliseconds/index.ts",
+  "name": "setMilliseconds",
+  "line": 33,
+  "source": "function setMilliseconds<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  milliseconds: number,\n  options?: SetMillisecondsOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setMilliseconds(milliseconds);\n  return _date;\n}"
+ },
+ {
+  "path": "setMinutes/index.ts",
+  "name": "setMinutes",
+  "line": 33,
+  "source": "function setMinutes<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  minutes: number,\n  options?: SetMinutesOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  date_.setMinutes(minutes);\n  return date_;\n}"
+ },
+ {
+  "path": "setMonth/index.ts",
+  "name": "setMonth",
+  "line": 35,
+  "source": "function setMonth<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  month: number,\n  options?: SetMonthOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  const day = _date.getDate();\n\n  const midMonth = constructFrom(options?.in || date, 0);\n  midMonth.setFullYear(year, month, 15);\n  midMonth.setHours(0, 0, 0, 0);\n  const daysInMonth = getDaysInMonth(midMonth);\n\n  // Set the earlier date, allows to wrap Jan 31 to Feb 28\n  _date.setMonth(month, Math.min(day, daysInMonth));\n  return _date;\n}"
+ },
+ {
+  "path": "setQuarter/index.ts",
+  "name": "setQuarter",
+  "line": 34,
+  "source": "function setQuarter<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  quarter: number,\n  options?: SetQuarterOptions<ResultDate>,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  const oldQuarter = Math.trunc(date_.getMonth() / 3) + 1;\n  const diff = quarter - oldQuarter;\n  return setMonth(date_, date_.getMonth() + diff * 3);\n}"
+ },
+ {
+  "path": "setSeconds/index.ts",
+  "name": "setSeconds",
+  "line": 33,
+  "source": "function setSeconds<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  seconds: number,\n  options?: SetSecondsOptions<ResultDate>,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setSeconds(seconds);\n  return _date;\n}"
+ },
+ {
+  "path": "setWeek/index.ts",
+  "name": "setWeek",
+  "line": 59,
+  "source": "function setWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  week: number,\n  options?: SetWeekOptions<ResultDate>,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  const diff = getWeek(date_, options) - week;\n  date_.setDate(date_.getDate() - diff * 7);\n  return toDate(date_, options?.in);\n}"
+ },
+ {
+  "path": "setWeekYear/index.ts",
+  "name": "setWeekYear",
+  "line": 63,
+  "source": "function setWeekYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  weekYear: number,\n  options?: SetWeekYearOptions<ResultDate>,\n): ResultDate {\n  const defaultOptions = getDefaultOptions();\n  const firstWeekContainsDate =\n    options?.firstWeekContainsDate ??\n    options?.locale?.options?.firstWeekContainsDate ??\n    defaultOptions.firstWeekContainsDate ??\n    defaultOptions.locale?.options?.firstWeekContainsDate ??\n    1;\n\n  const diff = differenceInCalendarDays(\n    toDate(date, options?.in),\n    startOfWeekYear(date, options),\n    options,\n  );\n\n  const firstWeek = constructFrom(options?.in || date, 0);\n  firstWeek.setFullYear(weekYear, 0, firstWeekContainsDate);\n  firstWeek.setHours(0, 0, 0, 0);\n\n  const date_ = startOfWeekYear(firstWeek, options);\n  date_.setDate(date_.getDate() + diff);\n  return date_;\n}"
+ },
+ {
+  "path": "setYear/index.ts",
+  "name": "setYear",
+  "line": 34,
+  "source": "function setYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  year: number,\n  options?: SetYearOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n\n  // Check if date is Invalid Date because Date.prototype.setFullYear ignores the value of Invalid Date\n  if (isNaN(+date_)) return constructFrom(options?.in || date, NaN);\n\n  date_.setFullYear(year);\n  return date_;\n}"
+ },
+ {
+  "path": "startOfDay/index.ts",
+  "name": "startOfDay",
+  "line": 33,
+  "source": "function startOfDay<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfDayOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setHours(0, 0, 0, 0);\n  return _date;\n}"
+ },
+ {
+  "path": "startOfDecade/index.ts",
+  "name": "startOfDecade",
+  "line": 32,
+  "source": "function startOfDecade<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfDecadeOptions<ResultDate> | undefined,\n): ResultDate {\n  // TODO: Switch to more technical definition in of decades that start with 1\n  // end with 0. I.e. 2001-2010 instead of current 2000-2009. It's a breaking\n  // change, so it can only be done in 4.0.\n  const _date = toDate(date, options?.in);\n  const year = _date.getFullYear();\n  const decade = Math.floor(year / 10) * 10;\n  _date.setFullYear(decade, 0, 1);\n  _date.setHours(0, 0, 0, 0);\n  return _date;\n}"
+ },
+ {
+  "path": "startOfHour/index.ts",
+  "name": "startOfHour",
+  "line": 33,
+  "source": "function startOfHour<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfHourOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setMinutes(0, 0, 0);\n  return _date;\n}"
+ },
+ {
+  "path": "startOfISOWeek/index.ts",
+  "name": "startOfISOWeek",
+  "line": 35,
+  "source": "function startOfISOWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfISOWeekOptions<ResultDate> | undefined,\n): ResultDate {\n  return startOfWeek(date, { ...options, weekStartsOn: 1 });\n}"
+ },
+ {
+  "path": "startOfISOWeekYear/index.ts",
+  "name": "startOfISOWeekYear",
+  "line": 38,
+  "source": "function startOfISOWeekYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfISOWeekYearOptions<ResultDate> | undefined,\n): ResultDate {\n  const year = getISOWeekYear(date, options);\n  const fourthOfJanuary = constructFrom(options?.in || date, 0);\n  fourthOfJanuary.setFullYear(year, 0, 4);\n  fourthOfJanuary.setHours(0, 0, 0, 0);\n  return startOfISOWeek(fourthOfJanuary);\n}"
+ },
+ {
+  "path": "startOfMinute/index.ts",
+  "name": "startOfMinute",
+  "line": 33,
+  "source": "function startOfMinute<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfMinuteOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  date_.setSeconds(0, 0);\n  return date_;\n}"
+ },
+ {
+  "path": "startOfMonth/index.ts",
+  "name": "startOfMonth",
+  "line": 34,
+  "source": "function startOfMonth<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfMonthOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  _date.setDate(1);\n  _date.setHours(0, 0, 0, 0);\n  return _date;\n}"
+ },
+ {
+  "path": "startOfQuarter/index.ts",
+  "name": "startOfQuarter",
+  "line": 33,
+  "source": "function startOfQuarter<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfQuarterOptions<ResultDate> | undefined,\n): ResultDate {\n  const _date = toDate(date, options?.in);\n  const currentMonth = _date.getMonth();\n  const month = currentMonth - (currentMonth % 3);\n  _date.setMonth(month, 1);\n  _date.setHours(0, 0, 0, 0);\n  return _date;\n}"
+ },
+ {
+  "path": "startOfSecond/index.ts",
+  "name": "startOfSecond",
+  "line": 33,
+  "source": "function startOfSecond<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfSecondOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  date_.setMilliseconds(0);\n  return date_;\n}"
+ },
+ {
+  "path": "startOfToday/index.ts",
+  "name": "startOfToday",
+  "line": 31,
+  "source": "function startOfToday<ContextDate extends Date>(\n  options?: StartOfTodayOptions<ContextDate> | undefined,\n): ContextDate {\n  return startOfDay(Date.now(), options);\n}"
+ },
+ {
+  "path": "startOfTomorrow/index.ts",
+  "name": "startOfTomorrow",
+  "line": 32,
+  "source": "function startOfTomorrow<ContextDate extends Date>(\n  options?: StartOfTomorrowOptions<ContextDate> | undefined,\n): ContextDate {\n  const now = constructNow(options?.in);\n  const year = now.getFullYear();\n  const month = now.getMonth();\n  const day = now.getDate();\n\n  const date = constructFrom(options?.in, 0);\n  date.setFullYear(year, month, day + 1);\n  date.setHours(0, 0, 0, 0);\n  return date;\n}"
+ },
+ {
+  "path": "startOfWeek/index.ts",
+  "name": "startOfWeek",
+  "line": 43,
+  "source": "function startOfWeek<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfWeekOptions<ResultDate>,\n): ResultDate {\n  const defaultOptions = getDefaultOptions();\n  const weekStartsOn =\n    options?.weekStartsOn ??\n    options?.locale?.options?.weekStartsOn ??\n    defaultOptions.weekStartsOn ??\n    defaultOptions.locale?.options?.weekStartsOn ??\n    0;\n\n  const _date = toDate(date, options?.in);\n  const day = _date.getDay();\n  const diff = (day < weekStartsOn ? 7 : 0) + day - weekStartsOn;\n\n  _date.setDate(_date.getDate() - diff);\n  _date.setHours(0, 0, 0, 0);\n  return _date;\n}"
+ },
+ {
+  "path": "startOfWeekYear/index.ts",
+  "name": "startOfWeekYear",
+  "line": 60,
+  "source": "function startOfWeekYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfWeekYearOptions<ResultDate>,\n): ResultDate {\n  const defaultOptions = getDefaultOptions();\n  const firstWeekContainsDate =\n    options?.firstWeekContainsDate ??\n    options?.locale?.options?.firstWeekContainsDate ??\n    defaultOptions.firstWeekContainsDate ??\n    defaultOptions.locale?.options?.firstWeekContainsDate ??\n    1;\n\n  const year = getWeekYear(date, options);\n  const firstWeek = constructFrom(options?.in || date, 0);\n  firstWeek.setFullYear(year, 0, firstWeekContainsDate);\n  firstWeek.setHours(0, 0, 0, 0);\n  const _date = startOfWeek(firstWeek, options);\n  return _date;\n}"
+ },
+ {
+  "path": "startOfYear/index.ts",
+  "name": "startOfYear",
+  "line": 33,
+  "source": "function startOfYear<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  options?: StartOfYearOptions<ResultDate> | undefined,\n): ResultDate {\n  const date_ = toDate(date, options?.in);\n  date_.setFullYear(date_.getFullYear(), 0, 1);\n  date_.setHours(0, 0, 0, 0);\n  return date_;\n}"
+ },
+ {
+  "path": "startOfYesterday/index.ts",
+  "name": "startOfYesterday",
+  "line": 31,
+  "source": "function startOfYesterday<ContextDate extends Date>(\n  options?: StartOfYesterdayOptions<ContextDate> | undefined,\n): ContextDate {\n  const now = constructNow(options?.in);\n  const year = now.getFullYear();\n  const month = now.getMonth();\n  const day = now.getDate();\n\n  const date = constructNow(options?.in);\n  date.setFullYear(year, month, day - 1);\n  date.setHours(0, 0, 0, 0);\n  return date;\n}"
+ },
+ {
+  "path": "sub/index.ts",
+  "name": "sub",
+  "line": 55,
+  "source": "function sub<DateType extends Date, ResultDate extends Date = DateType>(\n  date: DateArg<DateType>,\n  duration: Duration,\n  options?: SubOptions<ResultDate>,\n): ResultDate {\n  const {\n    years = 0,\n    months = 0,\n    weeks = 0,\n    days = 0,\n    hours = 0,\n    minutes = 0,\n    seconds = 0,\n  } = duration;\n\n  const withoutMonths = subMonths(date, months + years * 12, options);\n  const withoutDays = subDays(withoutMonths, days + weeks * 7, options);\n\n  const minutesToSub = minutes + hours * 60;\n  const secondsToSub = seconds + minutesToSub * 60;\n  const msToSub = secondsToSub * 1000;\n\n  return constructFrom(options?.in || date, +withoutDays - msToSub);\n}"
+ },
+ {
+  "path": "subBusinessDays/index.ts",
+  "name": "subBusinessDays",
+  "line": 33,
+  "source": "function subBusinessDays<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubBusinessDaysOptions<ResultDate> | undefined,\n): ResultDate {\n  return addBusinessDays(date, -amount, options);\n}"
+ },
+ {
+  "path": "subDays/index.ts",
+  "name": "subDays",
+  "line": 30,
+  "source": "function subDays<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubDaysOptions<ResultDate> | undefined,\n): ResultDate {\n  return addDays(date, -amount, options);\n}"
+ },
+ {
+  "path": "subHours/index.ts",
+  "name": "subHours",
+  "line": 33,
+  "source": "function subHours<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubHoursOptions<ResultDate> | undefined,\n): ResultDate {\n  return addHours(date, -amount, options);\n}"
+ },
+ {
+  "path": "subISOWeekYears/index.ts",
+  "name": "subISOWeekYears",
+  "line": 35,
+  "source": "function subISOWeekYears<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubISOWeekYearsOptions<ResultDate> | undefined,\n): ResultDate {\n  return addISOWeekYears(date, -amount, options);\n}"
+ },
+ {
+  "path": "subMilliseconds/index.ts",
+  "name": "subMilliseconds",
+  "line": 23,
+  "source": "function subMilliseconds<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubMillisecondsOptions<ResultDate> | undefined,\n): ResultDate {\n  return addMilliseconds(date, -amount, options);\n}"
+ },
+ {
+  "path": "subMinutes/index.ts",
+  "name": "subMinutes",
+  "line": 33,
+  "source": "function subMinutes<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubMinutesOptions<ResultDate> | undefined,\n): ResultDate {\n  return addMinutes(date, -amount, options);\n}"
+ },
+ {
+  "path": "subMonths/index.ts",
+  "name": "subMonths",
+  "line": 33,
+  "source": "function subMonths<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubMonthsOptions<ResultDate> | undefined,\n): ResultDate {\n  return addMonths(date, -amount, options);\n}"
+ },
+ {
+  "path": "subQuarters/index.ts",
+  "name": "subQuarters",
+  "line": 33,
+  "source": "function subQuarters<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubQuartersOptions<ResultDate>,\n): ResultDate {\n  return addQuarters(date, -amount, options);\n}"
+ },
+ {
+  "path": "subSeconds/index.ts",
+  "name": "subSeconds",
+  "line": 28,
+  "source": "function subSeconds<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubSecondsOptions<ResultDate> | undefined,\n): ResultDate {\n  return addSeconds(date, -amount, options);\n}"
+ },
+ {
+  "path": "subWeeks/index.ts",
+  "name": "subWeeks",
+  "line": 33,
+  "source": "function subWeeks<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubWeeksOptions<ResultDate> | undefined,\n): ResultDate {\n  return addWeeks(date, -amount, options);\n}"
+ },
+ {
+  "path": "subYears/index.ts",
+  "name": "subYears",
+  "line": 33,
+  "source": "function subYears<\n  DateType extends Date,\n  ResultDate extends Date = DateType,\n>(\n  date: DateArg<DateType>,\n  amount: number,\n  options?: SubYearsOptions<ResultDate>,\n): ResultDate {\n  return addYears(date, -amount, options);\n}"
+ },
+ {
+  "path": "toDate/index.ts",
+  "name": "toDate",
+  "line": 42,
+  "source": "function toDate<\n  DateType extends Date | ConstructableDate,\n  ResultDate extends Date = DateType,\n>(\n  argument: DateArg<DateType>,\n  context?: ContextFn<ResultDate> | undefined,\n): ResultDate {\n  // [TODO] Get rid of `toDate` or `constructFrom`?\n  return constructFrom(context || argument, argument);\n}"
+ },
+ {
+  "path": "tp/isSaturday/index.ts",
+  "name": "tpIsSaturday",
+  "line": 1,
+  "source": "function tpIsSaturday(date: Temporal.ZonedDateTime): boolean {\n  return date.dayOfWeek === 6;\n}"
+ },
+ {
+  "path": "tp/isSunday/index.ts",
+  "name": "tpIsSunday",
+  "line": 1,
+  "source": "function tpIsSunday(date: Temporal.ZonedDateTime): boolean {\n  return date.dayOfWeek === 7;\n}"
+ },
+ {
+  "path": "tp/isWeekend/index.ts",
+  "name": "tpIsWeekend",
+  "line": 4,
+  "source": "function tpIsWeekend(date: Temporal.ZonedDateTime): boolean {\n  return tpIsSaturday(date) || tpIsSunday(date);\n}"
+ },
+ {
+  "path": "transpose/index.ts",
+  "name": "isConstructor",
+  "line": 52,
+  "source": "function isConstructor(\n  constructor: unknown,\n): constructor is GenericDateConstructor {\n  return (\n    typeof constructor === \"function\" &&\n    constructor.prototype?.constructor === constructor\n  );\n}"
+ },
+ {
+  "path": "transpose/index.ts",
+  "name": "transpose",
+  "line": 32,
+  "source": "function transpose<InputDate extends Date, ResultDate extends Date>(\n  date: InputDate,\n  constructor:\n    | ResultDate\n    | GenericDateConstructor<ResultDate>\n    | ContextFn<ResultDate>,\n): ResultDate {\n  const date_ = isConstructor(constructor)\n    ? new constructor(0)\n    : constructFrom(constructor, 0);\n  date_.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());\n  date_.setHours(\n    date.getHours(),\n    date.getMinutes(),\n    date.getSeconds(),\n    date.getMilliseconds(),\n  );\n  return date_;\n}"
+ },
+ {
+  "path": "weeksToDays/index.ts",
+  "name": "weeksToDays",
+  "line": 20,
+  "source": "function weeksToDays(weeks: number): number {\n  return Math.trunc(weeks * daysInWeek);\n}"
+ },
+ {
+  "path": "yearsToDays/index.ts",
+  "name": "yearsToDays",
+  "line": 20,
+  "source": "function yearsToDays(years: number): number {\n  return Math.trunc(years * daysInYear);\n}"
+ },
+ {
+  "path": "yearsToMonths/index.ts",
+  "name": "yearsToMonths",
+  "line": 20,
+  "source": "function yearsToMonths(years: number): number {\n  return Math.trunc(years * monthsInYear);\n}"
+ },
+ {
+  "path": "yearsToQuarters/index.ts",
+  "name": "yearsToQuarters",
+  "line": 20,
+  "source": "function yearsToQuarters(years: number): number {\n  return Math.trunc(years * quartersInYear);\n}"
+ }
+]

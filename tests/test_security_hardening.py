@@ -79,7 +79,7 @@ def test_mcp_gate_allows_default_loopback(monkeypatch, tmp_path):
 
     captured = _install_httpx_stub(monkeypatch, mcp_gate)
     out = mcp_gate.gate_edit("/x.py", "before", "after")
-    assert out["decision"] == "allow"
+    assert out["decision"] == "allowed"
     assert captured and captured[0]["url"] == "http://127.0.0.1:8765/score"
 
 
@@ -92,7 +92,7 @@ def test_mcp_gate_allows_alternate_loopback_port(monkeypatch, tmp_path):
 
     captured = _install_httpx_stub(monkeypatch, mcp_gate)
     out = mcp_gate.gate_edit("/x.py", "before", "after")
-    assert out["decision"] == "allow"
+    assert out["decision"] == "allowed"
     assert captured[0]["url"] == "http://127.0.0.1:9999/score"
 
 
@@ -105,7 +105,7 @@ def test_mcp_gate_allows_localhost_hostname(monkeypatch, tmp_path):
 
     captured = _install_httpx_stub(monkeypatch, mcp_gate)
     out = mcp_gate.gate_edit("/x.py", "before", "after")
-    assert out["decision"] == "allow"
+    assert out["decision"] == "allowed"
     assert captured[0]["url"].startswith("http://localhost:")
 
 
@@ -147,7 +147,7 @@ def test_mcp_gate_remote_allowed_with_explicit_opt_in(monkeypatch, tmp_path):
 
     captured = _install_httpx_stub(monkeypatch, mcp_gate)
     out = mcp_gate.gate_edit("/x.py", "b", "a")
-    assert out["decision"] == "allow"
+    assert out["decision"] == "allowed"
     assert captured and "sidecar.internal.example.com" in captured[0]["url"]
 
 
