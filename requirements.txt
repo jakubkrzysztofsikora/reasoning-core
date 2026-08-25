@@ -20,7 +20,7 @@ tree-sitter-javascript>=0.23
 tree-sitter-typescript>=0.23
 tree-sitter-c-sharp>=0.23
 tree-sitter-sql>=0.3
-tree-sitter-markdown>=0.3
+tree-sitter-markdown>=0.5.1
 tree-sitter-json>=0.23
 tree-sitter-yaml>=0.7
 # Data / markup grammars — embedding-only scoring, no call graph.
