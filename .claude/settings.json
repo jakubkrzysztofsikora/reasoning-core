@@ -105,13 +105,7 @@
     ],
     "Stop": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/jakubsikora/.claude/hooks/stop-context-guard.py",
-            "timeout": 5000
-          }
-        ]
+        "hooks": []
       }
     ]
   },
