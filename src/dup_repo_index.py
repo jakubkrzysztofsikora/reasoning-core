@@ -335,6 +335,9 @@ def _save_cache(
             try:
                 os.unlink(tmp)  # don't leave a half-written temp behind
             except OSError:
+                # silent-ok: best-effort cleanup of the temp file. The real
+                # failure is the write below, which we re-raise; losing a stray
+                # .npz.tmp must not mask it.
                 pass
             raise
     except OSError as exc:
