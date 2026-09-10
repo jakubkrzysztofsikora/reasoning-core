@@ -12,6 +12,7 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | Command | Purpose |
 |---|---|
 | `rc status` | Sidecar health + threshold posture (shadow mode? fail-closed? per-kind ceilings? active embedder backend? RC_MODE?) |
+| `rc doctor [--project-dir PATH] [--json]` | Verify agent-hook wiring and evidence-store prerequisites |
 | `rc explain <decision-id>` | Full audit row for a single decision |
 | `rc bypass-next` | Arm a single-shot bypass for the next Edit/Write — consumed on first guard fire |
 | `rc confirm-next` | Record operator agreement with the next block — emits `operator_confirmed` |

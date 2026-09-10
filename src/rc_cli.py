@@ -371,6 +371,64 @@ def cmd_status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Check agent-hook installation and evidence-pipeline prerequisites."""
+    project = Path(args.project_dir or _project_dir()).expanduser().resolve()
+    checks: list[dict[str, object]] = []
+
+    def check(name: str, ok: bool, detail: str) -> None:
+        checks.append({"name": name, "ok": ok, "detail": detail})
+
+    check("project_directory", project.is_dir(), str(project))
+    check("git_repository", (project / ".git").exists(), "git metadata present")
+    verification_hook = _HOOKS_DIR / "post_bash_verification.py"
+    check("verification_hook", verification_hook.is_file(), str(verification_hook))
+    check("rc_cli", Path(__file__).is_file(), str(Path(__file__)))
+
+    config_candidates = (
+        project / ".claude" / "settings.local.json",
+        project / ".claude" / "settings.json",
+    )
+    configured = False
+    config_detail = "no Claude settings found"
+    for config in config_candidates:
+        if not config.is_file():
+            continue
+        try:
+            data = json.loads(config.read_text(encoding="utf-8"))
+            hooks = data.get("hooks", {}).get("PostToolUse", [])
+            configured = any(
+                "post_bash_verification.py" in json.dumps(item)
+                for item in hooks
+            )
+            config_detail = f"{config}: {'configured' if configured else 'missing hook'}"
+            if configured:
+                break
+        except (OSError, ValueError) as exc:
+            config_detail = f"{config}: invalid ({exc})"
+    check("post_tooluse_wiring", configured, config_detail)
+
+    audit_root = _audit_root()
+    try:
+        audit_root.mkdir(parents=True, exist_ok=True)
+        writable = os.access(audit_root, os.W_OK)
+    except OSError:
+        writable = False
+    check("audit_store_writable", writable, str(audit_root))
+
+    passed = sum(1 for item in checks if item["ok"])
+    result = {"project_dir": str(project), "passed": passed, "total": len(checks), "checks": checks}
+    if getattr(args, "json", False):
+        sys.stdout.write(json.dumps(result, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write("== reasoning-core doctor ==\n")
+        for item in checks:
+            marker = "PASS" if item["ok"] else "FAIL"
+            sys.stdout.write(f"{marker:<4} {item['name']}: {item['detail']}\n")
+        sys.stdout.write(f"{passed}/{len(checks)} checks passed\n")
+    return 0 if passed == len(checks) else 1
+
+
 def _open_log(path: Path):
     """Open .jsonl or .jsonl.gz transparently. Returns text-mode handle."""
     import gzip
@@ -1732,6 +1790,13 @@ def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    doctor = sub.add_parser(
+        "doctor",
+        help="verify agent-hook wiring and evidence-pipeline prerequisites",
+    )
+    doctor.add_argument("--project-dir", default=None)
+    doctor.add_argument("--json", action="store_true")
+    doctor.set_defaults(func=cmd_doctor)
     baseline = sub.add_parser("baseline", help="capture and inspect immutable evaluation baselines")
     baseline_sub = baseline.add_subparsers(dest="baseline_cmd", required=True)
     baseline_capture = baseline_sub.add_parser("capture", help="capture a new immutable baseline manifest")

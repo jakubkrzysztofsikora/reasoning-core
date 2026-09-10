@@ -165,6 +165,7 @@ after ~48 h of shadow review and manually authoring a `PLAN.md` to promote to
 
 ```bash
 rc status                   # sidecar health + threshold posture
+rc doctor                   # verify agent-hook wiring and evidence capture
 rc explain <decision-id>    # why the last edit was blocked
 rc bypass-next              # arm one bypass for the next Edit/Write
 rc confirm-next             # audit ground-truth (operator_confirmed event)
