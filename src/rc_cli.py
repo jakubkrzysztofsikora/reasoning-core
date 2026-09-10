@@ -1224,6 +1224,9 @@ def cmd_record_verification(args: argparse.Namespace) -> int:
         command=args.command or "",
         artifact_ref=args.artifact_ref or "",
         parent_decision_id=args.decision_id or "",
+        association_type=args.association_type or (
+            "explicit_decision" if args.decision_id else "session_level"
+        ),
         git_head_after=audit_log._git_head_at(str(project_dir)),
         **({"session_id": args.session_id} if args.session_id else {}),
     )
@@ -1886,7 +1889,13 @@ def main(argv: list | None = None) -> int:
     v.add_argument("--exit-code", type=int, default=None)
     v.add_argument("--command", default=None)
     v.add_argument("--artifact-ref", default=None)
-    v.add_argument("--decision-id", default=None, help="guard decision this result verifies")
+    v.add_argument("--decision-id", default=None, help="guard decision this result verifies; omit for session-level checks")
+    v.add_argument(
+        "--association-type",
+        choices=["explicit_decision", "session_level", "manual"],
+        default=None,
+        help="strength of the decision/check association",
+    )
     v.add_argument("--project-dir", default=None)
     v.add_argument("--session-id", default=None)
     v.add_argument("--run-id", default=None)

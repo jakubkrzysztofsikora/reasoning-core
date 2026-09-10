@@ -13,6 +13,12 @@ def test_classifies_deterministic_commands():
     assert hook._kind("python app.py") is None
 
 
+def test_uses_only_explicit_parent_ids():
+    assert hook._explicit_decision_id({"decision_id": "abc123"}) == "abc123"
+    assert hook._explicit_decision_id({"metadata": {"parent_decision_id": "p1"}}) == "p1"
+    assert hook._explicit_decision_id({"session_id": "s1"}) is None
+
+
 def test_reads_host_exit_status_without_inventing_one():
     assert hook._exit_code({"tool_response": {"exit_code": 0}}) == 0
     assert hook._exit_code({"tool_response": {"exitCode": 2}}) == 2
