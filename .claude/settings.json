@@ -51,6 +51,11 @@
             "type": "command",
             "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/post_bash_revive.py",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/post_bash_verification.py",
+            "timeout": 10000
           }
         ]
       },

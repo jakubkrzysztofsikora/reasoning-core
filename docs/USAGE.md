@@ -63,9 +63,11 @@ not change the primary five-category target.
 
 `rc real-session-eval` is a local-first evidence ledger. It uses exact decision
 IDs for labels/checks, session/project IDs for lifecycle outcomes, and Git head
-ranges for commit links. Missing links remain explicit; the report is advisory
-and must not be treated as causal proof or as a reason to change enforcement
-defaults by itself.
+ranges for commit links. The Claude PostToolUse Bash hook automatically records
+recognized `pytest`, `ruff`, type-check, build, and test commands when the host
+supplies an explicit exit status; it never reruns commands or invents missing
+status. Missing links remain explicit; the report is advisory and must not be
+treated as causal proof or as a reason to change enforcement defaults by itself.
 
 ---
 

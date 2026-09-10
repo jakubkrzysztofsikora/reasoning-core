@@ -222,7 +222,10 @@ install_claude() {
     ],
     "PostToolUse": [
       { "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/post_bash_revive.py", "timeout": 5000 }] },
+        "hooks": [
+          { "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/post_bash_revive.py", "timeout": 5000 },
+          { "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/post_bash_verification.py", "timeout": 10000 }
+        ] },
       { "matcher": "Edit|Write|MultiEdit",
         "hooks": [{ "type": "command", "command": "${RC_PYTHON:-${RC_REPO}/.venv/bin/python} ${RC_REPO}/src/hooks/post_batch_lang_audit.py", "timeout": 5000 }] }
     ],
