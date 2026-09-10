@@ -111,19 +111,37 @@ def test_progress(fresh_ts, tmp_path):
     rows = [
         {"decision_id": f"id{i}", "session_id": "s", "file_path": f"f{i}.py",
          "decision": "allowed"}
-        for i in range(15)
+        for i in range(25)
     ]
     _write_audit(audit_root, rows)
-    for i in range(15):
+    for i in range(25):
         fresh_ts.label_decision_id(
-            f"id{i}", {"scope_drift": i < 12},
+            f"id{i}", {"scope_drift": i < 22},
         )
     p = fresh_ts.progress()
-    assert p["target_per_label"] == 10
-    assert p["counts"]["scope_drift"] == 12
+    assert p["target_per_label"] == 20
+    assert p["counts"]["scope_drift"] == 22
     assert p["remaining"]["scope_drift"] == 0
-    assert p["remaining"]["plan_violation"] == 10
-    assert p["total_stored"] == 15
+    assert p["remaining"]["plan_violation"] == 20
+    assert p["total_stored"] == 25
+
+
+def test_category_gaps_and_supplemental_labels(fresh_ts, tmp_path):
+    audit_root = tmp_path / "audit"
+    _write_audit(audit_root, [{
+        "decision_id": "abc123", "session_id": "s",
+        "file_path": "f.py", "decision": "allowed",
+    }])
+    label = fresh_ts.label_decision_id(
+        "abc123",
+        {"scope_drift": True, "plan_drift": True, "guard_recheck": True},
+    )
+    assert label.labels["plan_drift"] is True
+    assert label.labels["guard_recheck"] is True
+    gaps = fresh_ts.category_gaps()
+    assert gaps["plan_and_scope"]["counts"]["scope_drift"] == 1
+    assert gaps["code_failures"]["uncovered"] is True
+    assert "transcript_grounded" in fresh_ts.all_labels()
 
 
 def test_pick_random_unlabeled(fresh_ts, tmp_path):
@@ -155,7 +173,7 @@ def test_should_not_prompt_when_target_met(fresh_ts, tmp_path, monkeypatch):
     rows = [
         {"decision_id": f"id{i}", "session_id": "s", "file_path": f"f{i}.py",
          "decision": "allowed"}
-        for i in range(60)
+        for i in range(100)
     ]
     _write_audit(audit_root, rows)
     for i, row in enumerate(rows):
@@ -249,8 +267,8 @@ def test_cli_label_stats_via_subprocess(tmp_path):
     )
     training_set = tmp_path / "training_set.jsonl"
     label_rows = []
-    for i in range(60):
-        # Each label gets exactly 12 positives (above target of 10)
+    for i in range(100):
+        # Each label gets exactly 20 positives (the target).
         labels = {k: False for k in ("scope_drift", "plan_violation",
                                        "structural_regression",
                                        "syntax_type_error", "test_failure")}

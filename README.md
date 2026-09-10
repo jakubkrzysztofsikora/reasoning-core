@@ -52,6 +52,13 @@ CLIs (Claude Code, OpenAI Codex, Gemini, Moonshot Kimi, GitHub Copilot,
 Mistral Vibe). At runtime the sidecar binds to loopback only; no telemetry,
 no cloud relay, no ongoing network calls.
 
+**Evidence status:** The benchmark figures in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
+and the whitepaper are historical controlled-study results from one codebase,
+using an earlier risk-label schema. They are not a current real-usage guarantee.
+The shipped install remains advisory/shadow by default; current real-session
+quality evidence is being built from decision-linked labels and repository
+outcomes.
+
 ## Quick start
 
 ```bash
@@ -166,8 +173,10 @@ rc disable-enforcement      # revert to advisory mode
 rc auth-bootstrap           # generate + store enforcement token (Linux/macOS)
 rc label <decision-id>      # label an audit decision (builds the eval training set)
 rc label --random           # pick one unlabeled decision and label it
-rc label-stats              # progress toward the 10-per-label training target
+rc label-stats              # progress toward the 20-positive-per-label target
 rc benchmark                # Markdown report from your local audit log
+rc record-verification      # persist a deterministic test/lint/build result
+rc real-session-eval        # correlate real sessions with labels and outcomes
 rc reasoning-efficiency     # composite north-star metric from the audit log
 rc audit-history            # label commits negative if followed by fix/revert
 ```

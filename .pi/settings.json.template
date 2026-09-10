@@ -1,0 +1,6 @@
+{
+  "extensions": [
+    "<RC_REPO>/.pi/extensions/reasoning_core_gate.ts"
+  ],
+  "defaultProjectTrust": "ask"
+}

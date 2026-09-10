@@ -66,6 +66,7 @@ except ImportError:
 
 SIDECAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDECAR_URL}/score"
+_AUDIT_PAYLOAD: Dict[str, Any] = {}
 
 
 def _timeout_seconds() -> int:
@@ -324,6 +325,10 @@ _AUDIT_RESERVED_KEYS = frozenset({
     "ais", "coherence_delta", "regression_detected", "risk_vector",
     "cumulative_drift", "latency_ms", "before_bytes", "after_bytes",
     "retry_after_block", "reason", "signal_source", "gate_id",
+    "correlation_schema_version", "run_id", "task_id", "transcript_path",
+    "tool_call_id", "turn_index", "file_path_rel", "before_sha256",
+    "after_sha256", "git_head", "git_head_before", "baseline_id",
+    "project_dir", "session_id", "source_session_id",
     # Set by audit_log.new_event itself:
     "ts", "decision_id", "session_id", "project_dir",
 })
@@ -531,8 +536,8 @@ def _emit_audit(
     decision: str,
     file_path: Optional[str],
     started: float,
-    before_src: str = "",
-    after_src: str = "",
+    before_src: Optional[str] = None,
+    after_src: Optional[str] = None,
     report: Optional[Dict[str, Any]] = None,
     reason: str = "",
     retry_after_block: bool = False,
@@ -570,6 +575,14 @@ def _emit_audit(
         )
         # Derive gate_id from signal_source if caller didn't pin one explicitly.
         effective_gate_id = gate_id or _SIGNAL_SOURCE_TO_GATE_ID.get(effective_signal)
+        before_text = before_src or ""
+        after_text = after_src or ""
+        correlation = audit_log.correlation_fields(
+            _AUDIT_PAYLOAD,
+            file_path=file_path,
+            before_src=before_src,
+            after_src=after_src,
+        )
         event = audit_log.new_event(
             tool_name=tool_name,
             decision=decision,
@@ -581,12 +594,13 @@ def _emit_audit(
             risk_vector=list(risk_vector) if isinstance(risk_vector, (list, tuple)) else [],
             cumulative_drift=cumulative_drift,
             latency_ms=latency_ms,
-            before_bytes=len((before_src or "").encode("utf-8", errors="replace")),
-            after_bytes=len((after_src or "").encode("utf-8", errors="replace")),
+            before_bytes=len(before_text.encode("utf-8", errors="replace")),
+            after_bytes=len(after_text.encode("utf-8", errors="replace")),
             retry_after_block=retry_after_block,
             reason=reason or human_summary,
             signal_source=effective_signal,
             gate_id=effective_gate_id,
+            **correlation,
             # Filter reserved keys so a future gate stuffing `reason`/`signal_source`
             # into audit_extra doesn't crash the splat into TypeError (which would
             # then be silently swallowed by the bare except below — losing the audit
@@ -599,6 +613,7 @@ def _emit_audit(
 
 
 def main() -> None:
+    global _AUDIT_PAYLOAD
     started = time.time()
     payload = _read_payload()
     if payload is None:
@@ -612,6 +627,7 @@ def main() -> None:
         )
         _exit(0)
 
+    _AUDIT_PAYLOAD = payload
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input")
     if not isinstance(tool_name, str) or not isinstance(tool_input, dict):

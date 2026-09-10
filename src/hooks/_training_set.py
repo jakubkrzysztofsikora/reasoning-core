@@ -1,28 +1,29 @@
 """Distributed training-set label collection for reasoning-core.
 
 The eval protocol (`docs/EVAL_PROTOCOL.md`) needs a labeled training set of
-~10 examples per label (5 positive, 5 negative) before the n=100 SWE-bench
+20 positive examples per label before the n=100 SWE-bench
 eval can run. Rather than waiting for a one-shot labeling session, this
 module implements **distributed, in-flow label collection** that grows the
 training set across many real coding sessions on this machine.
 
 Mechanics:
   - **Audit-log discovery**: every PreToolUse decision writes an audit row
-    (decision_id, file_path, before_src, after_src, decision, signal_source).
-    These are the candidate examples.
+    (decision_id, correlation references, file path, source hashes, decision,
+    signal source). These are the candidate examples; source text is not
+    retained by default.
   - **Auto-prompt sampling**: when `RC_TRAINING_PROMPT_RATE` is set (e.g. 0.05),
     a small fraction of decisions are flagged as "needs label". The Stop
     hook surfaces a prompt for the user with the decision_id and a one-line
     `rc label` command. The user runs it whenever convenient.
   - **Manual contribution**: `rc label <decision-id>` reads the audit row,
-    prompts the operator for the 5 labels interactively, and writes the
+    prompts the operator for the primary and supplemental labels interactively, and writes the
     label to `~/.local/share/reasoning-core/training_set.jsonl`.
   - **Random sampling**: `rc label --random` picks an unlabeled decision from
     recent audit and labels it — useful for filling quota without waiting
     for an auto-prompt.
-  - **Progress visibility**: `rc label-stats` shows how many labels per
-    category have been collected and what's left to hit the 10-per-label
-    target.
+  - **Progress visibility**: `rc label-stats` shows how many primary labels per
+    category have been collected and what's left to hit the 20-positive-per-label
+    target, plus supplemental process annotations.
 
 All data stays local on this machine. No external sync. No telemetry.
 """
@@ -41,11 +42,31 @@ from typing import Any, Optional
 _LABELS = ("scope_drift", "plan_violation", "structural_regression",
            "syntax_type_error", "test_failure")
 
+# Supplemental process annotations. These are stored with labels but are not
+# part of the primary five-category evaluation target.
+_ANNOTATION_LABELS = (
+    "plan_drift", "verification_run", "guard_recheck", "revert_risk",
+    "session_continuity", "transcript_grounded",
+)
+_ALL_LABELS = _LABELS + _ANNOTATION_LABELS
+
+# Logical grouping of labels for the category-gaps report. Categories let
+# `rc label-stats` show high-level coverage ("plan issues" vs "code failures")
+# without losing the per-label granularity the eval protocol needs.
+_LABEL_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "plan_and_scope": ("scope_drift", "plan_violation"),
+    "code_failures": (
+        "structural_regression",
+        "syntax_type_error",
+        "test_failure",
+    ),
+}
+
 _DEFAULT_STORE = Path(os.path.expanduser(
     "~/.local/share/reasoning-core/training_set.jsonl"
 ))
 
-_TARGET_PER_LABEL = int(os.environ.get("RC_TRAINING_TARGET_PER_LABEL", "10"))
+_TARGET_PER_LABEL = int(os.environ.get("RC_TRAINING_TARGET_PER_LABEL", "20"))
 _PROMPT_RATE = float(os.environ.get("RC_TRAINING_PROMPT_RATE", "0.05"))
 
 
@@ -134,30 +155,35 @@ def label_decision_id(decision_id: str, labels: dict[str, bool],
         file_path=audit_row.get("file_path", ""),
         decision=audit_row.get("decision", ""),
         signal_source=audit_row.get("signal_source", ""),
-        labels={k: bool(v) for k, v in labels.items() if k in _LABELS},
+        labels={k: bool(v) for k, v in labels.items() if k in _ALL_LABELS},
         notes=notes,
         labeler_id=labeler_id,
         ts=_dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         rationale_quality_failure=any(
-            labels.get(k) for k in ("scope_drift", "plan_violation", "structural_regression")
+            labels.get(k) for k in ("scope_drift", "plan_violation", "structural_regression", "plan_drift")
         ),
     )
     _append(label)
     return label
 
 
+def all_labels() -> tuple[str, ...]:
+    """Return primary and supplemental labels accepted by the CLI."""
+    return _ALL_LABELS
+
+
 def already_labeled(decision_id: str) -> bool:
     """Return True if this decision_id is already in the training set."""
-    return any(l.decision_id == decision_id for l in _read_all())
+    return any(label.decision_id == decision_id for label in _read_all())
 
 
 def count_per_label() -> dict[str, int]:
     """Return count of positive labels per category across all stored labels."""
     counts = {label: 0 for label in _LABELS}
-    for l in _read_all():
-        for k, v in l.labels.items():
-            if v:
-                counts[k] = counts.get(k, 0) + 1
+    for label in _read_all():
+        for key, value in label.labels.items():
+            if value:
+                counts[key] = counts.get(key, 0) + 1
     return counts
 
 
@@ -173,6 +199,42 @@ def progress() -> dict[str, Any]:
         },
         "total_stored": len(_read_all()),
     }
+
+
+def category_gaps() -> dict[str, dict[str, Any]]:
+    """Aggregate per-label progress into per-category gap rows.
+
+    Returns a dict keyed by category name. Each value has:
+      - labels:          tuple of label names in the category
+      - counts:          dict label -> stored count
+      - remaining:       dict label -> samples still needed to hit target
+      - total_count:     sum of counts across the category
+      - total_remaining: sum of remaining across the category
+      - complete:        True iff every label in the category is at target
+      - uncovered:       True iff every label in the category has zero
+                         samples (worth flagging — the whole class is
+                         unrepresented in the training set)
+    """
+    p = progress()
+    counts = p["counts"]
+    remaining = p["remaining"]
+
+    out: dict[str, dict[str, Any]] = {}
+    for cat, labels in _LABEL_CATEGORIES.items():
+        cat_counts = {lbl: counts.get(lbl, 0) for lbl in labels}
+        cat_remaining = {lbl: remaining.get(lbl, 0) for lbl in labels}
+        total_count = sum(cat_counts.values())
+        total_remaining = sum(cat_remaining.values())
+        out[cat] = {
+            "labels": labels,
+            "counts": cat_counts,
+            "remaining": cat_remaining,
+            "total_count": total_count,
+            "total_remaining": total_remaining,
+            "complete": total_remaining == 0,
+            "uncovered": total_count == 0,
+        }
+    return out
 
 
 def _audit_root() -> Path:
@@ -218,7 +280,7 @@ def _lookup_audit_row(decision_id: str, days: int = 7) -> dict[str, Any]:
 def _candidate_decisions(days: int = 7, only_unlabeled: bool = True) -> list[dict[str, Any]]:
     """Return candidate audit rows that could be labeled."""
     import gzip
-    labeled_ids = {l.decision_id for l in _read_all()} if only_unlabeled else set()
+    labeled_ids = {label.decision_id for label in _read_all()} if only_unlabeled else set()
     out: list[dict[str, Any]] = []
     root = _audit_root()
     if not root.is_dir():

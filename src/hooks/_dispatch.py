@@ -701,6 +701,14 @@ def _detect_language(file_path: str) -> str:
         ".cpp": "cpp",
         ".c": "c",
         ".h": "c",
+        ".gd": "gdscript",
+        ".tscn": "gdscript",
+        ".tres": "gdscript",
+        ".gdshader": "gdscript",
+        ".gdshaderinc": "gdscript",
+        ".godot": "gdscript",
+        ".gdextension": "gdscript",
+        ".shader": "gdscript",
     }
     return mapping.get(ext, "unknown")
 

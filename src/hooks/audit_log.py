@@ -149,6 +149,124 @@ def _project_dir() -> str:
     return os.environ.get("CLAUDE_PROJECT_DIR", "")
 
 
+def _sha256_text(value: Optional[str]) -> Optional[str]:
+    """Return a content hash without retaining source text in the ledger."""
+    if value is None:
+        return None
+    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _git_head_at(project_dir: Optional[str] = None) -> Optional[str]:
+    """Best-effort full Git HEAD hash for a project directory."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", project_dir or _project_dir(), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if result.returncode != 0:
+        return None
+    head = result.stdout.strip()
+    return head or None
+
+
+def _repo_relative_path(project_dir: Optional[str], file_path: Optional[str]) -> Optional[str]:
+    """Return a stable POSIX path when ``file_path`` belongs to the project."""
+    if not file_path:
+        return None
+    try:
+        root = Path(project_dir or _project_dir()).expanduser().resolve()
+        candidate = Path(file_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        return candidate.resolve().relative_to(root).as_posix()
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def correlation_fields(
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    file_path: Optional[str] = None,
+    before_src: Optional[str] = None,
+    after_src: Optional[str] = None,
+    project_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build deterministic join keys shared by decisions and outcomes.
+
+    Payload values are intentionally copied only for identifiers and paths;
+    source contents are represented by SHA-256 hashes. The returned mapping
+    is suitable for splatting into :func:`new_event`.
+    """
+    raw = payload if isinstance(payload, dict) else {}
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+
+    def _first(*keys: str) -> Any:
+        for key in keys:
+            value = raw.get(key)
+            if value not in (None, ""):
+                return value
+            value = metadata.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    root = project_dir or raw.get("cwd") or _project_dir()
+    fields: Dict[str, Any] = {
+        "correlation_schema_version": 1,
+        "project_dir": str(Path(root).expanduser().resolve()),
+        "git_head_before": _git_head_at(str(root)),
+    }
+
+    for output_key, input_keys in (
+        ("run_id", ("run_id", "agent_run_id")),
+        ("task_id", ("task_id", "request_id")),
+        ("transcript_path", ("transcript_path",)),
+        ("tool_call_id", ("tool_call_id", "tool_use_id", "call_id")),
+        ("baseline_id", ("baseline_id",)),
+    ):
+        value = _first(*input_keys)
+        if value is None:
+            env_key = {
+                "run_id": "RC_RUN_ID",
+                "task_id": "RC_TASK_ID",
+                "transcript_path": "RC_TRANSCRIPT_PATH",
+                "baseline_id": "RC_BASELINE_ID",
+            }.get(output_key)
+            if env_key:
+                value = os.environ.get(env_key)
+        if value is not None:
+            fields[output_key] = value
+
+    turn_index = _first("turn_index", "turn", "message_index")
+    if turn_index is not None:
+        try:
+            fields["turn_index"] = int(turn_index)
+        except (TypeError, ValueError):
+            fields["turn_index"] = str(turn_index)
+
+    payload_session_id = _first("session_id")
+    current_session_id = _session_id()
+    if payload_session_id and str(payload_session_id) != current_session_id:
+        fields["source_session_id"] = str(payload_session_id)
+
+    relative_path = _repo_relative_path(str(root), file_path)
+    if relative_path is not None:
+        fields["file_path_rel"] = relative_path
+    if before_src is not None:
+        fields["before_sha256"] = _sha256_text(before_src)
+    if after_src is not None:
+        fields["after_sha256"] = _sha256_text(after_src)
+    if file_path:
+        fields["git_head"] = fields.get("git_head_before")
+    return fields
+
+
 def _host_label() -> str:
     if _host_env is not None:
         try:
@@ -183,6 +301,12 @@ def _redact(event: Dict[str, Any]) -> Dict[str, Any]:
     fp = e.get("file_path")
     if isinstance(fp, str) and _is_secret_path(fp):
         e["file_path"] = "[REDACTED]"
+        if "file_path_rel" in e:
+            e["file_path_rel"] = "[REDACTED]"
+        if "before_sha256" in e:
+            e["before_sha256"] = None
+        if "after_sha256" in e:
+            e["after_sha256"] = None
         # Don't leak size signal either.
         if "before_bytes" in e:
             e["before_bytes"] = 0
@@ -192,6 +316,13 @@ def _redact(event: Dict[str, Any]) -> Dict[str, Any]:
     for key in ("human_summary", "reason", "command"):
         if key in e:
             e[key] = _scrub_inline(e[key])
+    for key in ("missing_files", "changed_files"):
+        values = e.get(key)
+        if isinstance(values, list):
+            e[key] = [
+                "[REDACTED]" if isinstance(value, str) and _is_secret_path(value) else value
+                for value in values
+            ]
     return e
 
 
@@ -233,6 +364,34 @@ def new_event(
         base["gate_id"] = gate_id
     base.update(fields)
     return base
+
+
+def append_correlated_event(
+    *,
+    event_type: str,
+    tool_name: str,
+    decision: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    file_path: Optional[str] = None,
+    project_dir: Optional[str] = None,
+    fsync: bool = True,
+    **fields: Any,
+) -> Optional[Dict[str, Any]]:
+    """Create and persist an event with the common correlation envelope."""
+    correlation = correlation_fields(
+        payload,
+        file_path=file_path,
+        project_dir=project_dir,
+    )
+    event = new_event(
+        tool_name=tool_name,
+        decision=decision or event_type,
+        file_path=file_path,
+        event_type=event_type,
+        **correlation,
+        **fields,
+    )
+    return append_event(event, fsync=fsync)
 
 
 def append_event(event: Dict[str, Any], *, fsync: bool = False) -> Optional[Dict[str, Any]]:

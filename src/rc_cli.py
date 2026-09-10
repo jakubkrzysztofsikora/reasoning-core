@@ -40,6 +40,7 @@ if str(_HOOKS_DIR) not in sys.path:
 import _commit_miner as _cm  # type: ignore  # noqa: E402
 import _kill_switches as ks  # type: ignore  # noqa: E402
 import audit_log  # type: ignore  # noqa: E402
+import _session_correlator as _sc  # type: ignore  # noqa: E402
 
 _KNOBS = (
     "S2_DEVICE", "S2_TIMEOUT", "S2_FAIL_CLOSED", "S2_PORT",
@@ -494,7 +495,6 @@ def _enforcement_block(hard: bool = False) -> str:
     """
     plan_grounding = "2" if hard else "1"
     stage_label = "Stage 2 (hard plan-grounding)" if hard else "Stage 1 (warn-only plan-grounding)"
-    block_name = "stage2" if hard else "stage1"
     return (
         f"{_SENTINEL_START}\n"
         f"# Enabled via `rc enable-enforcement{' --hard' if hard else ''}`. "
@@ -967,6 +967,19 @@ def cmd_override_survival(args: argparse.Namespace) -> int:
 
 
 
+def _reconcile_fingerprint(path: Path) -> str:
+    """Bind historical acceptance to bytes, file kind, and executable mode."""
+    if path.is_symlink():
+        data = b"symlink:" + os.fsencode(os.readlink(path))
+    elif path.is_file():
+        data = str(path.stat().st_mode & 0o777).encode() + b":" + path.read_bytes()
+    elif not path.exists():
+        data = b"deleted"
+    else:
+        raise ValueError(f"Cannot acknowledge non-file: {path}")
+    return hashlib.sha256(data).hexdigest()
+
+
 def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id: str) -> list[str]:
     """Diff git working tree against gate_edit audit rows for the session.
 
@@ -984,19 +997,18 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
 
     # Files changed on disk (relative to repo root).
     r = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
+        ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
         capture_output=True, text=True, cwd=str(project), timeout=30,
     )
     changed: set[str] = set()
     if r.returncode == 0:
-        for line in r.stdout.splitlines():
-            line = line.rstrip("\r")
-            if line.startswith("?? "):
-                changed.add(line[3:].strip())
-            elif len(line) >= 4 and line[2] == " ":
-                changed.add(line[3:].strip())
-            elif len(line) >= 3 and line[1] in ("M", "A", "D", "R", "C", "U") and line[2] == " ":
-                changed.add(line[2:].strip().split(" -> ")[-1])
+        records = iter(r.stdout.split("\0"))
+        for record in records:
+            if len(record) < 4:
+                continue
+            changed.add(record[3:])
+            if "R" in record[:2] or "C" in record[:2]:
+                next(records, None)  # porcelain -z puts the old name second
 
     # Gated files from audit log: normalise absolute paths to repo-relative
     # so they can be compared with `git status` output.
@@ -1007,6 +1019,7 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
     repo_root_path = Path(repo_root.stdout.strip()) if repo_root.returncode == 0 else project
 
     gated: set[str] = set()
+    acknowledged: set[str] = set()
     root = Path(audit_root)
     today = _dt.datetime.now(_dt.timezone.utc).date()
     # Scan yesterday and today to handle sessions that span midnight.
@@ -1032,6 +1045,19 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
                             ev = json.loads(line)
                         except ValueError:
                             continue
+                        if (
+                            ev.get("session_id") == session_id
+                            and ev.get("decision") == "historical_acknowledgement"
+                            and ev.get("project_dir") == str(repo_root_path.resolve())
+                            and ev.get("reason")
+                        ):
+                            fp = ev.get("file_path")
+                            if isinstance(fp, str) and fp in changed:
+                                try:
+                                    if ev.get("content_sha256") == _reconcile_fingerprint(repo_root_path / fp):
+                                        acknowledged.add(fp)
+                                except (OSError, ValueError):
+                                    pass
                         if ev.get("session_id") == session_id and ev.get("decision") in (
                             "allowed", "blocked", "warn", "shadow_blocked", "allowed_via_override",
                         ):
@@ -1063,11 +1089,14 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
             except OSError:
                 continue
 
-    return sorted(changed - gated)
+    return sorted(changed - gated - acknowledged)
 
 
 def cmd_reconcile(args: argparse.Namespace) -> int:
     """Post-session safety net: flag files written without a gate_edit call."""
+    if getattr(args, "acknowledge_current", False) and not getattr(args, "reason", "").strip():
+        sys.stderr.write("Historical reconciliation requires an explicit --reason.\n")
+        return 2
     project_dir = _project_dir()
     if not project_dir.is_dir():
         sys.stderr.write(f"project directory does not exist: {project_dir}\n")
@@ -1076,17 +1105,78 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     sid = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("RC_SESSION_ID") or "default"
     missing = _reconcile_missing_gate_events(str(project_dir), str(_audit_root()), sid)
 
+    acknowledged = []
+    if getattr(args, "acknowledge_current", False):
+        for fp in missing:
+            fingerprint = _reconcile_fingerprint(project_dir / fp)
+            event = audit_log.new_event(
+                tool_name="rc_reconcile",
+                decision="historical_acknowledgement",
+                file_path=fp,
+                reason=args.reason.strip(),
+                content_sha256=fingerprint,
+                prior_gate_claimed=False,
+            )
+            event["session_id"] = sid
+            event["project_dir"] = str(project_dir.resolve())
+            audit_log.append_event(event, fsync=True)
+            acknowledged.append(fp)
+        missing = _reconcile_missing_gate_events(str(project_dir), str(_audit_root()), sid)
+
     if getattr(args, "json", False):
-        sys.stdout.write(json.dumps({"missing": missing, "session_id": sid}) + "\n")
+        sys.stdout.write(json.dumps({"missing": missing, "session_id": sid, "acknowledged": acknowledged}) + "\n")
         return 0 if not missing else 1
 
     if not missing:
-        sys.stdout.write("rc reconcile: all changed files have a gate_edit audit row.\n")
+        sys.stdout.write("rc reconcile: no outstanding gaps (gate records or explicit historical acknowledgements).\n")
         return 0
     sys.stdout.write("rc reconcile: files changed without gate_edit audit row:\n")
     for fp in missing:
         sys.stdout.write(f"  {fp}\n")
     return 1
+
+
+def cmd_record_verification(args: argparse.Namespace) -> int:
+    """Persist a deterministic lint/test/typecheck/build result for a session."""
+    project_dir = Path(args.project_dir or _project_dir()).expanduser().resolve()
+    payload = {
+        key: value
+        for key, value in {
+            "cwd": str(project_dir),
+            "session_id": args.session_id,
+            "run_id": args.run_id,
+            "task_id": args.task_id,
+            "transcript_path": args.transcript_path,
+            "tool_call_id": args.tool_call_id,
+            "turn_index": args.turn_index,
+            "baseline_id": args.baseline_id,
+        }.items()
+        if value not in (None, "")
+    }
+    event = audit_log.append_correlated_event(
+        event_type="verification_recorded",
+        tool_name=args.tool_name,
+        decision=f"verification_{args.status}",
+        payload=payload,
+        project_dir=str(project_dir),
+        verification_kind=args.kind,
+        verification_status=args.status,
+        exit_code=args.exit_code,
+        deterministic=True,
+        command=args.command or "",
+        artifact_ref=args.artifact_ref or "",
+        parent_decision_id=args.decision_id or "",
+        git_head_after=audit_log._git_head_at(str(project_dir)),
+        **({"session_id": args.session_id} if args.session_id else {}),
+    )
+    if event is None:
+        sys.stderr.write("failed to persist verification event\n")
+        return 1
+    if args.json:
+        sys.stdout.write(json.dumps(event, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(f"verification recorded: {event['decision_id']}\n")
+    return 0
 
 
 def cmd_label(args: argparse.Namespace) -> int:
@@ -1096,7 +1186,7 @@ def cmd_label(args: argparse.Namespace) -> int:
     one unlabeled decision from recent audit (last 7 days by default).
 
     Interactive flow (no --yes): shows file, before/after snippet, and asks
-    for the 5 labels (y/n each).
+    for the primary and supplemental labels (y/n each).
 
     Non-interactive (--yes): reads labels from --labels flag as
     "scope_drift=yes,plan_violation=no,..." or from a JSON file with --from-file.
@@ -1152,7 +1242,7 @@ def cmd_label(args: argparse.Namespace) -> int:
     if args.from_file:
         try:
             data = json.loads(Path(args.from_file).read_text(encoding="utf-8"))
-            labels = {k: bool(v) for k, v in data.items() if k in ts._LABELS}
+            labels = {k: bool(v) for k, v in data.items() if k in ts.all_labels()}
         except (OSError, ValueError) as exc:
             sys.stderr.write(f"could not read --from-file: {exc}\n")
             return 1
@@ -1163,13 +1253,13 @@ def cmd_label(args: argparse.Namespace) -> int:
                 continue
             k, v = pair.split("=", 1)
             k = k.strip()
-            if k in ts._LABELS:
+            if k in ts.all_labels():
                 labels[k] = v.strip().lower() in ("yes", "true", "1", "y")
     elif args.yes:
         sys.stderr.write("--yes requires --labels or --from-file\n")
         return 1
     else:
-        for label in ts._LABELS:
+        for label in ts.all_labels():
             sys.stdout.write(f"  {label}? [y/n] ")
             sys.stdout.flush()
             try:
@@ -1218,6 +1308,20 @@ def cmd_label_stats(_args: argparse.Namespace) -> int:
         r = p["remaining"][label]
         marker = "OK" if r == 0 else "..."
         sys.stdout.write(f"  {label:<23} {c:>5} {r:>10} {marker}\n")
+
+    sys.stdout.write("\ncategory gaps (primary labels):\n")
+    for category, gap in ts.category_gaps().items():
+        status = "OK" if gap["complete"] else "GAP"
+        sys.stdout.write(
+            f"  {category:<18} {gap['total_count']:>5} collected, "
+            f"{gap['total_remaining']:>5} remaining {status}\n"
+        )
+        for label in gap["labels"]:
+            sys.stdout.write(
+                f"    {label:<23} {gap['counts'][label]:>5} "
+                f"{gap['remaining'][label]:>5} remaining\n"
+            )
+    sys.stdout.write("\nsupplemental annotations: " + ", ".join(ts._ANNOTATION_LABELS) + "\n")
     if all(p["remaining"][k] == 0 for k in ts._LABELS):
         sys.stdout.write("\nALL LABELS REACHED TARGET — ready for n=100 eval\n")
         return 0
@@ -1594,6 +1698,36 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_real_session_eval(args: argparse.Namespace) -> int:
+    """Build a conservative evidence ledger from real local sessions."""
+    audit_root = Path(args.audit_root or _audit_root())
+    training_set = Path(args.training_set).expanduser() if args.training_set else None
+    ledger = _sc.build_ledger(
+        audit_root,
+        training_set=training_set,
+        days=args.days,
+        project_dir=args.project_dir,
+        include_synthetic=args.include_synthetic,
+    )
+    if args.output:
+        output = Path(args.output)
+        content = (
+            json.dumps(ledger, indent=2, sort_keys=True) + "\n"
+            if args.json
+            else _sc.render_markdown(ledger)
+        )
+        try:
+            _atomic_write_text(output, content)
+        except OSError as exc:
+            sys.stderr.write(f"failed to write evaluation: {exc}\n")
+            return 1
+    elif args.json:
+        sys.stdout.write(json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(_sc.render_markdown(ledger))
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1675,7 +1809,30 @@ def main(argv: list | None = None) -> int:
         help="diff git working tree against gate_edit audit rows for this session",
     )
     r.add_argument("--json", action="store_true", help="emit JSON output for hook parsing")
+    r.add_argument("--acknowledge-current", action="store_true", help="explicitly acknowledge historical gaps for these exact file versions")
+    r.add_argument("--reason", default="", help="operator reason for historical acknowledgement")
     r.set_defaults(func=cmd_reconcile)
+    v = sub.add_parser(
+        "record-verification",
+        help="persist a deterministic lint/test/typecheck/build result",
+    )
+    v.add_argument("--kind", required=True, help="verification kind, e.g. test, lint, typecheck, build")
+    v.add_argument("--status", required=True, choices=["passed", "failed", "skipped", "unknown"])
+    v.add_argument("--exit-code", type=int, default=None)
+    v.add_argument("--command", default=None)
+    v.add_argument("--artifact-ref", default=None)
+    v.add_argument("--decision-id", default=None, help="guard decision this result verifies")
+    v.add_argument("--project-dir", default=None)
+    v.add_argument("--session-id", default=None)
+    v.add_argument("--run-id", default=None)
+    v.add_argument("--task-id", default=None)
+    v.add_argument("--transcript-path", default=None)
+    v.add_argument("--tool-call-id", default=None)
+    v.add_argument("--turn-index", type=int, default=None)
+    v.add_argument("--baseline-id", default=None)
+    v.add_argument("--tool-name", default="verification")
+    v.add_argument("--json", action="store_true")
+    v.set_defaults(func=cmd_record_verification)
     lab = sub.add_parser(
         "label",
         help="label an audit decision for the SWE-bench eval training set",
@@ -1717,6 +1874,22 @@ def main(argv: list | None = None) -> int:
     bench_cmd.add_argument("--output", default=None, help="Markdown report output path")
     bench_cmd.add_argument("--json", default=None, help="optional JSON metrics output path")
     bench_cmd.set_defaults(func=cmd_benchmark)
+    real_cmd = sub.add_parser(
+        "real-session-eval",
+        help="correlate real-session decisions with labels, checks, outcomes, and commits",
+    )
+    real_cmd.add_argument("--days", type=int, default=30)
+    real_cmd.add_argument("--audit-root", default=None)
+    real_cmd.add_argument("--training-set", default=None)
+    real_cmd.add_argument("--project-dir", default=None)
+    real_cmd.add_argument("--output", default=None)
+    real_cmd.add_argument("--json", action="store_true")
+    real_cmd.add_argument(
+        "--include-synthetic",
+        action="store_true",
+        help="include obvious test-fixture paths (debugging only)",
+    )
+    real_cmd.set_defaults(func=cmd_real_session_eval)
     args = p.parse_args(argv)
     return args.func(args)
 

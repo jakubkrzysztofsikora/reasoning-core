@@ -2,6 +2,9 @@
 
 > First end-to-end exercise of the reasoning-core eval toolkit.
 > Status: **toolkit green; signal pending live Claude run.**
+>
+> This run is a toolkit smoke test, not evidence for the historical headline
+> benchmark claims or for current real-usage quality.
 
 ## Summary
 

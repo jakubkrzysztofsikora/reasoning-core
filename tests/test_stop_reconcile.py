@@ -42,11 +42,22 @@ def _run_hook(project_dir: Path, env_extra: dict, payload: dict | None = None) -
     )
 
 
+def _events(project_dir: Path) -> list[dict]:
+    files = sorted((project_dir / "_audit").glob("*/*.jsonl"))
+    if not files:
+        return []
+    lines = files[-1].read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
+
+
 def test_stop_hook_advisory_when_clean(tmp_path):
     project = tmp_path / "repo"
     _init_repo(project)
     proc = _run_hook(project, {"RC_MODE": "advise"})
     assert proc.returncode == 0, proc.stderr
+    outcomes = [event for event in _events(project) if event.get("event_type") == "session_outcome_recorded"]
+    assert outcomes and outcomes[-1]["outcome_status"] == "verified_clean"
+    assert outcomes[-1]["reconcile_status"] == "clean"
 
 
 def test_stop_hook_advisory_when_mcp_skip(tmp_path):
@@ -58,6 +69,9 @@ def test_stop_hook_advisory_when_mcp_skip(tmp_path):
     # Advisory mode: exit 0, just warn to stderr
     assert proc.returncode == 0, proc.stderr
     assert "MCP-skip" in proc.stderr or "advisory" in proc.stderr.lower()
+    outcomes = [event for event in _events(project) if event.get("event_type") == "session_outcome_recorded"]
+    assert outcomes and outcomes[-1]["outcome_status"] == "unverified_gap"
+    assert outcomes[-1]["missing_files"] == ["orphan.py"]
 
 
 def test_stop_hook_copilot_emits_block_with_stderr(tmp_path):
@@ -72,6 +86,8 @@ def test_stop_hook_copilot_emits_block_with_stderr(tmp_path):
     assert proc.stdout.strip() == "", f"stdout should be empty on exit 2, got: {proc.stdout!r}"
     assert "MCP-SKIP" in proc.stderr
     assert "orphan.py" in proc.stderr
+    outcomes = [event for event in _events(project) if event.get("event_type") == "session_outcome_recorded"]
+    assert outcomes and outcomes[-1]["reconcile_status"] == "missing_gate_events"
 
 
 def test_stop_hook_stop_hook_active_approves(tmp_path):

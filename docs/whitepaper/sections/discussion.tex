@@ -3,13 +3,15 @@
 
 %% 8.1 Key Findings
 
-Our evaluation demonstrates that reasoning-core successfully addresses the structural blind spot in LLM-based software development. The key findings are:
+The historical controlled study reported the following directional findings
+for one codebase and an earlier risk-label schema. They should not be read as
+current real-usage or causal product evidence:
 
 \begin{itemize}
-    \item PLAN QUALITY IMPROVEMENT: The sidecars planning hooks produce plans that are better aligned with existing repository conventions (+0.32 on plan quality, +0.43 on repo_fit). This is the most significant improvement, indicating that the System 2 architecture effectively complements System 1s linguistic strengths with structural awareness.
-    \item AGENTS STAY ON TRACK: The system significantly reduces off-plan edits (+0.23 on diff_discipline), meaning agents are more likely to stay within the files they promised to touch.
-    \item TOKEN EFFICIENCY: Despite adding computational overhead (~98 seconds per run), the system reduces total token usage by 8.2 percent on average, with up to 29 percent savings on cache-heavy tasks.
-    \item CORRECTNESS IMPROVEMENTS: The system achieves 100 percent pass rates on both locked and rotated tests (vs 92 percent/90 percent for vanilla Claude Code).
+    \item PLAN QUALITY SIGNAL: The sidecar condition received higher historical plan-quality and repo-fit scores (+0.32 and +0.43), subject to the study's task set and judge calibration.
+    \item DIFF DISCIPLINE SIGNAL: The sidecar condition received a higher historical diff-discipline score (+0.23); this is not yet a validated reduction in harmful real-session edits.
+    \item TOKEN EFFICIENCY SIGNAL: The study measured 8.2 percent lower total tokens on average, with up to 29 percent savings on cache-heavy tasks; current real-usage savings are unproven.
+    \item CORRECTNESS SIGNAL: The study observed 100 percent pass rates on locked and rotated tests for the sidecar arm (vs 92 percent/90 percent for vanilla); this has not been reproduced under the current schema and default posture.
     \item LOCAL OPERATION: The entire system runs locally with no external telemetry, addressing privacy concerns.
 \end{itemize}
 
@@ -23,16 +25,18 @@ The system introduces a performance trade-off:
     \item CPU USAGE: The system uses CPU for inference.
 \end{itemize}
 
-These costs are offset by:
+These costs may have been offset in the historical task set, but that trade-off
+has not been established in current repository sessions:
 \begin{itemize}
-    \item REDUCED TOKEN COSTS: 8.2 percent average token savings.
-    \item FEWER REGRESSION LOOPS: Preventing off-plan edits reduces manual intervention.
-    \item IMPROVED QUALITY: Better code that requires less review and revision.
+    \item HISTORICAL TOKEN SIGNAL: 8.2 percent average token savings in the controlled study.
+    \item UNVALIDATED REGRESSION HYPOTHESIS: Fewer harmful or off-plan edits may reduce manual intervention.
+    \item UNVALIDATED QUALITY HYPOTHESIS: Better code may require less review and revision.
 \end{itemize}
 
 %% 8.3 Why This Works
 
-The success of reasoning-core can be attributed to several design decisions:
+The historical result patterns are consistent with several design decisions,
+but the contribution of each decision has not been isolated:
 
 \begin{itemize}
     \item HYBRID ARCHITECTURE: Combining System 1 (LLM) and System 2 (structural specialist)

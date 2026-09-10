@@ -61,14 +61,17 @@
 - **Memory**: ~200MB RAM for model
 - **Disk**: ~250MB for Mamba checkpoint
 
+> These evaluation figures are historical, single-codebase controlled-study
+> results using an earlier risk-label schema, not current real-usage guarantees.
+
 ### Evaluation
 
 - **Tasks**: 8 real-world engineering scenarios
 - **Runs**: 48 total (n=3 per task x setup)
 - **Judges**: 3 cross-family models
-- **Token Savings**: 8.2% average
-- **Quality Improvement**: +0.32 plan quality, +0.20 implementation quality
-- **Test Pass Rate**: 100% on locked/rotated tests
+- **Historical token result**: 8.2% average
+- **Historical quality differences**: +0.32 plan quality, +0.20 implementation quality
+- **Historical test result**: 100% on locked/rotated tests for the sidecar arm
 
 ## Use Cases
 

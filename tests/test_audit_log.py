@@ -48,6 +48,38 @@ def test_new_event_schema_minimal(isolated_audit):
     assert "project_dir" in ev
 
 
+def test_correlation_fields_capture_real_session_join_keys(isolated_audit):
+    target = Path(REPO_ROOT) / "src" / "example.py"
+    fields = audit_log.correlation_fields(
+        {
+            "cwd": REPO_ROOT,
+            "session_id": "session-test-fixture",
+            "run_id": "run-123",
+            "task_id": "task-456",
+            "transcript_path": "/tmp/transcript.jsonl",
+            "tool_call_id": "tool-789",
+            "turn_index": "12",
+            "baseline_id": "baseline-2026-09-09",
+        },
+        file_path=str(target),
+        before_src="old\n",
+        after_src="new\n",
+    )
+
+    assert fields["correlation_schema_version"] == 1
+    assert fields["run_id"] == "run-123"
+    assert fields["task_id"] == "task-456"
+    assert fields["transcript_path"] == "/tmp/transcript.jsonl"
+    assert fields["tool_call_id"] == "tool-789"
+    assert fields["turn_index"] == 12
+    assert fields["file_path_rel"] == "src/example.py"
+    assert fields["before_sha256"] == audit_log._sha256_text("old\n")
+    assert fields["after_sha256"] == audit_log._sha256_text("new\n")
+    assert len(fields["git_head_before"]) == 40
+    assert fields["git_head"] == fields["git_head_before"]
+    assert fields["baseline_id"] == "baseline-2026-09-09"
+
+
 def test_append_event_writes_jsonl(isolated_audit):
     ev = audit_log.new_event(
         tool_name="Edit",
@@ -90,6 +122,23 @@ def test_redaction_path_patterns(isolated_audit, path):
     assert rec["file_path"] == "[REDACTED]"
     assert rec["before_bytes"] == 0
     assert rec["after_bytes"] == 0
+
+
+def test_redaction_clears_relative_path_and_source_hashes(isolated_audit):
+    ev = audit_log.new_event(
+        tool_name="Edit",
+        decision="allowed",
+        file_path="/x/.env",
+        file_path_rel=".env",
+        before_sha256="before",
+        after_sha256="after",
+    )
+    audit_log.append_event(ev)
+    rec = _read_session_lines(isolated_audit)[-1]
+    assert rec["file_path"] == "[REDACTED]"
+    assert rec["file_path_rel"] == "[REDACTED]"
+    assert rec["before_sha256"] is None
+    assert rec["after_sha256"] is None
 
 
 def test_redaction_inline_secrets_in_summary(isolated_audit):

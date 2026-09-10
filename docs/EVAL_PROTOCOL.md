@@ -36,6 +36,38 @@ SWE-bench Verified Clean Task Success (CTS) and regression rate, as a sanity
 check. This is reported alongside the primary endpoint but is NOT the basis
 for the kill criterion.
 
+### Real-session observational track
+
+The repository also ships a local-first observational track for existing agent
+sessions. It is **not** a replacement for the blinded primary endpoint and
+cannot establish a causal treatment effect. Run:
+
+```bash
+rc real-session-eval --days 30 --json --output real-session-eval.json
+```
+
+The ledger joins:
+
+- decisions to labels by exact `decision_id`;
+- deterministic verification receipts by exact `parent_decision_id`;
+- session outcomes by `(project_dir, session_id)`;
+- commits only when the decision's recorded Git head and the session outcome's
+  final Git head define an exact ancestry range touching the repo-relative path.
+
+Missing joins are reported as coverage gaps, never inferred as success or
+failure. Neural scores remain advisory; only deterministic policy,
+verification, parse/lint, structural checks, and explicit human labels may
+support enforcement changes. Before changing defaults, the rolling window
+should meet these operational SLOs: ≥95% session-outcome coverage, ≥95% of
+verification receipts carrying an exact parent decision, and ≥20 positive
+human labels per rubric category. Until then, use the ledger to prioritize
+instrumentation and review candidates, not to claim improved quality, fewer
+regressions, lower cost, or generalization.
+
+The evaluator excludes obvious test-fixture paths by default (for example
+`/fake/*` and pytest temporary directories). `--include-synthetic` exists only
+for debugging the evaluator and must not be used for product evidence.
+
 ---
 
 ## 2. Ablation arms
@@ -75,22 +107,25 @@ leak" or "no-op" failure modes.
 
 ### Distributed training-set collection
 
-For the **primary endpoint** the eval needs ~10 labeled examples per label
-(5 positive, 5 negative) before the n=100 run can start. We collect these
+For the **primary endpoint** the eval needs 20 positive labeled examples per
+label before the n=100 run can start. We collect these
 **across many real coding sessions on this machine**, not in a one-shot
 labeling session. All data stays local; nothing is sent off-host.
 
 Mechanics:
-- **Audit log**: every PreToolUse decision writes a row with `decision_id`,
-  `file_path`, `before_src`, `after_src`, `decision`, `signal_source`.
+- **Audit log**: every guarded edit writes a row with `decision_id`,
+  `session_id`, `run_id`/`task_id` when available, transcript/tool-call
+  references, repo-relative path, source hashes, Git head, `decision`, and
+  `signal_source`.
 - **`rc label <decision-id>`**: manually label one decision. Shows the
-  file, before/after snippet, and prompts for the 5 labels. Non-interactive
-  mode via `--labels scope_drift=yes,plan_violation=no,...` or
+  file and available correlation context (plus a before/after snippet only
+  when the source is present in the audit row), then prompts for the 5 labels.
+  Non-interactive mode via `--labels scope_drift=yes,plan_violation=no,...` or
   `--from-file labels.json`.
 - **`rc label --random`**: pick one unlabeled decision from recent audit
   (last 7 days) and label it. Useful when quotas are low and you have
   a few minutes.
-- **`rc label-stats`**: show progress toward the 10-per-label target.
+- **`rc label-stats`**: show progress toward the 20-positive-per-label target.
   Exit 0 when all targets met; exit 1 with remaining counts otherwise.
 - **Auto-prompt at session end**: the Stop hook (`stop_reconcile.py`)
   surfaces a non-blocking prompt at session end with `RC_TRAINING_PROMPT_RATE`
@@ -99,17 +134,18 @@ Mechanics:
   hook does not block the session.
 - **Storage**: `~/.local/share/reasoning-core/training_set.jsonl`,
   append-only, one label per line. Override via `RC_TRAINING_SET_FILE`.
+- **Outcome receipts**: `rc record-verification` persists deterministic
+  test/lint/typecheck/build results; the Stop hook persists session outcomes.
 
-This keeps the labeling effort amortised over normal usage. A typical
-operator who runs the agent ~100 times/day will see ~5 prompts/day at
-the 5% rate; after 2 days of occasional `rc label` runs the training
-set is full. The distributed model also surfaces harder-to-construct
-cases (real edits, not synthetic).
+This keeps the labeling effort amortised over normal usage. The completion
+time depends on the distribution of positive examples; the ledger exposes
+remaining counts rather than promising a fixed calendar time. The distributed
+model also surfaces harder-to-construct cases (real edits, not synthetic).
 
 ### Training set
 
-- 10 labeled examples per label (5 positive, 5 negative) provided to each
-  labeler before the eval.
+- 20 positive labeled examples per category, plus representative negative
+  examples, provided to each labeler before the eval.
 - Labelers must achieve κ ≥ 0.70 on the training set before labeling the eval.
 
 ---

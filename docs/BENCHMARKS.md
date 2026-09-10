@@ -4,6 +4,13 @@ Two eval generations: an 8-task suite graded by 3 cross-vendor judges
 (headline numbers), and an earlier iteration-1 draft (n=1–3 per cell,
 single-judge).
 
+> **Evidence status:** The headline figures below are historical controlled-study
+> results from one codebase. They were graded against `risk_labels_version=1`,
+> while the current build uses version 2, and were not re-graded after the
+> metric migration. They must not be presented as current real-usage quality,
+> cost, or regression evidence. The committed current smoke run is explicitly
+> inconclusive; the next evidence source is the labeled real-session dataset.
+
 > **Note on risk-vector dimensionality.** The headline eval below was
 > graded against an 8-dim risk vector (`risk_labels_version=1`). The
 > current build still emits an 8-dim vector by default
@@ -17,11 +24,15 @@ single-judge).
 
 ---
 
-## Headline (3-judge, blind)
+## Historical headline (3-judge, blind; not a current product guarantee)
 
-8 real engineering tasks. 3 runs each. 2 setups (vanilla `claude` vs
+The historical study used 8 real engineering tasks, 3 runs each, and 2 setups (vanilla `claude` vs
 `claude` + sidecar). 3 independent reviewer models from 3 different vendors
 graded every plan and every implementation, blind.
+
+These values are retained for reproducibility and hypothesis generation. They
+do not establish that the current default installation improves real repository
+outcomes.
 
 | | Vanilla `claude` | `claude` + sidecar | |
 |---|---|---|---|
@@ -37,7 +48,7 @@ graded every plan and every implementation, blind.
 | Wall-clock per run | 547s | 645s | +98s slower — sidecar plans before it edits |
 | Where your code is processed | Anthropic only | Anthropic only + your laptop | Nothing new leaves your machine |
 
-### Token-cost arithmetic
+### Historical token-cost arithmetic
 
 On the PR-review task the sidecar pulled 724k cache-read tokens vs 1.02M for
 vanilla — a 29% saving on that single task. Auth-abandonment task came in at

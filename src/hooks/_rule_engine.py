@@ -478,6 +478,8 @@ def _language_matches(file_lang: str, rule_lang: str) -> bool:
         return True
     if rule_lang == "typescript" and file_lang == "tsx":
         return True
+    if (rule_lang == "godot" and file_lang == "gdscript") or (rule_lang == "gdscript" and file_lang == "godot"):
+        return True
     return False
 
 

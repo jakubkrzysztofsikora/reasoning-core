@@ -50,6 +50,9 @@
 - **Test Pass Rate**: 100% on locked and rotated tests
 - **Local Operation**: 100% local, no external telemetry
 
+> These evaluation figures are historical, single-codebase controlled-study
+> results using an earlier risk-label schema, not current real-usage guarantees.
+
 ### Evaluation Results
 
 - 8 real-world engineering tasks

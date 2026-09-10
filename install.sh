@@ -447,6 +447,60 @@ PYEOF
 }
 
 # ---------------------------------------------------------------------------
+# 6b. .pi/settings.json + extension + skill + trusted folder
+# ---------------------------------------------------------------------------
+install_pi() {
+  local template="$RC_REPO/.pi/settings.json.template"
+  if [[ ! -f "$template" ]]; then
+    warn "pi template missing at $template — skipping"
+    return
+  fi
+
+  mkdir -p .pi/extensions .pi/skills/reasoning
+  local target=".pi/settings.json"
+  if [[ -e "$target" ]]; then
+    skip "$target already exists"
+  else
+    render_template "$template" "$target"
+    if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$target" 2>/dev/null; then
+      fail "generated $target is not valid JSON"
+      rm -f "$target"
+      return
+    fi
+    ok "wrote $target"
+    record "$target"
+  fi
+
+  if [[ -f "$RC_REPO/.pi/extensions/reasoning_core_gate.ts" && ! -e .pi/extensions/reasoning_core_gate.ts ]]; then
+    cp "$RC_REPO/.pi/extensions/reasoning_core_gate.ts" .pi/extensions/reasoning_core_gate.ts
+    ok "wrote .pi/extensions/reasoning_core_gate.ts"
+    record ".pi/extensions/reasoning_core_gate.ts"
+  fi
+
+  if [[ -f "$RC_REPO/.pi/skills/reasoning/SKILL.md" && ! -e .pi/skills/reasoning/SKILL.md ]]; then
+    cp "$RC_REPO/.pi/skills/reasoning/SKILL.md" .pi/skills/reasoning/SKILL.md
+    ok "wrote .pi/skills/reasoning/SKILL.md"
+    record ".pi/skills/reasoning/SKILL.md"
+  fi
+
+  # Register repo in ~/.pi/trusted_folders.toml (mirrors Vibe pattern).
+  local trusted="$HOME/.pi/trusted_folders.toml"
+  mkdir -p "$(dirname "$trusted")"
+  local here quoted
+  here="$(pwd)"
+  quoted=$(python3 -c 'import sys; print(repr(sys.argv[1]))' "$here")
+  local block
+  block=$(printf '
+[[trusted]]\npath = %s\n' "$quoted")
+  if [[ -f "$trusted" ]] && grep -qxF "path = $quoted" "$trusted"; then
+    skip "$here already trusted in $trusted"
+  else
+    printf '%s' "$block" >> "$trusted"
+    ok "added $here to $trusted"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 7. .gitignore
 # ---------------------------------------------------------------------------
 update_gitignore() {
@@ -468,6 +522,7 @@ update_gitignore() {
 .codex/settings.json
 .gemini/settings.json
 .kimi/settings.json
+.pi/settings.json
 .vibe/config.toml
 .reasoning-core/
 # <<< reasoning-core <<<
@@ -497,7 +552,7 @@ printf '  RC_REPO     = %s\n' "$RC_REPO"
 printf '  TARGET_REPO = %s\n\n' "$TARGET_REPO"
 
 if [[ ! -x "$RC_PYTHON" ]]; then
-  warn "no venv at $RC_PYTHON yet — finish step 'Next' below before launching claude/codex/gemini/copilot/kimi/vibe"
+  warn "no venv at $RC_PYTHON yet — finish step 'Next' below before launching claude/codex/gemini/copilot/kimi/vibe/pi"
 fi
 
 ensure_direnv
@@ -508,6 +563,7 @@ install_gemini
 install_copilot
 install_kimi
 install_vibe
+install_pi
 update_gitignore
 direnv_allow
 

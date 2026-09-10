@@ -192,14 +192,17 @@ See repository documentation for Gemini CLI, GitHub Copilot CLI, and Mistral Vib
 - **Memory Usage**: ~200MB RAM
 - **Throughput**: Depends on hardware, typically 1-2 requests per minute
 
+> These evaluation figures are historical, single-codebase controlled-study
+> results using an earlier risk-label schema, not current real-usage guarantees.
+
 ## Evaluation
 
 ### Benchmark Results
 
-- **Token Savings**: 8.2% average reduction across all tasks
-- **Plan Quality**: +0.32 improvement (3.62 to 3.94 on 1-5 BARS scale)
-- **Implementation Quality**: +0.20 improvement (3.80 to 4.00)
-- **Test Pass Rate**: 100% on locked and rotated tests
+- **Historical token result**: 8.2% average reduction across all tasks
+- **Historical plan-quality difference**: +0.32 (3.62 to 3.94 on 1-5 BARS scale)
+- **Historical implementation-quality difference**: +0.20 (3.80 to 4.00)
+- **Historical test result**: 100% on locked and rotated tests for the sidecar arm
 
 ### Evaluation Setup
 

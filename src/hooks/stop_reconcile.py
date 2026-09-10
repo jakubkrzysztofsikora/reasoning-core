@@ -33,6 +33,8 @@ _PROJECT_ROOT = _HOOKS_DIR.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.hooks import audit_log  # type: ignore  # noqa: E402
+
 
 def _read_payload() -> dict:
     try:
@@ -72,12 +74,18 @@ def _run_rc_reconcile(project_dir: str) -> tuple[int, str, str]:
     if not rc_cli.is_file():
         return (0, "", "rc_cli.py not found")
     try:
+        env = os.environ.copy()
+        env["RC_RUN_DIR"] = project_dir
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (str(_PROJECT_ROOT), env.get("PYTHONPATH", "")) if part
+        )
         result = subprocess.run(
             [sys.executable, str(rc_cli), "reconcile", "--json"],
             capture_output=True,
             text=True,
             timeout=30,
             cwd=project_dir,
+            env=env,
         )
         return (result.returncode, result.stdout, result.stderr)
     except Exception as exc:
@@ -97,6 +105,45 @@ def _parse_reconcile_output(stdout: str) -> list[str]:
     except ValueError:
         pass
     return []
+
+
+def _emit_session_outcome(
+    payload: dict,
+    *,
+    project_dir: str,
+    rc: int,
+    missing: list[str],
+    rc_mode: str,
+    stderr: str,
+) -> None:
+    if rc == 0 and not missing:
+        reconcile_status = "clean"
+        outcome_status = "verified_clean"
+    elif rc == 1:
+        reconcile_status = "missing_gate_events"
+        outcome_status = "unverified_gap"
+    else:
+        reconcile_status = "infrastructure_error"
+        outcome_status = "unverified_infrastructure"
+
+    try:
+        audit_log.append_correlated_event(
+            event_type="session_outcome_recorded",
+            tool_name="Stop",
+            decision="session_outcome_recorded",
+            payload=payload,
+            project_dir=project_dir,
+            outcome_status=outcome_status,
+            reconcile_status=reconcile_status,
+            reconcile_returncode=rc,
+            missing_files=missing,
+            missing_count=len(missing),
+            rc_mode=rc_mode,
+            git_head_after=audit_log._git_head_at(project_dir),
+            reconcile_error=stderr.strip()[:512] if rc not in (0, 1) else "",
+        )
+    except Exception:  # noqa: BLE001 - outcome telemetry must never block Stop
+        pass
 
 
 def _resolve_rc_mode(project_dir: str) -> str:
@@ -177,6 +224,14 @@ def main() -> None:
 
     rc, stdout, stderr = _run_rc_reconcile(project_dir)
     missing = _parse_reconcile_output(stdout)
+    _emit_session_outcome(
+        payload,
+        project_dir=project_dir,
+        rc=rc,
+        missing=missing,
+        rc_mode=rc_mode,
+        stderr=stderr,
+    )
 
     # Reconcile errored (missing git, missing audit root, etc.). Treat as
     # "could not verify" — log to stderr but don't block, to avoid false

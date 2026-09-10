@@ -26,6 +26,8 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | `rc override-survival [--days N]` | Fraction of operator overrides that survived in the codebase |
 | `rc audit-history [-n N] [--json] [--reasons]` | Mine recent git history and label commits for Phase-4 calibration feedback |
 | `rc benchmark [--days N] [--before DATE] [--after DATE] [--output PATH] [--json PATH]` | One-command benchmark report from the local audit log |
+| `rc record-verification --kind test|lint|typecheck|build --status ...` | Persist a deterministic verification result and optionally link it to a decision |
+| `rc real-session-eval [--days N] [--project-dir PATH]` | Correlate real-session decisions with labels, verification receipts, session outcomes, and Git commits |
 
 `rc enable-enforcement` requires operator authentication (`RC_ENFORCEMENT_TOKEN`
 env var or a macOS keychain item) and an existing `PLAN.md`. It writes a fenced
@@ -43,6 +45,27 @@ class, a false-positive proxy, a token-cost proxy, median/p95 latency, and an
 override-survival ratio. Use `--before` / `--after` to compare two time windows,
 `--output` to save the Markdown report, and `--json` to emit machine-readable
 metrics for CI.
+
+`rc record-verification` is the deterministic evidence ingress for commands
+such as tests, lint, type checking, and builds. Pass both `--decision-id` and,
+when correlating a prior host event, its exact `--session-id`:
+
+```bash
+rc record-verification --kind test --status passed --exit-code 0 \
+  --decision-id <decision-id> --session-id <session-id> \
+  --command 'pytest -q'
+```
+
+`rc label` accepts the five primary evaluation labels plus supplemental process
+annotations: `plan_drift`, `verification_run`, `guard_recheck`, `revert_risk`,
+`session_continuity`, and `transcript_grounded`. Supplemental annotations do
+not change the primary five-category target.
+
+`rc real-session-eval` is a local-first evidence ledger. It uses exact decision
+IDs for labels/checks, session/project IDs for lifecycle outcomes, and Git head
+ranges for commit links. Missing links remain explicit; the report is advisory
+and must not be treated as causal proof or as a reason to change enforcement
+defaults by itself.
 
 ---
 
@@ -65,7 +88,8 @@ L1–L9 are wired in the reasoning-core repo's own
 [`.claude/settings.json`](../.claude/settings.json) and in the per-repo
 [`.claude/settings.local.json`](../install.sh) that `install.sh` generates
 for any target repo. L10 is opt-in. Every fire emits an audit row to
-`~/.local/share/reasoning-core/events/` (schema v3).
+`~/.local/share/reasoning-core/events/` (audit schema v4); correlated decision
+and lifecycle rows add `correlation_schema_version=1`.
 
 Note: hook arrays in `~/.claude/settings.json`, the repo's
 `.claude/settings.json`, and a per-repo `.claude/settings.local.json` merge

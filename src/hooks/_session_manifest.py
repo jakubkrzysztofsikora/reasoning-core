@@ -41,6 +41,9 @@ _LANG_FAMILY = {
     ".java": "java", ".kt": "kotlin",
     ".rb": "ruby",
     ".sql": "sql",
+    ".gd": "gdscript", ".tscn": "gdscript", ".tres": "gdscript",
+    ".gdshader": "gdscript", ".gdshaderinc": "gdscript",
+    ".godot": "gdscript", ".gdextension": "gdscript", ".shader": "gdscript",
 }
 
 _FRAMEWORK_HINTS = {
@@ -49,6 +52,8 @@ _FRAMEWORK_HINTS = {
     "javascript": (("jest", "spec.ts"), ("vitest", "vitest"), ("cypress", "cy.ts")),
     "go": (("testing", "_test.go"),),
     "rust": (("cargo-test", "tests/"),),
+    "gdscript": (("gut", "test_"), ("gdunit4", "test_")),
+    "godot": (("gut", "test_"), ("gdunit4", "test_")),
 }
 
 
@@ -143,10 +148,16 @@ def _declared_set(manifest: Optional[dict]) -> set:
     if decl is None:
         return set()
     if isinstance(decl, str):
-        return {decl}
-    if isinstance(decl, (list, tuple, set)):
-        return set(decl)
-    return set()
+        res = {decl}
+    elif isinstance(decl, (list, tuple, set)):
+        res = set(decl)
+    else:
+        res = set()
+    if "godot" in res:
+        res.add("gdscript")
+    if "gdscript" in res:
+        res.add("godot")
+    return res
 
 
 def is_path_allowed(manifest: Optional[dict], file_path: str) -> bool:
@@ -172,6 +183,10 @@ def is_path_allowed(manifest: Optional[dict], file_path: str) -> bool:
     if file_lang is None:
         return True  # unknown extension; let the SSM scorer handle it
     if file_lang in declared:
+        return True
+    if file_lang == "gdscript" and "godot" in declared:
+        return True
+    if file_lang == "godot" and "gdscript" in declared:
         return True
     allow = set(manifest.get("lang_allow") or [])
     ext = Path(file_path).suffix.lower()

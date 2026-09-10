@@ -76,3 +76,54 @@ def test_confirm_next_emits_operator_confirmed(isolated_rc):
     assert ev["reason"] == "confirm_next_armed"
     assert ev["session_id"] == "rc-cli-test"
     assert "decision_id" in ev
+
+
+def test_record_verification_emits_correlated_result(isolated_rc):
+    tmp_path, rc_cli, _al, _ks = isolated_rc
+    project = tmp_path / "project"
+    project.mkdir()
+    rc = rc_cli.main(
+        [
+            "record-verification",
+            "--kind",
+            "test",
+            "--status",
+            "failed",
+            "--exit-code",
+            "1",
+            "--command",
+            "pytest -q tests/test_example.py",
+            "--decision-id",
+            "decision-123",
+            "--project-dir",
+            str(project),
+            "--session-id",
+            "rc-cli-test",
+            "--run-id",
+            "run-123",
+            "--task-id",
+            "task-456",
+            "--transcript-path",
+            "/tmp/transcript.jsonl",
+            "--tool-call-id",
+            "tool-789",
+            "--turn-index",
+            "8",
+            "--baseline-id",
+            "baseline-2026-09-09",
+        ]
+    )
+    assert rc == 0
+    ev = _read_latest_event(tmp_path / "events")
+    assert ev is not None
+    assert ev["event_type"] == "verification_recorded"
+    assert ev["decision"] == "verification_failed"
+    assert ev["verification_kind"] == "test"
+    assert ev["verification_status"] == "failed"
+    assert ev["exit_code"] == 1
+    assert ev["parent_decision_id"] == "decision-123"
+    assert ev["session_id"] == "rc-cli-test"
+    assert ev["run_id"] == "run-123"
+    assert ev["task_id"] == "task-456"
+    assert ev["tool_call_id"] == "tool-789"
+    assert ev["turn_index"] == 8

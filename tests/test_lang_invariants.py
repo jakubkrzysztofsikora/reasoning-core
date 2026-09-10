@@ -233,3 +233,39 @@ def test_atomic_manifest_save():
         sm.save(mani)
         loaded = sm.load("test")
         assert loaded["declared_language"] == "csharp"
+
+
+def test_godot_gdscript_detection_and_path_allowed(tmp_path):
+    """Godot project with .gd, .tscn, .tres detects gdscript and allows Godot files."""
+    import _session_manifest as sm
+    for i in range(20):
+        (tmp_path / f"player_{i}.gd").write_text("extends CharacterBody3D\n")
+    for i in range(5):
+        (tmp_path / f"level_{i}.tscn").write_text("[gd_scene format=3]\n")
+    # Stray Python or Rust file
+    (tmp_path / "helper.py").write_text("print(1)")
+
+    declared, counts = sm.detect_initial_language(str(tmp_path))
+    assert declared == "gdscript"
+
+    with tempfile.TemporaryDirectory() as td:
+        _seed_manifest(Path(td), declared="gdscript")
+        mani = sm.load(sm.manifest_key("/fake/repo", "test-task"))
+        assert sm.is_path_allowed(mani, "src/main.gd") is True
+        assert sm.is_path_allowed(mani, "scenes/level.tscn") is True
+        assert sm.is_path_allowed(mani, "assets/material.tres") is True
+        assert sm.is_path_allowed(mani, "shaders/water.gdshader") is True
+        assert sm.is_path_allowed(mani, "project.godot") is True
+        # Foreign file blocked
+        assert sm.is_path_allowed(mani, "src/other.py") is False
+
+
+def test_godot_alias_compatibility():
+    """Declaring 'godot' allows gdscript files, and declaring 'gdscript' allows godot alias."""
+    import _session_manifest as sm
+    with tempfile.TemporaryDirectory() as td:
+        _seed_manifest(Path(td), declared="godot")
+        mani = sm.load(sm.manifest_key("/fake/repo", "test-task"))
+        assert sm.is_path_allowed(mani, "src/main.gd") is True
+        assert sm.is_path_allowed(mani, "scenes/level.tscn") is True
+
