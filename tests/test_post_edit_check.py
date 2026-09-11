@@ -267,6 +267,37 @@ def test_manual_receipts_without_batch_id_do_not_consume_repair_budget(tmp_path,
     assert "Repair: attempt 1 of 2" in out
 
 
+def test_duplicate_firing_for_identical_content_is_deduped(tmp_path, monkeypatch, capsys):
+    project = tmp_path / "repo"
+    project.mkdir()
+    target = project / "broken.py"
+    target.write_text("def broken(:\n", encoding="utf-8")
+    monkeypatch.setattr(hook.audit_log, "_AUDIT_ROOT", str(tmp_path / "events"))
+    monkeypatch.setenv("RC_SESSION_ID", "sess-dedupe")
+    payload = {
+        "tool_name": "Edit",
+        "cwd": str(project),
+        "session_id": "sess-dedupe",
+        "tool_input": {"file_path": str(target)},
+    }
+
+    hook.main_with_payload(payload)
+    first_out = capsys.readouterr().out
+    receipts_after_first = len([
+        event for event in _events(tmp_path)
+        if event.get("event_type") == "verification_recorded"
+    ])
+    hook.main_with_payload(payload)
+    second_out = capsys.readouterr().out
+
+    assert "Verification: FAILED" in first_out
+    assert second_out == ""
+    assert len([
+        event for event in _events(tmp_path)
+        if event.get("event_type") == "verification_recorded"
+    ]) == receipts_after_first
+
+
 def test_repair_budget_survives_payload_vs_audit_session_mismatch(tmp_path, monkeypatch, capsys):
     """Real Claude hooks use the payload UUID; the audit file is keyed by env."""
     project = tmp_path / "repo"
@@ -283,7 +314,8 @@ def test_repair_budget_survives_payload_vs_audit_session_mismatch(tmp_path, monk
         "tool_input": {"file_path": str(target)},
     }
     outputs = []
-    for _ in range(3):
+    for attempt in range(3):
+        target.write_text(f"def broken_{attempt}(:\n", encoding="utf-8")
         hook.main_with_payload(payload)
         outputs.append(capsys.readouterr().out)
 
@@ -342,7 +374,8 @@ def test_main_abstains_after_repeated_failures(tmp_path, monkeypatch, capsys):
         "tool_input": {"file_path": str(target)},
     }
     outputs = []
-    for _ in range(3):
+    for attempt in range(3):
+        target.write_text(f"def broken_{attempt}(:\n", encoding="utf-8")
         hook.main_with_payload(payload)
         outputs.append(capsys.readouterr().out)
 

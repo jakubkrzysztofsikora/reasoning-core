@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import gzip
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -36,7 +39,33 @@ _EDIT_TOOLS = {"Edit", "Write", "MultiEdit"}
 _MAX_FILE_BYTES = 1_000_000
 _MAX_YAML_BYTES = 262_144
 _CHECK_TIMEOUT_S = 5.0
+_DEDUPE_WINDOW_S = 15.0
 _PARSE_SUFFIXES = {".py", ".json", ".toml", ".yaml", ".yml"}
+
+
+def _already_checked_recently(file_path: str, source: str) -> bool:
+    """Dedupe identical checks when a hook is wired twice (global + repo)."""
+    digest = hashlib.sha256(
+        f"{file_path}\0{source}".encode("utf-8", errors="replace")
+    ).hexdigest()[:16]
+    marker = Path(tempfile.gettempdir()) / f"rc-post-edit-{digest}.claim"
+    try:
+        os.close(os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        return False
+    except FileExistsError:
+        try:
+            age = time.time() - marker.stat().st_mtime
+        except OSError:
+            return False
+        if age < _DEDUPE_WINDOW_S:
+            return True
+        try:
+            os.utime(marker)
+        except OSError:
+            pass
+        return False
+    except OSError:
+        return False
 
 
 class _YamlAliasesDisabled(Exception):
@@ -448,6 +477,8 @@ def _run(payload: dict[str, Any]) -> int:
     project_dir = _project_dir(payload)
     source = _read_source(file_path, project_dir)
     if source is None:
+        return 0
+    if _already_checked_recently(file_path, source):
         return 0
 
     results: list[dict[str, Any]] = []
