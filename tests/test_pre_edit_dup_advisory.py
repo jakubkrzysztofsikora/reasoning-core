@@ -121,6 +121,8 @@ def test_main_opt_out_never_builds_the_index(monkeypatch, capsys):
         hook.main()
     assert exc.value.code == 0
     assert touched == []  # opt-out -> _get_index never called
+    captured = capsys.readouterr()
+    assert captured.out == "" and "dup-oracle" not in captured.err  # off -> fully silent
 
 
 def test_main_fails_open_on_garbage_payload(monkeypatch, capsys):
@@ -186,7 +188,9 @@ def test_main_fails_open_when_the_work_raises(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc:
         hook.main()
     assert exc.value.code == 0
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""              # never blocks / never emits advisory
+    assert "skipped" in captured.err       # ...but the swallowed failure is traced
 
 
 def test_main_bails_out_cleanly_if_the_feature_failed_to_import(monkeypatch, capsys):
@@ -202,7 +206,10 @@ def test_main_bails_out_cleanly_if_the_feature_failed_to_import(monkeypatch, cap
     with pytest.raises(SystemExit) as exc:
         hook.main()
     assert exc.value.code == 0
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""            # never blocks / never emits advisory
+    # ...but enabled-yet-inactive (import failed) is surfaced, not silent.
+    assert "inactive" in captured.err
 
 
 # --- self-skip is a COMPOUND key: path AND name -------------------------------
@@ -227,3 +234,32 @@ def test_advise_flags_a_duplicate_within_the_edited_file(tmp_path):
     added = "export function tidy(t) {\n  " + _SLUG_BODY.format(v="t") + "\n}\n"
     text = advise(added, str(tmp_path / "a.ts"), index, embed_fn=_stub_embed, repo_root=str(tmp_path))
     assert text is not None and "clean" in text
+
+
+# --- the hook uses the PERSISTED builder --------------------------------------
+
+
+def test_get_index_delegates_to_the_persisted_builder(monkeypatch):
+    # _get_index must build via the disk-persisted load_or_build_dup_index, NOT
+    # the persistence-free build_dup_index, so a fresh hook process reuses the
+    # on-disk cache instead of re-embedding the whole repo.
+    hook._INDEX_CACHE.clear()
+    sentinel = object()
+    calls = {"persist": 0, "plain": 0}
+
+    def fake_persist(root):
+        calls["persist"] += 1
+        return sentinel
+
+    def fake_plain(root, **kwargs):
+        calls["plain"] += 1
+        return sentinel
+
+    monkeypatch.setattr(hook, "load_or_build_dup_index", fake_persist)
+    monkeypatch.setattr(hook, "build_dup_index", fake_plain)
+    try:
+        out = hook._get_index("/some/repo")
+    finally:
+        hook._INDEX_CACHE.clear()
+    assert out is sentinel
+    assert calls == {"persist": 1, "plain": 0}
