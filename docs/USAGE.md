@@ -109,6 +109,23 @@ and correlation fields, then deletes the artifact. Canary paths carry the
 | L9 | `session_resume_inject.py` | SessionStart (resume) + UserPromptSubmit | Re-injects pinned env from the prior session manifest into the resumed shell |
 | L10 | `post_assistant_diff_audit.py` | Stop (opt-in, `RC_DIFF_AUDIT=1`) | Scans the last assistant diff in transcript via `validate_unified_diff`; injects advisory + best-effort repaired patch |
 
+### Antigravity CLI (`agy`)
+
+`agy` uses its own hook contract (camelCase payloads, `decision: allow|deny`,
+PreInvocation `injectSteps`). `src/hooks/agy_bridge.py` translates between that
+contract and the rc guards/receipts above:
+
+* `pre_command` / `pre_edit` run `pre_bash_guard.py` / `pre_edit_guard.py` and
+  map exit 2 to `{"decision": "deny", "reason": ...}`.
+* `post_command` / `post_edit` run `post_bash_verification.py` /
+  `post_edit_check.py` and answer `{}`.
+* `pre_invocation` reads the latest unresolved failed episode and injects a
+  bounded repair message via `injectSteps`.
+
+Wiring is machine-global at `~/.gemini/config/hooks.json` (matchers
+`run_command` and `write_to_file|replace_file_content`). The bridge exports the
+agy `conversationId` as `RC_SESSION_ID` so receipts stay correlated.
+
 L1–L9 are wired in the reasoning-core repo's own
 [`.claude/settings.json`](../.claude/settings.json) and in the per-repo
 [`.claude/settings.local.json`](../install.sh) that `install.sh` generates
