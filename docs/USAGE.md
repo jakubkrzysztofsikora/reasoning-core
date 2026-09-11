@@ -29,6 +29,7 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | `rc benchmark [--days N] [--before DATE] [--after DATE] [--output PATH] [--json PATH]` | One-command benchmark report from the local audit log |
 | `rc record-verification --kind test|lint|typecheck|build --status ...` | Persist a deterministic verification result and optionally link it to a decision |
 | `rc real-session-eval [--days N] [--project-dir PATH]` | Correlate real-session decisions with labels, verification receipts, session outcomes, and Git commits |
+| `rc episodes [--days N] [--session-id ID] [--project-dir PATH] [--json]` | Derived edit episodes: edit events, deterministic checks (explicit vs session-level), repair attempts, final status |
 
 `rc enable-enforcement` requires operator authentication (`RC_ENFORCEMENT_TOKEN`
 env var or a macOS keychain item) and an existing `PLAN.md`. It writes a fenced
@@ -72,6 +73,24 @@ never reruns commands or invents missing status. Missing links remain explicit;
 the report is advisory and must not be treated as causal proof or as a reason
 to change enforcement defaults by itself.
 
+`rc episodes` derives one record per edited file per session/task from the same
+audit rows: edit events, deterministic checks (marked `explicit_decision` only
+for exact parent links, `session_level` otherwise), repair attempts, and a
+final status. Unattributed checks are never guessed into an episode.
+
+The Claude PostToolUse `Edit|Write|MultiEdit` hook (`post_edit_check.py`) runs
+only cheap deterministic checks after an edit — parse/syntax, configured lint
+(ruff for Python), and project rules from `.reasoning-core/rules.yaml` — records
+`verification_recorded` receipts, and returns a compact advisory summary when a
+check fails. It never blocks and never consults neural scoring. Repair is
+bounded to 2 attempts; when checks still fail, the summary tells the agent to
+stop and ask the user. Disable with `RC_POST_EDIT_CHECKS=0`.
+
+`rc doctor` ends with a real canary: it executes the installed post-edit hook
+against an isolated temporary audit root, verifies the synthetic receipt schema
+and correlation fields, then deletes the artifact. Canary paths carry the
+`rc-doctor-canary-` prefix and are excluded from product evidence.
+
 ---
 
 ## Hook layers
@@ -84,6 +103,7 @@ to change enforcement defaults by itself.
 | L4 | `pre_task_guard.py` | PreToolUse / `Task` | Regex screen on subagent prompts mentioning guarded paths with mutation verbs |
 | L5 | `post_bash_revive.py` | PostToolUse / `Bash` | Re-spawns sidecar when `/health` stops responding after a kill-shaped command |
 | L6 | `post_batch_lang_audit.py` | PostToolUse / `Edit\|Write\|MultiEdit` | After-the-fact language-fingerprint audit; logs drift events when foreign-language ratio crosses `RC_LANG_AUDIT_THRESHOLD` |
+| L6b | `post_edit_check.py` | PostToolUse / `Edit\|Write\|MultiEdit` | Cheap deterministic checks (parse, lint, project rules); records receipts; bounded advisory feedback; never blocks |
 | L7 | `pre_compact_guard.py` | PreCompact | Captures pre-compaction state so post-compact context can be reconciled |
 | L8 | `session_start_manifest.py` | SessionStart | Snapshots `RC_*` env, repo SHA, language fingerprint, active task spec; prevents mid-session env tampering |
 | L9 | `session_resume_inject.py` | SessionStart (resume) + UserPromptSubmit | Re-injects pinned env from the prior session manifest into the resumed shell |

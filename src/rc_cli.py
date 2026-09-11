@@ -38,6 +38,7 @@ if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
 
 import _commit_miner as _cm  # type: ignore  # noqa: E402
+import _episodes as _ep  # type: ignore  # noqa: E402
 import _kill_switches as ks  # type: ignore  # noqa: E402
 import audit_log  # type: ignore  # noqa: E402
 import _session_correlator as _sc  # type: ignore  # noqa: E402
@@ -383,30 +384,36 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     check("git_repository", (project / ".git").exists(), "git metadata present")
     verification_hook = _HOOKS_DIR / "post_bash_verification.py"
     check("verification_hook", verification_hook.is_file(), str(verification_hook))
+    edit_check_hook = _HOOKS_DIR / "post_edit_check.py"
+    check("edit_check_hook", edit_check_hook.is_file(), str(edit_check_hook))
     check("rc_cli", Path(__file__).is_file(), str(Path(__file__)))
 
     config_candidates = (
         project / ".claude" / "settings.local.json",
         project / ".claude" / "settings.json",
     )
-    configured = False
-    config_detail = "no Claude settings found"
+    bash_wired = False
+    edit_wired = False
+    config_details: list[str] = []
     for config in config_candidates:
         if not config.is_file():
             continue
         try:
             data = json.loads(config.read_text(encoding="utf-8"))
-            hooks = data.get("hooks", {}).get("PostToolUse", [])
-            configured = any(
-                "post_bash_verification.py" in json.dumps(item)
-                for item in hooks
+            blob = json.dumps(data.get("hooks", {}).get("PostToolUse", []))
+            file_bash = "post_bash_verification.py" in blob
+            file_edit = "post_edit_check.py" in blob
+            bash_wired = bash_wired or file_bash
+            edit_wired = edit_wired or file_edit
+            config_details.append(
+                f"{config}: bash={'yes' if file_bash else 'no'} "
+                f"edit={'yes' if file_edit else 'no'}"
             )
-            config_detail = f"{config}: {'configured' if configured else 'missing hook'}"
-            if configured:
-                break
         except (OSError, ValueError) as exc:
-            config_detail = f"{config}: invalid ({exc})"
-    check("post_tooluse_wiring", configured, config_detail)
+            config_details.append(f"{config}: invalid ({exc})")
+    config_detail = "; ".join(config_details) or "no Claude settings found"
+    check("post_tooluse_wiring", bash_wired, config_detail)
+    check("post_tooluse_edit_wiring", edit_wired, config_detail)
 
     audit_root = _audit_root()
     try:
@@ -415,6 +422,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     except OSError:
         writable = False
     check("audit_store_writable", writable, str(audit_root))
+
+    canary_ok = False
+    try:
+        from _canary import run_evidence_canary  # type: ignore
+    except ImportError as exc:
+        canary_detail = f"unavailable ({exc})"
+    else:
+        canary_ok, canary_report = run_evidence_canary()
+        canary_detail = (
+            f"synthetic={canary_report['synthetic']}; "
+            f"receipts={canary_report['receipts']}; "
+            f"kinds={','.join(canary_report['kinds']) or 'none'}; "
+            f"correlation={'ok' if canary_report['correlation_ok'] else 'FAIL'}; "
+            f"cleaned_up={canary_report['cleaned_up']}"
+        )
+        if canary_report.get("error"):
+            canary_detail += f"; error={canary_report['error']}"
+    check("evidence_canary", canary_ok, canary_detail)
 
     passed = sum(1 for item in checks if item["ok"])
     result = {"project_dir": str(project), "passed": passed, "total": len(checks), "checks": checks}
@@ -1216,6 +1241,7 @@ def cmd_record_verification(args: argparse.Namespace) -> int:
         tool_name=args.tool_name,
         decision=f"verification_{args.status}",
         payload=payload,
+        file_path=args.file_path,
         project_dir=str(project_dir),
         verification_kind=args.kind,
         verification_status=args.status,
@@ -1789,6 +1815,28 @@ def cmd_real_session_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_episodes(args: argparse.Namespace) -> int:
+    """List derived edit episodes: edit -> checks -> repair -> outcome."""
+    episodes = _ep.build_episodes(
+        Path(args.audit_root or _audit_root()),
+        days=args.days,
+        session_id=args.session_id,
+        project_dir=args.project_dir,
+        include_synthetic=args.include_synthetic,
+    )
+    if args.json:
+        sys.stdout.write(
+            json.dumps(
+                {"schema_version": _ep.SCHEMA_VERSION, "episodes": episodes},
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
+        )
+    else:
+        sys.stdout.write(_ep.render_markdown(episodes))
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1889,6 +1937,7 @@ def main(argv: list | None = None) -> int:
     v.add_argument("--exit-code", type=int, default=None)
     v.add_argument("--command", default=None)
     v.add_argument("--artifact-ref", default=None)
+    v.add_argument("--file-path", default=None, help="file the check concerns (optional correlation)")
     v.add_argument("--decision-id", default=None, help="guard decision this result verifies; omit for session-level checks")
     v.add_argument(
         "--association-type",
@@ -1964,6 +2013,17 @@ def main(argv: list | None = None) -> int:
         help="include obvious test-fixture paths (debugging only)",
     )
     real_cmd.set_defaults(func=cmd_real_session_eval)
+    ep_cmd = sub.add_parser(
+        "episodes",
+        help="list derived edit episodes (edit -> checks -> repair -> outcome)",
+    )
+    ep_cmd.add_argument("--days", type=int, default=30)
+    ep_cmd.add_argument("--audit-root", default=None)
+    ep_cmd.add_argument("--session-id", default=None)
+    ep_cmd.add_argument("--project-dir", default=None)
+    ep_cmd.add_argument("--include-synthetic", action="store_true")
+    ep_cmd.add_argument("--json", action="store_true")
+    ep_cmd.set_defaults(func=cmd_episodes)
     args = p.parse_args(argv)
     return args.func(args)
 

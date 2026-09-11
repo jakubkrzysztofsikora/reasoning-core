@@ -178,6 +178,7 @@ rc label-stats              # progress toward the 20-positive-per-label target
 rc benchmark                # Markdown report from your local audit log
 rc record-verification      # persist a deterministic test/lint/build result
 rc real-session-eval        # correlate real sessions with labels and outcomes
+rc episodes                 # derived edit episodes (checks, repairs, final status)
 rc reasoning-efficiency     # composite north-star metric from the audit log
 rc audit-history            # label commits negative if followed by fix/revert
 ```

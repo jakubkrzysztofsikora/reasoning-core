@@ -30,14 +30,29 @@ _VERIFICATION_EVENT = "verification_recorded"
 _START_EVENT = "session_started"
 
 
+def _has_canary_component(path: str) -> bool:
+    """Match canary dirs by path component, not mid-name substrings."""
+    if not path:
+        return False
+    try:
+        return any(
+            part.startswith("rc-doctor-canary-") for part in Path(path).parts
+        )
+    except (OSError, ValueError):
+        return False
+
+
 def _is_synthetic_fixture(event: dict[str, Any]) -> bool:
     """Recognize test/fixture paths that must not enter product evidence."""
     project = str(event.get("project_dir") or "")
+    session = str(event.get("session_id") or event.get("source_session_id") or "")
     return (
         project == "/fake/repo"
         or project.startswith("/fake/")
         or "/pytest-of-" in project
         or "/pytest-" in project
+        or _has_canary_component(project)
+        or session.startswith("rc-doctor-canary-")
     )
 
 

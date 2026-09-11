@@ -66,6 +66,11 @@
             "type": "command",
             "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/post_batch_lang_audit.py",
             "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": "python3 ${CLAUDE_PROJECT_DIR}/src/hooks/post_edit_check.py",
+            "timeout": 15000
           }
         ]
       }
