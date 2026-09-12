@@ -1,0 +1,64 @@
+name: Supply-chain scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  supply-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+
+      - name: Install supply-core
+        run: |
+          set -euo pipefail
+          bin="$HOME/.local/bin/supply-core"
+          mkdir -p "$(dirname "$bin")"
+          primary="https://supply-core.tail5d39b4.ts.net/api/v1/download/supply-core-linux-x86_64"
+          fallback="https://github.com/jakubkrzysztofsikora/supply-core/releases/latest/download/supply-core-linux-x86_64"
+          if ! curl -fsSL --connect-timeout 5 --max-time 30 "$primary" -o "$bin"; then
+            echo "official service unavailable; using GitHub release fallback"
+            curl -fsSL --max-time 90 "$fallback" -o "$bin"
+          fi
+          chmod +x "$bin"
+          "$bin" --version
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Scan workflow pinning
+        run: supply-core scan-actions . --annotations
+
+      - name: Scan container image pinning
+        if: always()
+        run: supply-core scan-docker .
+
+      - name: Dependency snapshots
+        if: always()
+        run: |
+          mkdir -p supply-core-reports
+          if [ -f requirements.txt ]; then
+            supply-core snapshot-pip . --osv > supply-core-reports/pip.json || true
+          fi
+          if [ -f package-lock.json ]; then
+            supply-core snapshot-npm . --osv > supply-core-reports/npm.json || true
+          fi
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: supply-core-reports
+          path: supply-core-reports
+          if-no-files-found: ignore
+          retention-days: 14
