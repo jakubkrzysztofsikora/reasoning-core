@@ -144,13 +144,17 @@ GUARDED_PATHS: Tuple[str, ...] = _build_module_paths()
 def is_guarded(file_path: str) -> bool:
     """Return True iff `file_path` matches a guarded substring.
 
-    Normalizes to an absolute path before substring matching (round-2 fix:
-    a relative path could otherwise sidestep the lock entirely when a
-    non-Claude caller passes one in).
+    Normalizes to a real (symlink-resolved) absolute path before substring
+    matching. Audit-hostile/2026-09-19-fixes: switching from abspath() to
+    realpath() closes the symlink-bypass vector where the caller passes a
+    benign-looking path that resolves through a symlink to a guarded file.
     """
     if not file_path:
         return False
-    norm = os.path.abspath(file_path)
+    try:
+        norm = os.path.realpath(file_path)
+    except OSError:
+        norm = os.path.abspath(file_path)
     return any(g in norm for g in GUARDED_PATHS)
 
 

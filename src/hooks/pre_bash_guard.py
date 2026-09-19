@@ -82,6 +82,19 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"kill_switches\.json"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
+    # `git apply` always writes working-tree files from a patch. Reviewer-flagged
+    # in audit-hostile/2026-09-19-fixes §"Shell Guard Bypasses". Block outright;
+    # legitimate patch application goes through Claude's Edit tool.
+    re.compile(r"\bgit\s+apply\b"),
+    # `git checkout <commit> -- <paths>` without our src-ext regex would slip
+    # through when the paths are bare filenames without extensions. Block any
+    # `git checkout <sha>` shape so the agent must use Edit/Write.
+    re.compile(r"\bgit\s+checkout\s+[0-9a-f]{7,}\b"),
+    # `git restore <paths>` and `git restore --source=<sha> <paths>` always
+    # rewrite working-tree files.
+    re.compile(r"\bgit\s+restore\b"),
+    # `git stash apply` reapplies a stash to working tree.
+    re.compile(r"\bgit\s+stash\s+apply\b"),
     # Reviewer-flagged (3-reviewer convergent on commit c2cc135):
     # bare `\bRC_*\s*=\s*\S` over-blocks heredoc bodies, doc generators,
     # and comments containing the literal string. Anchored on COMMAND
@@ -129,6 +142,21 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"""(?:node)\b[^|;&]*-e\b[^|;&]*write(?:FileSync|file)\s*\("""),
     # `cat <<EOF > path.py` heredocs
     re.compile(rf"<<\s*['\"]?\w+['\"]?[^|;&]*>\s*['\"]?[^|;&\s]*({_SRC_EXT_PATTERN})\b"),
+    # `cp|mv|install|rsync <src> <dest>` where dest is a tracked source ext.
+    # Audit-hostile/2026-09-19-fixes: lifted from the lang-lock-only path
+    # so these trip the base guard regardless of RC_LANG_LOCK.
+    re.compile(rf"\b(?:cp|mv|install|rsync)\b[^|;&]+\s([^|;&\s]+(?:{_SRC_EXT_PATTERN}))\b"),
+    # `pathlib.Path("x.py").write_text(...)` — modern idiom,
+    # not covered by the open() regex above.
+    re.compile(r"""pathlib\.Path\s*\([^)]+\)\.(?:write_text|write_bytes)\s*\("""),
+    # `git checkout|restore|stash apply|apply` writing into source paths.
+    # The leading-tokens allowlist still contains "git" for benign commands
+    # (status, log, diff, show) but these subcommands always need review.
+    re.compile(rf"\bgit\s+(?:checkout|restore|stash\s+apply|apply)\b[^|;&]*([\w./\-]+(?:{_SRC_EXT_PATTERN}))\b"),
+    # `base64 -d | bash|sh|zsh|eval` payload obfuscation pattern.
+    re.compile(r"""base64\b[^|;&]*-d\b[^|;&]*\|\s*(?:bash|sh|zsh|eval)\b"""),
+    # `$(echo ... | base64 -d)` alternate obfuscation form.
+    re.compile(r"""\$\(\s*echo\b[^)]*\|\s*base64\b[^)]*-d\b[^)]*\)"""),
 )
 
 # Always-allow commands. If the command starts with one of these tokens and
