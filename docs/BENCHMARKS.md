@@ -213,3 +213,11 @@ Smoke run:
 python3 -m eval.run_suite --task fixtures/smoke --n 2
 python3 -m eval.aggregate --runs eval/runs/smoke-001
 ```
+
+
+## See also
+
+- [`docs/AUDIT_RESPONSE_2026_09_19.md`](AUDIT_RESPONSE_2026_09_19.md) —
+  response to the 2026-09-19 hostile review that surfaced the
+  T5/T7/P0 data-integrity issues. The retraction block above lives at
+  commit `841211b` on branch `audit-hostile/2026-09-19-fixes`.

@@ -177,3 +177,16 @@ A future commit will land structured JSONL audit at
 5. **Subagent prompt-intent scoring is partial.** L4 is regex-screened —
    mutation-verb tokens against guarded-path mentions. Full SSM-based
    scoring of the prompt content is a phase-3 task.
+
+## Related
+
+- [`docs/AUDIT_RESPONSE_2026_09_19.md`](AUDIT_RESPONSE_2026_09_19.md) —
+  response to the 2026-09-19 hostile technical audit. Verified findings
+  were fixed on the `audit-hostile/2026-09-19-fixes` branch; rejected
+  findings are documented in-place.
+- [`docs/AUDIT_GAP_2026_07_10.md`](AUDIT_GAP_2026_07_10.md) — the
+  prior 2026-07-10 self-assessment of operator-posture defaults
+  (`RC_MODE=advise` + `RC_SHADOW_MODE=1` as honest Phase-0 opt-in).
+- [`docs/BENCHMARKS.md`](BENCHMARKS.md) — iteration-1 evaluation;
+  the per-task table was retracted on 2026-09-19 for data-integrity
+  issues (duplicated rows, inverted winner, contradictory tables).

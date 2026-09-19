@@ -61,22 +61,32 @@ outcomes.
 
 ## Quick start
 
-```bash
-# 1. Clone and bootstrap the framework
-git clone https://github.com/jakubkrzysztofsikora/reasoning-core.git
-cd reasoning-core
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-huggingface-cli download state-spaces/mamba-130m-hf
-bash scripts/install-supervisor-launchagent.sh   # macOS sidecar daemon
+Two commands. No git clone, no venv, no launchd dance, no `pip install -r
+requirements.txt`. `pip install reasoning-core[full]` puts the framework
+and every Python dep (torch, transformers, tree-sitter, fastapi, mcp,
+ruff, …) on PATH and installs an `rc` console script. `rc init` wires
+hooks into the current repo, downloads the default embedder, and brings
+up the sidecar supervisor as a per-user daemon.
 
-# 2. Wire it into any repo you want gated
+```bash
+# 1. Install the framework (one-shot, ~5 min on broadband — pulls ~500 MB
+#    of Python deps and the 250 MB mamba-130m checkpoint up front so the
+#    gate is complete by the time you reach step 3).
+pip install reasoning-core[full]
+
+# 2. Wire it into the repo you want gated
 cd /path/to/your-repo
-bash ~/path/to/reasoning-core/install.sh
+rc init                         # adds .envrc, .claude/, .codex/, .gemini/,
+                                # .copilot/, .kimi/, .vibe/, .pi/ + sidecar daemon
 
 # 3. Run your CLI — hooks fire automatically
-claude       # or: codex / gemini / copilot / kimi / vibe
+claude                           # or: codex / gemini / copilot / kimi / vibe / pi
 ```
+
+If `pip install reasoning-core[full]` fails on your platform, the
+fallback flow is `pip install reasoning-core && pip install -r
+requirements.txt` (still no git clone). See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md)
+for moving off the old clone-and-install flow.
 
 When the gate blocks an edit, you see a `Decision ID` you can inspect or
 override from the terminal:
@@ -144,7 +154,7 @@ your machine.
 
 ## Configure
 
-Defaults installed by `install.sh` are honest-opt-in — the gate warns and audits,
+Defaults installed by `rc init` are honest-opt-in — the gate warns and audits,
 never blocks. Enforcement is opt-in via `rc enable-enforcement` and requires an
 authenticated operator action. See [`docs/HARDENING.md`](docs/HARDENING.md) for
 the guard-integrity model.
@@ -161,10 +171,33 @@ Per-machine overrides → `.envrc.local` (gitignored). Run `rc enable-enforcemen
 after ~48 h of shadow review and manually authoring a `PLAN.md` to promote to
 `RC_MODE=copilot`. Full env-var table: [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
+
+## Audit & hardening
+
+A hostile technical audit of this codebase was filed on 2026-09-19 and is
+publicly addressed in [`docs/AUDIT_RESPONSE_2026_09_19.md`](docs/AUDIT_RESPONSE_2026_09_19.md).
+Verified findings (async-event-loop starvation, supervisor self-termination,
+`_BASELINES` memory leak, singleflight blocking, several shell-guard bypasses)
+were fixed on the `audit-hostile/2026-09-19-fixes` branch; claims the audit
+got wrong (label polarity, the `ais<0.4` dead-code claim, install.sh direnv
+trust) are documented as rejected. Per `AGENTS.md`, a pre-fix and post-fix
+immutable baseline were captured before and after the changes.
+
+The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
+`git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
+`pathlib.Path().write_text(...)`, and `base64 -d | bash|sh|zsh|eval`.
+Tunable knobs: `S2_HEALTH_TIMEOUT_S` (default 15s), `S2_HEALTH_GRACE_S`
+(default 60s), `S2_BASELINE_MAX_SESSIONS` (default 256),
+`S2_BASELINE_TTL_S` (default 24h).
+
 ## `rc` CLI
 
 ```bash
 rc status                   # sidecar health + threshold posture
+rc init                     # wire hooks into the current repo (replaces install.sh)
+rc init --no-sidecar        # same, but skip the launchd/systemd daemon
+rc init --no-model          # same, but skip the mamba-130m download
+rc init-uninstall           # revert rc init via .reasoning-core/install.manifest
 rc doctor                   # verify agent-hook wiring and evidence capture
 rc explain <decision-id>    # why the last edit was blocked
 rc bypass-next              # arm one bypass for the next Edit/Write
