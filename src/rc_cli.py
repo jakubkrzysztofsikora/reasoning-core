@@ -1,5 +1,4 @@
 """Reasoning-core operator CLI. Day-zero ergonomics per plan v2 P-1.
-
 Subcommands:
     rc status                 — env knobs + sidecar health + last 5 decisions
     rc explain <decision-id>  — full audit row for a decision
@@ -10,11 +9,9 @@ Subcommands:
     rc skip-file <path>       — add file to per-session skip list
     rc unskip-file <path>     — remove file from skip list
     rc score-pr               — score changed files in a PR/MR (CI helper)
-
 Reads the same kill-switch file as src/hooks/_kill_switches.py.
 """
 from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -23,26 +20,21 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-
 # Make `src` importable when run as a script (`python src/rc_cli.py`): the repo
 # root -- not just src/ -- must be on sys.path before importing the package.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-
 from src import baselines  # noqa: E402
-
 # Make hook helpers importable without installing the package.
 _HOOKS_DIR = Path(__file__).resolve().parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(_HOOKS_DIR))
-
 import _commit_miner as _cm  # type: ignore  # noqa: E402
 import _episodes as _ep  # type: ignore  # noqa: E402
 import _kill_switches as ks  # type: ignore  # noqa: E402
 import audit_log  # type: ignore  # noqa: E402
 import _session_correlator as _sc  # type: ignore  # noqa: E402
-
 _KNOBS = (
     "S2_DEVICE", "S2_TIMEOUT", "S2_FAIL_CLOSED", "S2_PORT",
     "S2_AIS_THRESHOLD", "S2_COHERENCE_THRESHOLD", "S2_RISK_DIM_THRESHOLD",
@@ -58,20 +50,14 @@ _KNOBS = (
     "RC_PRM_PROMO_MIN_REPOS", "RC_PRM_PROMO_MIN_EVENTS", "RC_PRM_PROMO_MIN_DAYS",
     "RC_BYPASS_NEXT", "RC_PROJECT_INDEX", "RC_ENFORCEMENT_AUTH",
 )
-
-
 def _audit_root() -> Path:
     return Path(os.environ.get(
         "RC_AUDIT_ROOT",
         os.path.expanduser("~/.local/share/reasoning-core/events"),
     ))
-
-
 def _today_dir() -> Path:
     import datetime as dt
     return _audit_root() / dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
-
-
 def cmd_baseline_capture(args: argparse.Namespace) -> int:
     """Capture a registry manifest; refuse to overwrite an existing baseline."""
     target = baselines.manifest_path(args.id)
@@ -85,8 +71,6 @@ def cmd_baseline_capture(args: argparse.Namespace) -> int:
     target.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(target)
     return 0
-
-
 def cmd_baseline_list(_args: argparse.Namespace) -> int:
     if not baselines.REGISTRY_ROOT.is_dir():
         return 0
@@ -98,33 +82,23 @@ def cmd_baseline_list(_args: argparse.Namespace) -> int:
             sys.stderr.write(f"invalid baseline {path}: {exc}\n")
             return 2
     return 0
-
-
 def cmd_baseline_show(args: argparse.Namespace) -> int:
     manifest = baselines.load_manifest(args.id)
     if args.verify:
         manifest = {**manifest, "artifact_verification": baselines.verify_artifacts(manifest)}
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
-
-
 def cmd_baseline_compare(args: argparse.Namespace) -> int:
     left = baselines.load_manifest(args.from_id)
     right = baselines.load_manifest(args.to_id)
     print(json.dumps(baselines.compare_manifests(left, right), indent=2, sort_keys=True))
     return 0
-
-
 def _guard_hash_store_path() -> Path:
     return Path(os.environ.get("RC_STATE_DIR", os.path.expanduser("~/.local/state/reasoning-core"))) / "guard_hashes.json"
-
-
 def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> tuple[int, list[str]]:
     """Initialize the guard-hash store with the current hashes of the given files.
-
     This is the only path that can add entries to the store. Called by the
     operator explicitly via `rc guard-hash --init`.
-
     Returns (status, warnings):
       status: 0 on success, 1 on partial success, 2 on failure
       warnings: list of human-readable warnings about recovered/skipped entries
@@ -133,7 +107,6 @@ def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> 
     store.parent.mkdir(parents=True, exist_ok=True)
     records: dict[str, str] = {}
     warnings: list[str] = []
-
     if store.is_file():
         try:
             existing = json.loads(store.read_text(encoding="utf-8"))
@@ -153,7 +126,6 @@ def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> 
             store.rename(store.with_suffix(".jsonl.corrupt"))
         except OSError as exc:
             warnings.append(f"could not read existing store at {store}: {exc}")
-
     added = 0
     skipped = 0
     for fp in file_paths:
@@ -166,7 +138,6 @@ def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> 
             continue
         records[str(path)] = digest
         added += 1
-
     if added == 0 and not records:
         sys.stderr.write(
             f"no guard files registered; store not written to {store}\n"
@@ -174,14 +145,10 @@ def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> 
         for w in warnings:
             sys.stderr.write(f"  warning: {w}\n")
         return (2, warnings)
-
     store.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
     return (0, warnings)
-
-
 def _verify_guard_hash(file_path: str, store_path: str | None = None) -> tuple[bool, str]:
     """Verify a guard file against a stored SHA-256 hash.
-
     Returns (ok, reason):
       - (True, "match") when verified
       - (False, "missing_file") when guard file absent
@@ -189,20 +156,15 @@ def _verify_guard_hash(file_path: str, store_path: str | None = None) -> tuple[b
       - (False, "store_corrupt") when store unreadable or not a dict
       - (False, "not_registered") when file is not in store
       - (False, "mismatch") when hash differs
-
     Use `rc guard-hash --init` (operator-authenticated) to register hashes.
     """
     from rc_verify_guard import _verify as _verify_standalone
     return _verify_standalone(file_path, Path(store_path) if store_path else None)
-
-
 def cmd_guard_hash(args: argparse.Namespace) -> int:
     """Verify guard files and the enforcement config against stored hashes.
-
     Includes `rc_cli.py` itself (no self-exclusion) to prevent the
     self-referential backdoor where an attacker who edits `rc_cli.py`
     can rewrite `_operator_authenticated` to always return True.
-
     The actual hash comparison is delegated to `rc_verify_guard.py`,
     which has no dependency on this CLI module — so tampering with
     `rc_cli.py` cannot bypass the verify path.
@@ -222,7 +184,6 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
     envrc_local = project_dir / ".envrc.local"
     plan_md = project_dir / "PLAN.md"
     all_files = [str(g) for g in guard_files] + [str(envrc_local), str(plan_md)]
-
     if getattr(args, "init", False):
         if not _operator_authenticated():
             sys.stderr.write("rc guard-hash --init: operator authentication required.\n")
@@ -236,7 +197,6 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
             sys.stderr.write(f"  warning: {w}\n")
         sys.stdout.write(f"registered hashes for {len(existing)} guard files\n")
         return status
-
     store = _guard_hash_store_path()
     if not store.is_file():
         sys.stderr.write(
@@ -244,7 +204,6 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
             "Run `rc guard-hash --init` (operator-authenticated) to register hashes.\n"
         )
         return 2
-
     # Delegate the actual comparison to rc_verify_guard.py to avoid the
     # self-referential backdoor where tampering with rc_cli.py could
     # bypass _verify_guard_hash logic in this file.
@@ -260,7 +219,6 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
     )
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
-
     # Also check the envrc.local and PLAN.md (these are project-specific
     # and not in the verifier's hardcoded list)
     all_ok = proc.returncode == 0
@@ -272,7 +230,6 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
             sys.stdout.write(f"  {status_label:<25} {extra}\n")
             if not ok:
                 all_ok = False
-
     if all_ok:
         sys.stdout.write("\nall guard files match stored hashes\n")
         return 0
@@ -289,25 +246,17 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
             f"{type(exc).__name__}: {exc}\n"
         )
     return 2
-
-
 def _verify_guard_hash_standalone(file_path: str, store_path: str) -> tuple[bool, str]:
     """Inline minimal verifier for project-local files (envrc, PLAN.md).
-
     Returns (ok, reason). Used by cmd_guard_hash for files outside the
     hardcoded verifier list.
     """
     from rc_verify_guard import _verify
     return _verify(file_path, Path(store_path))
-
-
 def _print_kv(k: str, v: str) -> None:
     sys.stdout.write(f"  {k:<32} {v}\n")
-
-
 def _calibration_status() -> dict:
     """Read calibration sentinel files for `rc status` block.
-
     Looks at: eval/runs/calibration.json (Mahalanobis model),
               eval/runs/qwen_kappa_gate.json (CDGS gate),
               eval/runs/recalibrate.signal (pending refit).
@@ -332,7 +281,6 @@ def _calibration_status() -> dict:
             out["calibration"] = "<corrupt>"
     else:
         out["calibration"] = "<not fitted>"
-
     kappa_path = runs / "qwen_kappa_gate.json"
     if kappa_path.exists():
         try:
@@ -343,12 +291,9 @@ def _calibration_status() -> dict:
             out["qwen_kappa"] = "<corrupt>"
     else:
         out["qwen_kappa"] = "<not run>"
-
     signal_path = runs / "recalibrate.signal"
     out["recalibrate_signal"] = "PENDING" if signal_path.exists() else "none"
     return out
-
-
 def cmd_status(_args: argparse.Namespace) -> int:
     sys.stdout.write("== reasoning-core status ==\n\nenv knobs:\n")
     for k in _KNOBS:
@@ -370,16 +315,12 @@ def cmd_status(_args: argparse.Namespace) -> int:
     else:
         _print_kv("today_files", "0 (no events today)")
     return 0
-
-
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Check agent-hook installation and evidence-pipeline prerequisites."""
     project = Path(args.project_dir or _project_dir()).expanduser().resolve()
     checks: list[dict[str, object]] = []
-
     def check(name: str, ok: bool, detail: str) -> None:
         checks.append({"name": name, "ok": ok, "detail": detail})
-
     check("project_directory", project.is_dir(), str(project))
     check("git_repository", (project / ".git").exists(), "git metadata present")
     verification_hook = _HOOKS_DIR / "post_bash_verification.py"
@@ -387,7 +328,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     edit_check_hook = _HOOKS_DIR / "post_edit_check.py"
     check("edit_check_hook", edit_check_hook.is_file(), str(edit_check_hook))
     check("rc_cli", Path(__file__).is_file(), str(Path(__file__)))
-
     config_candidates = (
         project / ".claude" / "settings.local.json",
         project / ".claude" / "settings.json",
@@ -414,7 +354,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     config_detail = "; ".join(config_details) or "no Claude settings found"
     check("post_tooluse_wiring", bash_wired, config_detail)
     check("post_tooluse_edit_wiring", edit_wired, config_detail)
-
     audit_root = _audit_root()
     try:
         audit_root.mkdir(parents=True, exist_ok=True)
@@ -422,7 +361,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     except OSError:
         writable = False
     check("audit_store_writable", writable, str(audit_root))
-
     canary_ok = False
     try:
         from _canary import run_evidence_canary  # type: ignore
@@ -440,7 +378,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         if canary_report.get("error"):
             canary_detail += f"; error={canary_report['error']}"
     check("evidence_canary", canary_ok, canary_detail)
-
     passed = sum(1 for item in checks if item["ok"])
     result = {"project_dir": str(project), "passed": passed, "total": len(checks), "checks": checks}
     if getattr(args, "json", False):
@@ -452,16 +389,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             sys.stdout.write(f"{marker:<4} {item['name']}: {item['detail']}\n")
         sys.stdout.write(f"{passed}/{len(checks)} checks passed\n")
     return 0 if passed == len(checks) else 1
-
-
 def _open_log(path: Path):
     """Open .jsonl or .jsonl.gz transparently. Returns text-mode handle."""
     import gzip
     if path.suffix == ".gz":
         return gzip.open(path, "rt", encoding="utf-8")
     return open(path, encoding="utf-8")
-
-
 def _scan_log(path: Path, target: str):
     try:
         with _open_log(path) as fh:
@@ -475,8 +408,6 @@ def _scan_log(path: Path, target: str):
     except OSError:
         return None
     return None
-
-
 def cmd_explain(args: argparse.Namespace) -> int:
     target = args.decision_id
     root = _audit_root()
@@ -494,36 +425,25 @@ def cmd_explain(args: argparse.Namespace) -> int:
                 return 0
     sys.stderr.write(f"decision_id {target} not found under {root}\n")
     return 1
-
-
 def cmd_bypass_next(_args: argparse.Namespace) -> int:
     ks.set_bypass_next(True)
     audit_log.record_operator_override(reason="bypass_next_armed")
     sys.stdout.write("bypass_next armed (consumed on next PreToolUse hook call)\n")
     return 0
-
-
 def cmd_confirm_next(_args: argparse.Namespace) -> int:
     audit_log.record_operator_confirmed(reason="confirm_next_armed")
     sys.stdout.write("confirm_next recorded (operator agrees the next block was correct)\n")
     return 0
-
-
 def cmd_skip_file(args: argparse.Namespace) -> int:
     ks.add_skip_file(os.path.abspath(args.path))
     sys.stdout.write(f"added: {os.path.abspath(args.path)}\n")
     return 0
-
-
 def cmd_unskip_file(args: argparse.Namespace) -> int:
     ks.remove_skip_file(os.path.abspath(args.path))
     sys.stdout.write(f"removed: {os.path.abspath(args.path)}\n")
     return 0
-
-
 def cmd_score_pr(args: argparse.Namespace) -> int:
     """Score the files changed between two git refs using scripts/score_pr.py.
-
     This is the local / CI entry point for the PR scorer. It shells out to
     ``scripts/score_pr.py`` so the same implementation runs everywhere.
     """
@@ -532,7 +452,6 @@ def cmd_score_pr(args: argparse.Namespace) -> int:
     if not script.is_file():
         sys.stderr.write(f"score_pr.py not found at {script}\n")
         return 1
-
     cmd = [
         sys.executable,
         str(script),
@@ -548,11 +467,8 @@ def cmd_score_pr(args: argparse.Namespace) -> int:
         cmd += ["--json", args.json]
     if args.fail_on_block:
         cmd += ["--fail-on-block"]
-
     result = subprocess.run(cmd, cwd=str(repo_root), check=False)
     return result.returncode
-
-
 def _project_dir() -> Path:
     """Resolve the repo/project directory the gate is watching."""
     return Path(
@@ -560,19 +476,14 @@ def _project_dir() -> Path:
         or os.environ.get("CLAUDE_PROJECT_DIR")
         or os.getcwd()
     )
-
-
 _SENTINEL_START = "# >>> rc enforcement >>>"
 _SENTINEL_END = "# <<< rc enforcement <<<"
 _SENTINEL_RE = re.compile(
     rf"\n?{re.escape(_SENTINEL_START)}.*?{re.escape(_SENTINEL_END)}\n?",
     re.DOTALL,
 )
-
-
 def _enforcement_block(hard: bool = False) -> str:
     """Build the fenced enforcement block for the requested stage.
-
     Stage 1 (hard=False): copilot mode with warn-only plan-grounding.
     Stage 2 (hard=True): copilot mode with hard plan-grounding block.
     """
@@ -592,26 +503,18 @@ def _enforcement_block(hard: bool = False) -> str:
         f"export S2_FAIL_CLOSED=1\n"
         f"{_SENTINEL_END}\n"
     )
-
-
 _ENFORCEMENT_BLOCK_STAGE1 = _enforcement_block(hard=False)
 _ENFORCEMENT_BLOCK_STAGE2 = _enforcement_block(hard=True)
-
-
 _AUTH_MIN_TOKEN_LEN = 16
 _AUTH_TOKEN_FILE = Path(os.environ.get(
     "RC_AUTH_TOKEN_FILE",
     os.path.expanduser("~/.local/state/reasoning-core/auth_token"),
 ))
-
-
 def _read_auth_token_from_file() -> str | None:
     """Read stored auth token from the platform-appropriate secret store.
-
     Order:
       1. macOS keychain via `security find-generic-password`.
       2. Token file at `RC_AUTH_TOKEN_FILE` (Linux/CI fallback).
-
     Returns the stored token, or None if no backend is available or read failed.
     """
     try:
@@ -625,18 +528,14 @@ def _read_auth_token_from_file() -> str | None:
         pass  # macOS-only binary absent on Linux/Windows
     except Exception:
         pass
-
     if _AUTH_TOKEN_FILE.is_file():
         try:
             return _AUTH_TOKEN_FILE.read_text(encoding="utf-8").strip()
         except OSError:
             pass
     return None
-
-
 def _operator_authenticated() -> bool:
     """Return True if the operator has authenticated for enforcement changes.
-
     Authentication requires one of:
       1. `RC_ENFORCEMENT_TOKEN` env var matches the stored token
          (compared in constant time). This is the cross-platform escape hatch
@@ -644,12 +543,10 @@ def _operator_authenticated() -> bool:
       2. macOS keychain contains a stored reasoning-core enforcement token.
       3. Linux/Windows fallback: token file at `RC_AUTH_TOKEN_FILE` (default
          `~/.local/state/reasoning-core/auth_token`).
-
     TTY presence is NOT sufficient — the agent can allocate a pty.
     Just having `RC_ENFORCEMENT_TOKEN` set to any non-empty string is NOT
     sufficient — an agent can set env vars in its own shell. The token must
     match the stored secret.
-
     Run `rc auth-bootstrap` to seed the token file on Linux/Windows.
     """
     token = os.environ.get("RC_ENFORCEMENT_TOKEN", "")
@@ -658,21 +555,16 @@ def _operator_authenticated() -> bool:
         if stored is not None and _constant_time_eq(token, stored):
             return True
     return False
-
-
 def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
     """Generate and store a fresh enforcement token.
-
     Writes the token to the platform-appropriate secret store and prints
     it once on stdout. The operator must copy it into `RC_ENFORCEMENT_TOKEN`
     or use it in a CI secret.
-
     macOS: stores in keychain via `security add-generic-password`.
     Linux/Windows: writes to `RC_AUTH_TOKEN_FILE` with 0600 permissions.
     """
     import secrets
     token = secrets.token_urlsafe(32)
-
     if sys.platform == "darwin":
         try:
             r = subprocess.run(
@@ -690,7 +582,6 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
             sys.stderr.write(f"keychain add failed: {r.stderr}\n")
         except Exception as exc:
             sys.stderr.write(f"keychain add failed: {exc}\n")
-
     # Linux/Windows fallback
     try:
         _AUTH_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -702,14 +593,10 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
     except OSError as exc:
         sys.stderr.write(f"failed to write token file: {exc}\n")
         return 1
-
-
 def _constant_time_eq(a: str, b: str) -> bool:
     """Constant-time string comparison to prevent timing attacks."""
     import hmac
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
-
-
 def _atomic_write_text(path: Path, content: str) -> None:
     """Write text to path atomically: write to temp file, fsync, rename."""
     import tempfile
@@ -734,8 +621,6 @@ def _atomic_write_text(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
-
-
 def _atomic_unlink(path: Path) -> bool:
     """Unlink path, refusing to follow symlinks. Returns True if removed."""
     if not path.exists():
@@ -748,8 +633,6 @@ def _atomic_unlink(path: Path) -> bool:
         path.unlink()
         return True
     return False
-
-
 def _update_envrc_local(project_dir: Path, hard: bool = False) -> Path:
     """Idempotently write the reasoning-core enforcement block with fenced markers."""
     envrc_local = project_dir / ".envrc.local"
@@ -761,7 +644,6 @@ def _update_envrc_local(project_dir: Path, hard: bool = False) -> Path:
         if existing:
             existing += "\n"
     _atomic_write_text(envrc_local, existing + block)
-
     # Post-condition verification: sentinel must be present in written file
     written = envrc_local.read_text(encoding="utf-8")
     if _SENTINEL_START not in written or _SENTINEL_END not in written:
@@ -769,11 +651,8 @@ def _update_envrc_local(project_dir: Path, hard: bool = False) -> Path:
             f"post-condition failed: sentinel markers not found in {envrc_local} after write"
         )
     return envrc_local
-
-
 def _remove_envrc_local_block(project_dir: Path) -> tuple[Path, bool]:
     """Remove only the fenced reasoning-core enforcement block.
-
     Returns (path, removed) where removed indicates whether a sentinel block
     was actually present and removed.
     """
@@ -788,15 +667,12 @@ def _remove_envrc_local_block(project_dir: Path) -> tuple[Path, bool]:
     else:
         _atomic_unlink(envrc_local)
     return (envrc_local, had_block)
-
-
 def cmd_enable_enforcement(args: argparse.Namespace) -> int:
     """First-run wizard: flip repo to staged copilot mode after operator auth."""
     project_dir = _project_dir()
     if not project_dir.is_dir():
         sys.stderr.write(f"project directory does not exist: {project_dir}\n")
         return 1
-
     if not _operator_authenticated():
         sys.stderr.write(
             "rc enable-enforcement: operator authentication required.\n"
@@ -804,7 +680,6 @@ def cmd_enable_enforcement(args: argparse.Namespace) -> int:
             "token in the macOS keychain with service 'reasoning-core-enforcement'.\n"
         )
         return 1
-
     plan_path = project_dir / "PLAN.md"
     if not plan_path.is_file():
         sys.stderr.write(
@@ -812,9 +687,7 @@ def cmd_enable_enforcement(args: argparse.Namespace) -> int:
             "Write a plan manually or run `rc init-plan` before enabling enforcement.\n"
         )
         return 1
-
     envrc_local = _update_envrc_local(project_dir, hard=args.hard)
-
     sys.stdout.write("== reasoning-core enforcement enabled ==\n\n")
     sys.stdout.write(f"plan: {plan_path}\n")
     sys.stdout.write(f"wrote enforcement config: {envrc_local}\n")
@@ -824,21 +697,17 @@ def cmd_enable_enforcement(args: argparse.Namespace) -> int:
     sys.stdout.write("  direnv reload      # or: source .envrc.local\n")
     sys.stdout.write("  rc status          # confirm RC_MODE=copilot\n")
     return 0
-
-
 def cmd_disable_enforcement(_args: argparse.Namespace) -> int:
     """Revert repo to advisory mode by removing the enforcement block."""
     project_dir = _project_dir()
     if not project_dir.is_dir():
         sys.stderr.write(f"project directory does not exist: {project_dir}\n")
         return 1
-
     if not _operator_authenticated():
         sys.stderr.write(
             "rc disable-enforcement: operator authentication required.\n"
         )
         return 1
-
     envrc_local, removed = _remove_envrc_local_block(project_dir)
     if removed:
         sys.stdout.write(f"removed enforcement block from {envrc_local}\n")
@@ -848,17 +717,12 @@ def cmd_disable_enforcement(_args: argparse.Namespace) -> int:
         sys.stdout.write("no enforcement block found; nothing to remove\n")
     sys.stdout.write("next: direnv reload  # or: source .envrc.local\n")
     return 0
-
-
 # --- reasoning-efficiency (audit 2026-06-01 §7 north-star metric) -----------
 # Composite: (drift_caught - false_drifts) / (gate_wall_clock_s + 1)
 #             * repo_idiom_adherence_delta_norm * (1 - sidecar_unavailability_rate)
 # repo_idiom_adherence_delta_norm = 0.43 (iter-3 measured value, frozen until
 # a live measurement lands). The audit log already carries every input.
 _REPO_IDIOM_DELTA_NORM = 0.43
-
-
-
 def _load_override_links() -> dict[str, set[str]]:
     """Load override_links.json, return {file_path: {blocked_decision_id, ...}}."""
     import json as _json
@@ -880,8 +744,6 @@ def _load_override_links() -> dict[str, set[str]]:
             if fp and bid:
                 result.setdefault(fp, set()).add(bid)
     return result
-
-
 def _walk_audit_events(audit_root: Path, days: int):
     import datetime as _dt
     import gzip
@@ -909,8 +771,6 @@ def _walk_audit_events(audit_root: Path, days: int):
                             continue
             except OSError:
                 continue
-
-
 def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
     """Audit 2026-06-01 §7: composite north-star metric from the audit log."""
     audit_root = Path(args.audit_root or _audit_root())
@@ -939,7 +799,6 @@ def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
                     false_drifts += 1
         if isinstance(reason, str) and reason.startswith("sidecar_unavailable"):
             sidecar_unavailable += 1
-
     if n_events == 0:
         print(f"no events in last {args.days} days under {audit_root}")
         return 0
@@ -960,9 +819,6 @@ def cmd_reasoning_efficiency(args: argparse.Namespace) -> int:
     _print_kv("repo_idiom_delta_norm (const)", f"{_REPO_IDIOM_DELTA_NORM}")
     _print_kv("reasoning_efficiency", f"{eff:.6f}")
     return 0
-
-
-
 def _git_repo_root() -> Path | None:
     """Best-effort current git repo root. Returns None outside a repo."""
     try:
@@ -975,11 +831,8 @@ def _git_repo_root() -> Path | None:
     except Exception:
         pass
     return None
-
-
 def _override_survival_counts(audit_root: Path, days: int, repo_root: Path | None) -> tuple[int, int, int]:
     """Return (survived, reverted, unknown) for allowed_via_override events.
-
     Shared by ``cmd_override_survival`` and ``cmd_benchmark`` so the survival
     calculation stays consistent and the repo-root guard is not duplicated.
     """
@@ -1028,12 +881,9 @@ def _override_survival_counts(audit_root: Path, days: int, repo_root: Path | Non
         else:
             unknown += 1
     return survived, reverted, unknown
-
-
 def cmd_override_survival(args: argparse.Namespace) -> int:
     '''Compute override survival ratio from audit log git_head fields.'''
     audit_root = Path(args.audit_root or _audit_root())
-
     repo_root = _git_repo_root()
     survived, reverted, unknown = _override_survival_counts(audit_root, args.days, repo_root)
     total = survived + reverted + unknown
@@ -1047,9 +897,6 @@ def cmd_override_survival(args: argparse.Namespace) -> int:
     _print_kv("survival ratio", f"{survived / max(1, total):.2%}")
     _print_kv("reverted ratio", f"{reverted / max(1, total):.2%}")
     return 0
-
-
-
 def _reconcile_fingerprint(path: Path) -> str:
     """Bind historical acceptance to bytes, file kind, and executable mode."""
     if path.is_symlink():
@@ -1061,11 +908,8 @@ def _reconcile_fingerprint(path: Path) -> str:
     else:
         raise ValueError(f"Cannot acknowledge non-file: {path}")
     return hashlib.sha256(data).hexdigest()
-
-
 def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id: str) -> list[str]:
     """Diff git working tree against gate_edit audit rows for the session.
-
     Returns a list of file paths (relative to repo root) that were modified
     on disk but lack a corresponding gate_edit audit row in the current
     session. Scans yesterday + today to handle sessions that span midnight.
@@ -1073,11 +917,9 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
     """
     import datetime as _dt
     import subprocess
-
     project = Path(project_dir)
     if not (project / ".git").exists():
         return []
-
     # Files changed on disk (relative to repo root).
     r = subprocess.run(
         ["git", "status", "--porcelain", "-z", "--untracked-files=all"],
@@ -1092,7 +934,6 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
             changed.add(record[3:])
             if "R" in record[:2] or "C" in record[:2]:
                 next(records, None)  # porcelain -z puts the old name second
-
     # Gated files from audit log: normalise absolute paths to repo-relative
     # so they can be compared with `git status` output.
     repo_root = subprocess.run(
@@ -1100,7 +941,6 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
         capture_output=True, text=True, cwd=str(project), timeout=5,
     )
     repo_root_path = Path(repo_root.stdout.strip()) if repo_root.returncode == 0 else project
-
     gated: set[str] = set()
     acknowledged: set[str] = set()
     root = Path(audit_root)
@@ -1171,10 +1011,7 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
                                 gated.add(fp)
             except OSError:
                 continue
-
     return sorted(changed - gated - acknowledged)
-
-
 def cmd_reconcile(args: argparse.Namespace) -> int:
     """Post-session safety net: flag files written without a gate_edit call."""
     if getattr(args, "acknowledge_current", False) and not getattr(args, "reason", "").strip():
@@ -1184,10 +1021,8 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     if not project_dir.is_dir():
         sys.stderr.write(f"project directory does not exist: {project_dir}\n")
         return 1
-
     sid = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("RC_SESSION_ID") or "default"
     missing = _reconcile_missing_gate_events(str(project_dir), str(_audit_root()), sid)
-
     acknowledged = []
     if getattr(args, "acknowledge_current", False):
         for fp in missing:
@@ -1205,11 +1040,9 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
             audit_log.append_event(event, fsync=True)
             acknowledged.append(fp)
         missing = _reconcile_missing_gate_events(str(project_dir), str(_audit_root()), sid)
-
     if getattr(args, "json", False):
         sys.stdout.write(json.dumps({"missing": missing, "session_id": sid, "acknowledged": acknowledged}) + "\n")
         return 0 if not missing else 1
-
     if not missing:
         sys.stdout.write("rc reconcile: no outstanding gaps (gate records or explicit historical acknowledgements).\n")
         return 0
@@ -1217,8 +1050,6 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     for fp in missing:
         sys.stdout.write(f"  {fp}\n")
     return 1
-
-
 def cmd_record_verification(args: argparse.Namespace) -> int:
     """Persist a deterministic lint/test/typecheck/build result for a session."""
     project_dir = Path(args.project_dir or _project_dir()).expanduser().resolve()
@@ -1264,17 +1095,12 @@ def cmd_record_verification(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(f"verification recorded: {event['decision_id']}\n")
     return 0
-
-
 def cmd_label(args: argparse.Namespace) -> int:
     """Label an audit decision for the training set.
-
     Without --random, takes a decision_id argument. With --random, picks
     one unlabeled decision from recent audit (last 7 days by default).
-
     Interactive flow (no --yes): shows file, before/after snippet, and asks
     for the primary and supplemental labels (y/n each).
-
     Non-interactive (--yes): reads labels from --labels flag as
     "scope_drift=yes,plan_violation=no,..." or from a JSON file with --from-file.
     """
@@ -1284,7 +1110,6 @@ def cmd_label(args: argparse.Namespace) -> int:
     except ImportError as exc:
         sys.stderr.write(f"could not load training_set module: {exc}\n")
         return 1
-
     if args.random:
         candidate = ts.pick_random_unlabeled(days=args.days)
         if not candidate:
@@ -1300,15 +1125,12 @@ def cmd_label(args: argparse.Namespace) -> int:
         if not decision_id:
             sys.stderr.write("usage: rc label <decision-id> [--random]\n")
             return 1
-
     if ts.already_labeled(decision_id):
         sys.stderr.write(f"decision {decision_id} is already labeled\n")
         return 1
-
     audit_row = ts._lookup_audit_row(decision_id, days=max(args.days, 7))
     if not audit_row:
         sys.stderr.write(f"warning: decision_id {decision_id} not found in audit log\n")
-
     file_path = audit_row.get("file_path", "?")
     sys.stdout.write("=" * 60 + "\n")
     sys.stdout.write(f"decision_id: {decision_id}\n")
@@ -1324,7 +1146,6 @@ def cmd_label(args: argparse.Namespace) -> int:
         sys.stdout.write("--- after ---\n")
         sys.stdout.write(after_src + "\n")
         sys.stdout.write("=" * 60 + "\n")
-
     labels: dict[str, bool] = {}
     if args.from_file:
         try:
@@ -1355,7 +1176,6 @@ def cmd_label(args: argparse.Namespace) -> int:
                 sys.stderr.write("\nno TTY; pass --labels or --from-file for non-interactive\n")
                 return 1
             labels[label] = ans in ("y", "yes", "true", "1")
-
     notes = ""
     if not args.yes:
         sys.stdout.write("  notes (optional): ")
@@ -1364,7 +1184,6 @@ def cmd_label(args: argparse.Namespace) -> int:
             notes = input().strip()
         except EOFError:
             notes = ""
-
     label = ts.label_decision_id(
         decision_id,
         labels,
@@ -1374,8 +1193,6 @@ def cmd_label(args: argparse.Namespace) -> int:
     sys.stdout.write(f"\nstored label for {decision_id}\n")
     sys.stdout.write(f"  rationale_quality_failure = {label.rationale_quality_failure}\n")
     return 0
-
-
 def cmd_label_stats(_args: argparse.Namespace) -> int:
     """Show progress toward the per-label training target."""
     sys.path.insert(0, str(Path(__file__).resolve().parent / "hooks"))
@@ -1384,7 +1201,6 @@ def cmd_label_stats(_args: argparse.Namespace) -> int:
     except ImportError as exc:
         sys.stderr.write(f"could not load training_set module: {exc}\n")
         return 1
-
     p = ts.progress()
     sys.stdout.write("== training-set progress ==\n")
     sys.stdout.write(f"target per label: {p['target_per_label']}\n")
@@ -1395,7 +1211,6 @@ def cmd_label_stats(_args: argparse.Namespace) -> int:
         r = p["remaining"][label]
         marker = "OK" if r == 0 else "..."
         sys.stdout.write(f"  {label:<23} {c:>5} {r:>10} {marker}\n")
-
     sys.stdout.write("\ncategory gaps (primary labels):\n")
     for category, gap in ts.category_gaps().items():
         status = "OK" if gap["complete"] else "GAP"
@@ -1414,11 +1229,8 @@ def cmd_label_stats(_args: argparse.Namespace) -> int:
         return 0
     sys.stdout.write(f"\nstore: {ts.store_path()}\n")
     return 1
-
-
 def cmd_audit_history(args: argparse.Namespace) -> int:
     """Mine recent git history and print per-commit quality labels.
-
     Labels commits as positive/negative based on whether they were followed
     within 48 hours by a fix/revert/hotfix/patch touching the same files.
     This is the feedback loop input for Phase-4 calibration.
@@ -1427,21 +1239,17 @@ def cmd_audit_history(args: argparse.Namespace) -> int:
     if not project_dir.is_dir():
         sys.stderr.write(f"project directory does not exist: {project_dir}\n")
         return 1
-
     try:
         commits = _cm.mine(str(project_dir), n=args.n)
     except Exception as exc:  # noqa: BLE001
         sys.stderr.write(f"could not mine commits: {exc}\n")
         return 1
-
     if not commits:
         sys.stdout.write(f"no commits mined under {project_dir}\n")
         return 0
-
     if args.json:
         sys.stdout.write(json.dumps([c.to_dict() for c in commits], indent=2) + "\n")
         return 0
-
     sys.stdout.write(f"{'label':<9} {'sha':<9} {'date':<20} {'files':>5} {'lines':>5}  {'message'}\n")
     sys.stdout.write("-" * 80 + "\n")
     for c in commits:
@@ -1454,25 +1262,19 @@ def cmd_audit_history(args: argparse.Namespace) -> int:
         if args.reasons and c.label_reason:
             sys.stdout.write(f"          reason: {c.label_reason}\n")
     return 0
-
-
 # --- benchmark (audit schema v4 measurement foundation) ----------------------
-
-
 def _classify_severity(reason: str, decision: str, gate_id: str | None) -> str:
     """Map an audit event to a severity/layer class for the benchmark report."""
     if not isinstance(reason, str):
         reason = ""
     reason_l = reason.lower()
     decision_l = str(decision).lower()
-
     if decision_l == "fail-open":
         return "fail_open"
     if decision_l == "shadow_blocked":
         return "shadow"
     if decision_l in ("operator_override", "allowed_via_override"):
         return "override"
-
     if "contract_violation" in reason_l:
         return "contract"
     if reason_l.startswith("oracle_") or "oracle" in reason_l:
@@ -1489,10 +1291,7 @@ def _classify_severity(reason: str, decision: str, gate_id: str | None) -> str:
         return "plan_grounding"
     if gate_id == "rules":
         return "rule_engine"
-
     return "other"
-
-
 def _token_cost_proxy(metrics: dict) -> float:
     """Rough proxy: every scored event costs a base prompt turn; blocks and
     overrides cost an extra retry turn.  This is intentionally conservative
@@ -1507,8 +1306,6 @@ def _token_cost_proxy(metrics: dict) -> float:
         + metrics.get("allowed_via_override", 0)
     ) * 1.5
     return round(base + retry, 1)
-
-
 def _percentile(values: list[float], p: float) -> float | None:
     if not values:
         return None
@@ -1519,8 +1316,6 @@ def _percentile(values: list[float], p: float) -> float | None:
     if f == c:
         return float(s[f])
     return float(s[f] + (s[c] - s[f]) * (k - f))
-
-
 def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: str | None) -> dict:
     """Aggregate audit events into benchmark metrics."""
     total_events = 0
@@ -1536,7 +1331,6 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
     operator_confirmed = 0
     allowed_via_override = 0
     signal_sources: dict[str, int] = {}
-
     for ev in _walk_audit_events(audit_root, days):
         ts = ev.get("ts")
         if before or after:
@@ -1548,7 +1342,6 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
                 continue
             if after and ts[:10] < after:
                 continue
-
         total_events += 1
         decision = str(ev.get("decision") or "unknown")
         reason = str(ev.get("reason") or "")
@@ -1559,38 +1352,31 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
         if decision != "allowed":
             cls = _classify_severity(reason, decision, gate_id)
             severity[cls] = severity.get(cls, 0) + 1
-
         latency = ev.get("latency_ms")
         if isinstance(latency, int):
             latencies.append(latency)
             if decision == "blocked":
                 block_latencies.append(latency)
-
         if decision == "blocked" and ev.get("retry_after_block") is True:
             retry_after_block += 1
-
         if reason == "plan_impl_drift" or "contract_violation" in reason.lower():
             scope_creep += 1
             if decision in ("blocked", "shadow_blocked"):
                 scope_creep_blocked += 1
             else:
                 scope_creep_warned += 1
-
         if decision == "operator_override":
             operator_overrides += 1
         if decision == "operator_confirmed":
             operator_confirmed += 1
         if decision == "allowed_via_override":
             allowed_via_override += 1
-
         signal_source = ev.get("signal_source")
         if isinstance(signal_source, str):
             signal_sources[signal_source] = signal_sources.get(signal_source, 0) + 1
-
     median_latency = _percentile(latencies, 50)
     p95_latency = _percentile(latencies, 95)
     median_block_latency = _percentile(block_latencies, 50)
-
     metrics = {
         "total_events": total_events,
         "blocked": decisions.get("blocked", 0),
@@ -1618,7 +1404,6 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
             "allowed_via_override": allowed_via_override,
         }),
     }
-
     # False-positive proxy: count outcome signals (retries + overrides) over
     # blocking decisions.  operator_override is the arming event, not the
     # outcome, so it is intentionally excluded to avoid double-counting the
@@ -1632,20 +1417,13 @@ def _compute_benchmark(audit_root: Path, days: int, before: str | None, after: s
             1.0,
             round((retry_after_block + allowed_via_override) / fp_denominator, 3),
         )
-
     # Override survival summary (best-effort; full calc uses shared helper).
     metrics["override_survival_ratio"] = None  # computed separately if repo available
     return metrics
-
-
 def _fmt_latency(value: int | None) -> str:
     return str(value) if value is not None else "n/a"
-
-
 def _fmt_ratio(value: float | None) -> str:
     return f"{value:.3f}" if value is not None else "n/a"
-
-
 def _fmt_benchmark_markdown(metrics: dict, title: str = "reasoning-core benchmark") -> str:
     lines = [
         f"# {title}",
@@ -1678,7 +1456,6 @@ def _fmt_benchmark_markdown(metrics: dict, title: str = "reasoning-core benchmar
     ]
     for cls in sorted(metrics["severity"].keys(), key=lambda k: -metrics["severity"][k]):
         lines.append(f"| {cls} | {metrics['severity'][cls]} |")
-
     if metrics["signal_sources"]:
         lines.extend([
             "",
@@ -1689,7 +1466,6 @@ def _fmt_benchmark_markdown(metrics: dict, title: str = "reasoning-core benchmar
         ])
         for src in sorted(metrics["signal_sources"].keys(), key=lambda k: -metrics["signal_sources"][k]):
             lines.append(f"| {src} | {metrics['signal_sources'][src]} |")
-
     if metrics.get("override_survival_ratio") is not None:
         lines.extend([
             "",
@@ -1697,43 +1473,34 @@ def _fmt_benchmark_markdown(metrics: dict, title: str = "reasoning-core benchmar
             "",
             f"- Survival ratio: {metrics['override_survival_ratio']:.2%}",
         ])
-
     lines.extend([
         "",
         "_Notes: token-cost proxy is a synthetic unit for week-over-week comparison, not a dollar estimate. False-positive proxy is capped at 1.0 and counts retries-after-block plus allowed-via-override outcomes over blocking decisions; the same incident may appear in both counts._",
         "",
     ])
     return "\n".join(lines)
-
-
 def _override_survival_ratio(audit_root: Path, days: int) -> float | None:
     """Compute a lightweight override survival ratio for the benchmark report."""
     repo_root = _git_repo_root()
     if repo_root is None:
         return None
-
     survived, reverted, _unknown = _override_survival_counts(audit_root, days, repo_root)
     total = survived + reverted
     if total == 0:
         return None
     return survived / total
-
-
 def cmd_benchmark(args: argparse.Namespace) -> int:
     """One-command benchmark runner from the local audit log.
-
     Produces a Markdown report with blocked-edit counts by severity class,
     override survival, median latency, a token-cost proxy, and a false-positive
     proxy.  Supports --before / --after date windows for week-over-week
     comparison.
     """
     import datetime as _dt
-
     audit_root = Path(args.audit_root or _audit_root())
     before = args.before
     after = args.after
     days = args.days
-
     if before:
         try:
             _dt.datetime.strptime(before, "%Y-%m-%d")
@@ -1749,14 +1516,12 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         # Ensure _walk_audit_events covers the requested window even when it is
         # older than the default --days value.
         days = max(days, (_dt.datetime.now() - after_dt).days + 1)
-
     # Warn when a --before-only window may be truncated by the default --days.
     if before and not after and days == args.days:
         sys.stderr.write(
             f"note: --before window is bounded by --days {days}; "
             "pass a larger --days or an explicit --after to widen the window\n"
         )
-
     metrics = _compute_benchmark(audit_root, days, before, after)
     # Override survival compares against the current working tree, so it is only
     # meaningful for the trailing --days window. Skip it for historical windows.
@@ -1764,7 +1529,6 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         metrics["override_survival_ratio"] = None
     else:
         metrics["override_survival_ratio"] = _override_survival_ratio(audit_root, days)
-
     if args.json:
         out_path = Path(args.json)
         try:
@@ -1772,7 +1536,6 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
         except OSError as exc:
             sys.stderr.write(f"failed to write JSON: {exc}\n")
             return 1
-
     report = _fmt_benchmark_markdown(metrics, title="reasoning-core benchmark")
     if args.output:
         try:
@@ -1783,8 +1546,6 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(report + "\n")
     return 0
-
-
 def cmd_real_session_eval(args: argparse.Namespace) -> int:
     """Build a conservative evidence ledger from real local sessions."""
     audit_root = Path(args.audit_root or _audit_root())
@@ -1813,8 +1574,6 @@ def cmd_real_session_eval(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(_sc.render_markdown(ledger))
     return 0
-
-
 def cmd_episodes(args: argparse.Namespace) -> int:
     """List derived edit episodes: edit -> checks -> repair -> outcome."""
     episodes = _ep.build_episodes(
@@ -1835,12 +1594,92 @@ def cmd_episodes(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(_ep.render_markdown(episodes))
     return 0
+def cmd_init(args: argparse.Namespace) -> int:
+    """Wire reasoning-core hooks into a target repo.
+
+    Replaces ``install.sh`` for end users who installed the framework
+    via ``pip install reasoning-core[full]``. Behavior:
+
+    - Writes per-CLI hook config (.claude/, .codex/, .gemini/, etc.).
+    - Writes an .envrc that the user can ``direnv allow`` later.
+    - Installs the sidecar supervisor (macOS launchd / Linux systemd).
+    - Downloads the default mamba-130m checkpoint unless ``--no-model``.
+    - Skips the supervisor install with ``--no-sidecar`` (for CI).
+
+    Idempotent: re-running against an initialized repo records no new
+    writes. The manifest at ``.reasoning-core/install.manifest`` makes
+    ``rc uninstall`` exact.
+    """
+    from src import _init as _init_mod  # noqa: PLC0415
+    target = Path(args.target).resolve() if args.target else Path.cwd().resolve()
+    if not target.is_dir():
+        sys.stderr.write("rc init: target directory does not exist: %s\n" % target)
+        return 2
+    try:
+        result = _init_mod.init(
+            target,
+            install_sidecar=not args.no_sidecar,
+            install_model=not args.no_model,
+        )
+    except Exception as exc:  # noqa: BLE001 -- top-level error capture for operator-friendly stderr
+        sys.stderr.write("rc init failed: %s\n" % exc)
+        return 1
+    sys.stdout.write("reasoning-core init\n  target = %s\n" % target)
+    sys.stdout.write("  wrote (%d): %s\n" % (len(result.wrote), ", ".join(result.wrote) or "-"))
+    sys.stdout.write("  skipped (%d): %s\n" % (len(result.skipped), ", ".join(result.skipped) or "-"))
+    if result.warned:
+        sys.stdout.write("  warnings:\n")
+        for w in result.warned:
+            sys.stdout.write("    ! %s\n" % w)
+    sys.stdout.write("  sidecar_installed = %s\n" % result.sidecar_installed)
+    sys.stdout.write("  model_downloaded  = %s\n" % result.model_downloaded)
+    if args.check:
+        sys.stdout.write("\nrunning rc doctor ...\n")
+        return cmd_doctor(argparse.Namespace(project_dir=str(target), json=False))
+    return 0
+
+
+def cmd_init_uninstall(args: argparse.Namespace) -> int:
+    """Revert a previous ``rc init`` in ``target``.
+
+    Refuses out-of-tree paths; only removes files recorded on the
+    install manifest plus the gitignore marker block. Idempotent.
+    """
+    from src import _init as _init_mod  # noqa: PLC0415
+    target = Path(args.target).resolve() if args.target else Path.cwd().resolve()
+    if not target.is_dir():
+        sys.stderr.write("rc init-uninstall: target directory does not exist: %s\n" % target)
+        return 2
+    result = _init_mod.uninstall(target)
+    if result.get("warning"):
+        sys.stderr.write("rc init-uninstall: %s\n" % result["warning"])
+        return 1
+    sys.stdout.write("reasoning-core uninstall\n  target = %s\n" % target)
+    sys.stdout.write("  removed (%d): %s\n" % (len(result["removed"]), ", ".join(result["removed"]) or "-"))
+    if result["refused"]:
+        sys.stdout.write("  refused (%d): %s\n" % (len(result["refused"]), ", ".join(result["refused"])))
+    return 0
 
 
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    init_cmd = sub.add_parser(
+        "init",
+        help="wire reasoning-core hooks into a target repo (replaces install.sh)",
+    )
+    init_cmd.add_argument("--target", default=None, help="repo directory (default: cwd)")
+    init_cmd.add_argument("--no-sidecar", action="store_true", help="skip launchd/systemd install")
+    init_cmd.add_argument("--no-model", action="store_true", help="skip mamba-130m download")
+    init_cmd.add_argument("--check", action="store_true", help="run rc doctor after wiring")
+    init_cmd.set_defaults(func=cmd_init)
+    init_uninstall = sub.add_parser(
+        "init-uninstall",
+        help="revert a previous rc init via .reasoning-core/install.manifest",
+    )
+    init_uninstall.add_argument("--target", default=None)
+    init_uninstall.set_defaults(func=cmd_init_uninstall)
     doctor = sub.add_parser(
         "doctor",
         help="verify agent-hook wiring and evidence-pipeline prerequisites",
@@ -2026,7 +1865,5 @@ def main(argv: list | None = None) -> int:
     ep_cmd.set_defaults(func=cmd_episodes)
     args = p.parse_args(argv)
     return args.func(args)
-
-
 if __name__ == "__main__":
     sys.exit(main())

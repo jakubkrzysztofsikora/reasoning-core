@@ -47,3 +47,6 @@ ca-bundle.pem
 .pokayokay/
 eval/calibrated/prm_corpus.jsonl
 .pi/settings.json
+
+# Per-repo install manifest written by `rc init` / `install.sh`.
+.reasoning-core/

@@ -1,0 +1,6 @@
+{
+  "extensions": [
+    "./extensions/reasoning_core_gate.ts"
+  ],
+  "defaultProjectTrust": "ask"
+}

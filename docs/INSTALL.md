@@ -1,15 +1,45 @@
 # Install
 
-The [`README`](../README.md) covers the one-command happy path. This file
-documents the manual install, the global "every project on the machine"
-recipe, supervisor/launchd setup, the Scaleway-hosted critic for non-Apple
-machines, and the Cato/Zscaler VPN workaround.
+Two flows are documented here:
+
+- **Recommended (v0.2+):** `pip install reasoning-core[full]` + `rc init`.
+  End users do not need a checkout or a venv — the wheel brings everything.
+- **Maintainers / contributors:** `git clone` + `pip install -e .[dev]` +
+  `huggingface-cli download` + sidecar scripts. This is the only flow that
+  picks up live edits to `src/`.
+
+The original [`README`](../README.md) covers the happy path; this file
+documents the maintainer flow, the global "every project on the machine"
+recipe, supervisor/launchd internals, the Scaleway-hosted critic for
+non-Apple machines, and the Cato/Zscaler VPN workaround. See
+[`MIGRATION_v1.md`](MIGRATION_v1.md) for moving from the v0.1 quickstart
+to the v0.2 wheel flow.
 
 ---
 
-## Manual repo-scoped install (no `install.sh`)
+## End-user install (wheel)
 
-If you don't trust the script, the moving parts are:
+```bash
+pip install reasoning-core[full]      # ~500 MB of deps + 250 MB mamba checkpoint
+cd /path/to/your-repo
+rc init                                # wires hooks + boots sidecar
+claude                                 # or: codex / gemini / copilot / kimi / vibe / pi
+```
+
+`rc init` is idempotent; re-run safely. `rc init-uninstall` reverts via
+`.reasoning-core/install.manifest`. Flags: `--no-sidecar` (skip the
+launchd/systemd daemon for CI), `--no-model` (skip the mamba download),
+`--check` (also run `rc doctor` after wiring).
+
+If you only want structural oracles (no Mamba), pass `--no-model` and
+explicitly skip the embedder later via `RC_EMBEDDER=random-mamba`.
+
+---
+
+## Maintainer install (editable checkout)
+
+If you are working on `src/` itself, use the editable flow so your
+edits take effect without re-installing.
 
 ### 1. Clone + venv
 
@@ -17,8 +47,11 @@ If you don't trust the script, the moving parts are:
 git clone https://github.com/jakubkrzysztofsikora/reasoning-core.git
 cd reasoning-core
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .[dev]
 ```
+
+`pip install -e .[dev]` mirrors the wheel extras but resolves into your
+checkout. The `[dev]` extra pulls pytest + pytest-asyncio + pytest-timeout.
 
 ### 2. Embedder checkpoint (one-time)
 
@@ -27,7 +60,8 @@ embedder, set `RC_EMBEDDER` AND a SHA pin override (mutable refs are
 rejected — supply-chain hardening).
 
 ```bash
-# Default
+# Default — only needed in the maintainer flow; rc init already did
+# this for end users.
 huggingface-cli download state-spaces/mamba-130m-hf
 
 # Or: Codestral-Mamba 7B (code-pretrained, hidden=4096)
@@ -48,9 +82,9 @@ Supported backends: `mamba-130m` (default), `codestral-mamba`,
 runtime), `bge-code`, `unixcoder-base`, `random-mamba` (in-process control for
 falsifiability tests). See [`CONFIGURATION.md#embedder-backend`](CONFIGURATION.md#embedder-backend).
 
-### 3. Boot the stack
+### 3. Boot the stack (maintainer flow)
 
-Recommended path: install the supervisor LaunchAgent — one command,
+End users running the wheel flow already had this done by `rc init`. For the maintainer / editable flow, install the supervisor LaunchAgent (one command —
 brings up the S2 (Mamba) sidecar AND the gen (Qwen MLX) sidecar under
 single-instance locks + memory watchdogs, auto-restarts on crash, starts
 on every login.
@@ -98,8 +132,8 @@ echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc         # or bash equivalent
 cd /path/to/your-repo
 ```
 
-Create a `.envrc` in the target repo (the one-command `install.sh` does this
-for you; for a manual install, hand-author one — minimal form below — or
+Create a `.envrc` in the target repo (the wheel flow does this via
+`rc init`; for the manual install, hand-author one — minimal form below — or
 copy from the reasoning-core repo's own `.envrc` and trim to taste).
 
 ```bash
@@ -122,16 +156,20 @@ Secrets / personal toggles → `.envrc.local` (gitignored, sourced last).
 
 ### 5. Wire per-host config
 
-Hand-copy from the templates:
+End users: skip this section. `rc init` writes every CLI hook file
+below for you (it calls into the same templates this section documents).
+
+Maintainers auditing what `rc init` does, or hand-installing without
+the wheel flow, copy from the templates:
 
 | CLI | Source | Destination |
 |---|---|---|
-| Claude | `.claude/settings.json` template in `install.sh` | `.claude/settings.local.json` |
+| Claude | `src/data/templates/claude/settings.local.json.template` (bundled in wheel) | `.claude/settings.local.json` |
 | Gemini | `.gemini/settings.json.template` | `.gemini/settings.json` (substitute `<RC_REPO>`) |
 | Copilot | `.copilot/mcp-config.template.json` | merge into `~/.copilot/mcp-config.json` |
 | Vibe | `.vibe/config.toml.template` | `.vibe/config.toml` (substitute `<RC_REPO>`) |
 
-The unified `install.sh` does all of this; this section is here for the
+The unified `rc init` does all of this; this section is here for the
 audit trail.
 
 ---

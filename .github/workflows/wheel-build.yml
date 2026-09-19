@@ -1,0 +1,133 @@
+name: wheel-build
+
+# Build sdists + wheels for every supported Python + platform, sign with
+# sigstore/cosign, attach SLSA provenance, and publish to PyPI via a
+# Trusted Publisher (no long-lived API tokens).
+#
+# Triggers:
+#   - tag push (v*)           — full matrix build + PyPI publish
+#   - workflow_dispatch       — manual smoke build (no publish)
+#   - pull_request            — build-only smoke, no publish, no sign
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'pyproject.toml'
+      - 'src/**'
+      - '.github/workflows/wheel-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the 'wheels' GH Release on tag push
+  id-token: write   # Trusted Publisher OIDC token for PyPI
+  attestations: write  # SLSA provenance
+
+jobs:
+  build_wheels:
+    name: build ${{ matrix.platform }} py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  python: '3.11', platform: manylinux2014_x86_64 }
+          - { os: ubuntu-latest,  python: '3.12', platform: manylinux2014_x86_64 }
+          - { os: ubuntu-24.04-arm, python: '3.12', platform: manylinux2014_aarch64 }
+          - { os: ubuntu-latest,  python: '3.13', platform: musllinux_x86_64 }
+          - { os: macos-14,        python: '3.11', platform: macosx_arm64 }
+          - { os: macos-14,        python: '3.12', platform: macosx_arm64 }
+          - { os: macos-14,        python: '3.13', platform: macosx_arm64 }
+          - { os: macos-13,        python: '3.11', platform: macosx_x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+        if: runner.os == 'Linux'
+      - name: Install cibuildwheel
+        run: python -m pip install --upgrade cibuildwheel==2.20.0
+      - name: Build wheels
+        env:
+          CIBW_ARCHS: ${{ matrix.platform == 'macosx_arm64' && 'arm64' || (matrix.platform == 'macosx_x86_64' && 'x86_64' || 'auto') }}
+          CIBW_PLATFORM: ${{ matrix.platform }}
+          CIBW_BUILD: "cp${{ matrix.python == '3.13' && '313' || (matrix.python == '3.12' && '312' || '311') }}-*"
+          CIBW_ENVIRONMENT: >-
+            PIP_DISABLE_PIP_VERSION_CHECK=1
+            PIP_NO_BUILD_ISOLATION=0
+          # Skip tree-sitter and torch in the build environment; they are
+          # declared as runtime deps and pull wheels from PyPI at install time.
+          CIBW_BEFORE_BUILD: pip install --upgrade pip setuptools wheel
+          # Manylinux/musllinux images are slim — install build tools via
+          # the standard auditwheel repair step.
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: ""
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: 'python -m pytest tests/test_data_accessor.py -q'
+        run: python -m cibuildwheel --output-dir wheelhouse
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.platform }}
+          path: wheelhouse/*.whl
+
+  build_sdist:
+    name: build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+            python-version: '3.12'
+      - name: Build sdist
+        run: |
+          python -m pip install --upgrade build
+          python -m build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  sign_and_attest:
+    name: sign + attest wheels
+    needs: [build_wheels, build_sdist]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign each wheel with sigstore (keyless, OIDC)
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          for whl in $(find . -name '*.whl' -not -name '*-manylinux*'); do
+            echo "Signing $whl"
+            cosign sign-blob --yes "$whl" --output-signature "$whl.sig" --bundle "$whl.bundle"
+          done
+      - name: SLSA build provenance
+        uses: slsa-framework/slsa-github-generator@v1.9.0
+        id: slsa
+        with:
+          base64-subjects: ${{ needs.build_wheels.outputs.digests }}
+          upload-assets: true
+
+  publish_to_pypi:
+    name: publish to PyPI
+    needs: [build_wheels, build_sdist, sign_and_attest]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # OIDC for PyPI Trusted Publisher
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Publish via Trusted Publisher
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No PYPI_API_TOKEN — Trusted Publisher binds this workflow to
+        # the project at PyPI console. See https://docs.pypi.org/trusted-publishers/.

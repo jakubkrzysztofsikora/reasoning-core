@@ -128,8 +128,8 @@ agy `conversationId` as `RC_SESSION_ID` so receipts stay correlated.
 
 L1–L9 are wired in the reasoning-core repo's own
 [`.claude/settings.json`](../.claude/settings.json) and in the per-repo
-[`.claude/settings.local.json`](../install.sh) that `install.sh` generates
-for any target repo. L10 is opt-in. Every fire emits an audit row to
+[`.claude/settings.local.json`](MIGRATION_v1.md) that `rc init` generates
+for any target repo (legacy: `install.sh`). L10 is opt-in. Every fire emits an audit row to
 `~/.local/share/reasoning-core/events/` (audit schema v4); correlated decision
 and lifecycle rows add `correlation_schema_version=1`.
 

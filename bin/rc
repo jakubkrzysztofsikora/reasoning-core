@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # rc — short shim for `python3 -m src.rc_cli`. Put bin/ on PATH.
+#
+# DEPRECATED (v0.2.0): pip-installed `rc` console_script takes precedence.
+# If `pip install reasoning-core[full]` has run, prefer that. This shim
+# remains for one minor release for maintainers who develop reasoning-core
+# from a checkout and want the in-tree entry point.
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 exec python3 -m src.rc_cli "$@"
