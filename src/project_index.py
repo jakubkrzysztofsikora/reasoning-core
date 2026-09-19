@@ -380,21 +380,29 @@ def get_or_build_index(session_id: str, repo_root: str | None = None) -> Project
             return None
         if repo_root is None:
             return None
-        # Start build
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="projidx")
+        # Start build. The executor lives for the duration of the future;
+        # do NOT shutdown(wait=False) immediately — that cancels the
+        # in-flight walk the first time the caller returns. The pool is
+        # also reused for repeated calls.
+        if not hasattr(get_or_build_index, "_executor"):
+            get_or_build_index._executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="projidx"
+            )
+        executor = get_or_build_index._executor
         fut = executor.submit(_build_index, repo_root, session_id)
         _PROJECT_INDEX_FUTURES[session_id] = fut
         # Evict oldest entries when over budget.
         while len(_PROJECT_INDEX_FUTURES) > _PROJECT_INDEX_MAX_SESSIONS:
             _PROJECT_INDEX_FUTURES.popitem(last=False)
-        executor.shutdown(wait=False)
 
-    # Wait for our own build
-    try:
-        return fut.result(timeout=300)
-    except Exception as exc:
-        logger.warning("Project index build failed: %s", exc)
-        return None
+    # Build was just kicked off. Return None immediately so the caller
+    # falls back to intra-file scoring; subsequent calls will see the
+    # completed future on the cached fast path. This is the behaviour
+    # the docstring promises ("build is not awaited inline ... returns
+    # None"). Previously this branch called fut.result(timeout=300)
+    # which synchronously blocked the event-loop thread for up to 5
+    # minutes while walking the repo. See audit-hostile/2026-09-19-fixes.
+    return None
 
 
 def clear_index(session_id: str) -> None:

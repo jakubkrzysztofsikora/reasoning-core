@@ -43,9 +43,18 @@ from _supervisor_recalibrate import recalibrate_watcher
 
 
 _LOG_ROTATE_BYTES = 100 * 1024 * 1024
-_HEALTH_TIMEOUT_S = 3.0
+# Raised from 3.0s -> 15.0s default. A Mamba-130M CPU forward pass for a
+# non-trivial edit runs 2-4.5s and tree-sitter parse adds another 0.5-1s;
+# 3.0s was lower than worst-case inference, so the supervisor would trip a
+# false SIGTERM and a 60s circuit-break on every busy session. See
+# audit-hostile/2026-09-19-fixes §"Async Event-Loop Starvation & Supervisor
+# Self-Termination" for the original analysis.
+_HEALTH_TIMEOUT_S = float(os.environ.get("S2_HEALTH_TIMEOUT_S", "15.0"))
 _FAILURE_THRESHOLD = int(os.environ.get("S2_FAILURE_THRESHOLD", "5"))
-_HEALTH_GRACE_S = float(os.environ.get("S2_HEALTH_GRACE_S", "30.0"))
+# Startup grace bumped from 30s -> 60s default. The sidecar loads the
+# Mamba backbone + tokenizer on cold start; first /health OK can take
+# longer than 30s on slow disks.
+_HEALTH_GRACE_S = float(os.environ.get("S2_HEALTH_GRACE_S", "60.0"))
 _BROKER_PORT = int(os.environ.get("RC_BROKER_PORT", "8764"))
 
 

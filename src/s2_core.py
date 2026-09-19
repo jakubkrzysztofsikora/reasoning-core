@@ -18,6 +18,7 @@ Run with: ``python3 -m src.s2_core``
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -125,10 +126,22 @@ class ImpactReport:
 # Per-session baseline registry + /metrics ring buffer
 # ---------------------------------------------------------------------------
 
-# Session id -> {path: tensor, "__corpus__": tensor, "__drift_p95__": float}.
-# Per-file baselines with empirical drift threshold. Kept loose to avoid
-# importing torch at module load time.
-_BASELINES: dict[str, dict[str, Any]] = {}
+# Session id -> {path: tensor, "__corpus__": tensor, "__drift_p95__": float,
+#                       "__ts__": float} where __ts__ is the wall-clock
+# insert time used by the TTL eviction policy. Per-file baselines with
+# empirical drift threshold. Kept loose to avoid importing torch at
+# module load time.
+#
+# Eviction policy (audit-hostile/2026-09-19-fixes):
+#   * LRU on insertion order (move_to_end on touch) so cold sessions fall
+#     out first when we hit S2_BASELINE_MAX_SESSIONS (default 256).
+#   * Per-session TTL via S2_BASELINE_TTL_S (default 86400 = 24h) so a
+#     long-running daemon cannot accumulate tensor memory indefinitely.
+#     Eviction happens on read; entries older than the TTL are skipped.
+from collections import OrderedDict
+_BASELINE_MAX_SESSIONS = int(os.environ.get("S2_BASELINE_MAX_SESSIONS", "256"))
+_BASELINE_TTL_S = float(os.environ.get("S2_BASELINE_TTL_S", "86400.0"))
+_BASELINES: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 _BASELINES_LOCK = Lock()
 
 # Ring buffer of recent /score latencies in milliseconds. Bounded at 1000.
@@ -176,14 +189,41 @@ def _metrics_snapshot() -> dict[str, Any]:
     }
 
 
+def _evict_expired_baselines() -> None:
+    """Drop sessions whose __ts__ is older than _BASELINE_TTL_S. Caller holds lock."""
+    if _BASELINE_TTL_S <= 0:
+        return
+    cutoff = time.time() - _BASELINE_TTL_S
+    stale = [sid for sid, payload in _BASELINES.items()
+             if float(payload.get("__ts__", 0.0)) < cutoff]
+    for sid in stale:
+        _BASELINES.pop(sid, None)
+
+
 def _set_session_baseline(session_id: str, baselines: dict[str, Any]) -> None:
     with _BASELINES_LOCK:
-        _BASELINES[session_id] = baselines
+        # LRU touch: move-to-end on overwrite so cold sessions evict first.
+        if session_id in _BASELINES:
+            _BASELINES.move_to_end(session_id)
+        payload = dict(baselines)
+        payload["__ts__"] = time.time()
+        _BASELINES[session_id] = payload
+        _evict_expired_baselines()
+        # Cap: drop oldest entries until under the configured maximum.
+        while len(_BASELINES) > _BASELINE_MAX_SESSIONS:
+            _BASELINES.popitem(last=False)
 
 
 def _get_session_baseline(session_id: str) -> Optional[dict[str, Any]]:
     with _BASELINES_LOCK:
-        return _BASELINES.get(session_id)
+        _evict_expired_baselines()
+        payload = _BASELINES.get(session_id)
+        if payload is None:
+            return None
+        # Touch for LRU.
+        _BASELINES.move_to_end(session_id)
+        # Return without the internal __ts__ field to keep callers stable.
+        return {k: v for k, v in payload.items() if k != "__ts__"}
 
 
 def _get_session_baseline_for_path(session_id: str, path: str) -> tuple[Any, float]:
@@ -192,9 +232,11 @@ def _get_session_baseline_for_path(session_id: str, path: str) -> tuple[Any, flo
     Returns (None, 0.0) if no baseline exists for the session.
     """
     with _BASELINES_LOCK:
+        _evict_expired_baselines()
         baselines = _BASELINES.get(session_id)
         if baselines is None:
             return None, 0.0
+        _BASELINES.move_to_end(session_id)
         vec = baselines.get(path)
         if vec is None:
             vec = baselines.get("__corpus__")
@@ -208,16 +250,29 @@ def _clear_session_baselines() -> None:
         _BASELINES.clear()
 
 
+def _baseline_count() -> int:
+    """Test helper — current number of cached sessions."""
+    with _BASELINES_LOCK:
+        return len(_BASELINES)
+
+
 def _persist_session_baseline_for_path(session_id: str, path: str, emb: Any) -> None:
     """Store emb as the baseline for path if no baseline exists yet."""
     with _BASELINES_LOCK:
         baselines = _BASELINES.get(session_id)
         if baselines is None:
-            baselines = {}
+            baselines = {"__ts__": time.time()}
             _BASELINES[session_id] = baselines
+        else:
+            # Touch for LRU and refresh TTL anchor.
+            _BASELINES.move_to_end(session_id)
+            baselines["__ts__"] = time.time()
         if path not in baselines and "__corpus__" not in baselines:
             # Only auto-persist when no explicit /baseline was called
             baselines[path] = emb
+        # Cap: drop oldest entries until under the configured maximum.
+        while len(_BASELINES) > _BASELINE_MAX_SESSIONS:
+            _BASELINES.popitem(last=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1286,8 +1341,14 @@ def create_app():
                 },
             )
 
+        # score_change runs heavy CPU/PyTorch work (tree-sitter parse, call-graph
+        # build, two Mamba forward passes). Offload to a thread so the asyncio
+        # event loop stays free to handle /health probes from the supervisor and
+        # other concurrent /score calls. See audit-hostile/2026-09-19-fixes.
         try:
-            report = score_change(path, before_src, after_src, session_id=session_id)
+            report = await asyncio.to_thread(
+                score_change, path, before_src, after_src, session_id=session_id
+            )
         except UnsupportedLanguageError as exc:
             _record_latency((time.monotonic() - t0) * 1000.0, error=False)
             return JSONResponse(
