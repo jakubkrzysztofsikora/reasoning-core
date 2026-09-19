@@ -176,7 +176,7 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     # without a file extension) so `cp /tmp/x.py src/hooks/` trips the base
     # guard regardless of RC_LANG_LOCK or dest filename.
     re.compile(rf"\b(?:cp|mv|install|rsync)\b[^|;&]+\s([^|;&\s]+(?:{_SRC_EXT_PATTERN}))\b"),
-    re.compile(rf"\b(?:cp|mv|install|rsync)\b[^|;&]+\s([^|;&\s]+(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json))"),
+    re.compile(r"""\b(?:cp|mv|install|rsync)\b\s+\S+\s+(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json)"""),
     # `pathlib.Path("x.py").write_text(...)` — modern idiom,
     # not covered by the open() regex above.
     re.compile(r"""pathlib\.Path\s*\([^)]+\)\.(?:write_text|write_bytes)\s*\("""),
@@ -197,7 +197,7 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     # appears ANYWHERE in the heredoc body so an agent cannot smuggle a
     # `open(...)` or `Path(...).write_text(...)` past the regex by piping
     # via stdin. The fragment match alone is the trip signal.
-    re.compile(r"(?:python|python3|node|perl|ruby)\s*<<\s*['"]?\w+['"]?[\s\S]*?(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json)"),
+    re.compile(r"""(?:python|python3|node|perl|ruby)\s*<<\s*['"]?\w+['"]?[\s\S]*?(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json)"""),
     # `base64 -d | bash|sh|zsh|eval` payload obfuscation pattern.
     re.compile(r"""base64\b[^|;&]*-d\b[^|;&]*\|\s*(?:bash|sh|zsh|eval)\b"""),
     # `$(echo ... | base64 -d)` alternate obfuscation form.
