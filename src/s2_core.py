@@ -1198,6 +1198,25 @@ def score_change(
     fired_dims: list[str] = []
     fired_margins: dict[str, float] = {}
 
+    # NOTE (re-audit-hostile/2026-09-19-reaudit-fixes, RC-ML-04): in the
+    # current scoring regime, AIS = (cos+1)/2 and CD = sqrt(2-2cos) are
+    # scalar transforms of the same cosine similarity, so the
+    # `ais_below_threshold` check is mathematically subsumed by the
+    # `coherence_delta_above_threshold` check that follows. Default
+    # thresholds are ais < 0.4 (cos < -0.2) vs cd > 0.09 (cos < 0.996),
+    # so whenever `ais < t["ais"]` would fire, `coherence_delta > t["cd"]`
+    # has already fired.
+    #
+    # We keep both checks because:
+    #   - `ais_below_threshold` is part of the public ImpactReport.fired_
+    #     conditions contract that downstream hooks (pre_edit_guard) and
+    #     audit dashboards key on; removing it is a breaking API change.
+    #   - Phase C of the audit-deferred rollup plan (memos + plan at
+    #     thoughts/shared/research/2026-09-19-audit-deferred-scoring-v3.md
+    #     and .../plans/2026-09-19-audit-deferred-rollup.md) repurposes
+    #     AIS as the canonical 0..1 readout alongside a NEW independent
+    #     signal (mahal_anomaly) that is NOT a scalar transform of cos.
+    #     The check then carries distinct information again.
     if ais < t["ais"]:
         fired_conditions.append("ais_below_threshold")
         fired_margins["ais_below_threshold"] = float(t["ais"] - ais)
