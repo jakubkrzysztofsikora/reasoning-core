@@ -45,7 +45,7 @@ outcomes.
 | Code legibility (1–5) | 4.26 | 4.26 | Tied — sidecar doesn't help here |
 | Total tokens used | 23.1M | 21.2M | −8.2% averaged across all 8 tasks |
 | Best single-task token saving | — | −29% (PR review) | Up to ~29% on cache-heavy tasks |
-| Wall-clock per run | 547s | 645s | +98s slower — sidecar plans before it edits |
+| Wall-clock per run | 547s (superseded) | 645s (superseded) | +98s — see Headline numbers table below for the canonical iter-1 measurement |
 | Where your code is processed | Anthropic only | Anthropic only + your laptop | Nothing new leaves your machine |
 
 ### Historical token-cost arithmetic
@@ -98,24 +98,56 @@ flake check, BARS-rubric implementation- and plan-quality grades.
 | **Tokens / task (main)** | 66 733 | 65 222 | −1 511 | −2.3% |
 | Impl quality (BARS 1–5) | 2.90 | 2.88 | −0.02 | flat |
 | Plan quality (BARS 1–5) | 2.92 | 2.50 | −0.42 | −14.4% |
-| **Task wins** (gates → impl_q → plan_q → cost) | 2 / 8 | **6 / 8** | — | — |
+| **Task wins** (gates → impl_q → plan_q → cost) | 2 / 8 (retracted) | **6 / 8** (retracted) | — | — |
+| **Task wins (surviving 5 cells, n=1 each)** | 2 / 5 | **3 / 5** | — | — | T1, T9 → A; T2, T8, E1 → B |
 
 Suite totals: Setup A spent **$91.50** / 533 866 tokens; Setup B spent
 **$68.51** / 521 772 tokens. ~$23 / 25% saved at the suite level on this
 single-run draft.
 
-### Per-task verdicts
+### Per-task verdicts (Iteration 1 draft — RETRACTED 2026-09-19)
+
+> **Status: data-integrity retraction.** A hostile review surfaced three
+> issues with this iteration-1 table:
+>
+> 1. **T5 and T7 rows are byte-identical** (84 533 tokens, $15.53, same
+>    impl/plan quality) — physically impossible for two distinct
+>    end-to-end LLM agent runs. Both rows were copy-pasted from a
+>    single recorded run during initial table assembly.
+> 2. **P0 winner was inverted** against the pre-registered decision
+>    rule. Under (gates → impl_q → plan_q → cost), Setup A wins P0
+>    decisively (3.5 vs 2.0 impl, 4× fewer tokens, 2.5× cheaper) — not
+>    Setup B. Correcting P0 drops Setup B to 5/8 task-mean wins,
+>    rendering the n=8 sign test indistinguishable from a coin toss
+>    (two-sided p ≈ 0.73).
+> 3. The two latency tables on this page contradict each other by
+>    484 seconds per run (Table 1 says +98s slower; Table 2 says
+>    −386s faster).
+>
+> Per-task JSONL evidence for what was actually recorded lives in
+> `eval/runs/` (gitignored) and is referenced from `eval/runs/<run-id>/`
+> manifests. The doc itself already disclaimed this section as
+> "draft n=1–3" and "headline win-count is directional, not
+> significant", but the duplicated rows made even the directional
+> claim unreliable. The retracting commit is
+> `audit-hostile/2026-09-19-fixes`.
+>
+> The pre-registered iter-2 acceptance harness
+> (`docs/EVAL_DESIGN.md` §7, `thoughts/shared/plans/2026-05-06-iter2-100pct-eval-plan.md`)
+> targets n≥3 per cell with cross-family judges. Until that runs and
+> publishes, treat this section as illustrative, not evidentiary.
 
 | task | winner | A impl_q / plan_q | B impl_q / plan_q | A tokens | B tokens | A $ | B $ |
 |---|---|---:|---:|---:|---:|---:|---:|
 | T1 | A | 5.0 / 5.0 | 3.0 / 1.0 | 71 200 | 29 800 | $13.08 | $3.41 |
 | T2 | B | 3.5 / 3.0 | 5.0 / 3.0 | 121 000 | 94 200 | $22.93 | $12.39 |
-| T5 | B | 1.83 / 1.67 | 3.5 / 3.0 | 84 533 | 72 208 | $15.53 | $10.26 |
-| T7 | B | 1.83 / 1.67 | 3.5 / 3.0 | 84 533 | 72 208 | $15.53 | $10.26 |
 | T8 | B | 3.0 / 3.0 | 4.0 / 5.0 | 41 600 | 24 662 | $6.98 | $2.83 |
-| T9 | A | 1.0 / 3.0 | 1.0 / 1.0 | 37 700 | 39 894 | $2.85 | $3.49 |
+| T9 | A | 1.0 / 3.0 | 1.0 / 3.0 | 37 700 | 39 894 | $2.85 | $3.49 |
 | E1 | B (correctness gate) | 3.5 / 3.0 (locked 0/1) | 1.0 / 1.0 (locked 1/1) | 57 600 | 41 600 | $5.89 | $4.29 |
-| P0 | B | 3.5 / 3.0 | 2.0 / 3.0 | 35 700 | 147 200 | $8.71 | $21.58 |
+
+> T5, T7, and P0 are omitted from the table above — see the
+> retraction note for the reasons. The remaining 5 cells are still
+> n=1 and should be treated as illustrative.
 
 ### What this draft shows
 

@@ -87,6 +87,19 @@ def _build_xy(repo_root: Path, *,
                     row = json.loads(line)
                 except (json.JSONDecodeError, ValueError):
                     continue
+                # Label-polarity contract (audit-hostile/2026-09-19-fixes):
+                #
+                #   eval/calibration_corpus.py defines:
+                #     label == "negative"  -> benign change (merged-and-stable)
+                #     label == "positive"  -> regression (reverted/fixed)
+                #
+                # We feed the Mahalanobis fit only the benign rows, so this
+                # filter keeps label == "negative". NOTE: this is the OPPOSITE
+                # of the polarity used by src/hooks/_commit_miner.py (which
+                # also mines git history but emits label="positive" for benign
+                # and label="negative" for regression). The two miners must
+                # NOT be swapped in here without flipping this filter too, or
+                # the calibration baseline will be trained on regressions.
                 if row.get("label") != "negative":
                     continue
                 try:

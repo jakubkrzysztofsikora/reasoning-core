@@ -44,9 +44,25 @@ For cold-start files (empty before_src or <32 characters), coherence_delta is se
 
 %% 4.4 Architectural Impact Score
 
-The architectural impact score (AIS) is computed as a weighted combination of the risk vector, passed through a sigmoid function.
+AIS is computed as the linear remap of cosine similarity between the
+L2-normalized before/after embeddings:
 
-Currently using equal weights with sigmoid activation.
+  AIS = (cos(emb_before, emb_after) + 1) / 2
+
+so AIS ∈ [0, 1] with 1.0 == identical embeddings and 0.0 == maximally
+dissimilar embeddings. See src/s2_core.py: ``ais = (cos + 1.0) / 2.0``.
+
+Earlier revisions of this paper described AIS as a sigmoid-weighted
+combination of the risk vector; that description was incorrect and has
+been removed. The 8-dim risk vector (cyclomatic, fan_in, fan_out,
+depth, churn, coupling, cohesion, novelty) feeds the per-dim ceiling
+check separately; AIS is independent of those dimensions.
+
+Note: AIS, coherence_delta (= chord distance = sqrt(2 - 2 cos) on
+L2-normalized embeddings), and novelty (= 1 - max(cos, 0)) are
+algebraically related — each is a scalar transform of cos. They are
+emitted as three fields in ImpactReport for backward compatibility,
+not as three independent signals.
 
 %% 4.5 Per-File-Kind Thresholds
 
