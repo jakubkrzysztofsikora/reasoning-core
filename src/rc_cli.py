@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import pathlib
 from pathlib import Path
 # Make `src` importable when run as a script (`python src/rc_cli.py`): the repo
 # root -- not just src/ -- must be on sys.path before importing the package.
@@ -1661,6 +1662,112 @@ def cmd_init_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+def _detect_install_target() -> dict:
+    """Identify whether ``rc`` came from a wheel, an editable install, or git+https.
+
+    Returns a dict with keys: ``mode`` ("wheel" / "editable" / "git" / "unknown"),
+    ``ref`` (the git ref if known), ``location`` (the install location path).
+
+    This is intentionally best-effort. We don't shell out to ``pip`` unless
+    asked -- we read what ``importlib.metadata`` already knows.
+    """
+    out = {"mode": "unknown", "ref": None, "location": None, "version": None}
+    try:
+        from importlib.metadata import version as _v, distribution as _d
+        out["version"] = _v("reasoning-core")
+    except Exception:
+        pass
+    try:
+        import importlib.util as _il
+        spec = _il.find_spec("src.rc_cli")
+        if spec and spec.origin:
+            loc = pathlib.Path(spec.origin).resolve()
+            out["location"] = str(loc)
+            # Walk up to find a setup.py / pyproject.toml / .git
+            cur = loc
+            for _ in range(6):
+                cur = cur.parent
+                if (cur / ".git").is_dir():
+                    out["mode"] = "editable"
+                    break
+                if (cur / "pyproject.toml").is_file() and (cur / "src").is_dir():
+                    out["mode"] = "editable"
+                    break
+            else:
+                out["mode"] = "wheel"
+    except Exception:
+        pass
+    return out
+
+
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    """Upgrade reasoning-core in place and re-verify the hook wiring.
+
+    The upgrade strategy depends on how the package is currently installed:
+
+    * editable checkout (``pip install -e .`` or ``pip install -e .[full]``)
+      -> ``pip install -e .[full] --upgrade`` from the current directory.
+    * git+https install -> ``pip install --upgrade "reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@<ref>"``.
+    * wheel install (no PyPI release exists yet for this repo as of v0.2.0) ->
+      falls back to the git ref above; the wheel-build workflow publishes on
+      tag push, so a pinned ref is the most honest upgrade path.
+
+    After the install, ``rc upgrade`` re-runs ``rc init --check`` from the
+    current directory so the operator sees whether the new version still
+    wires correctly into their repo.
+    """
+    import subprocess
+
+    target = Path(args.target).resolve() if args.target else Path.cwd().resolve()
+    if not target.is_dir():
+        sys.stderr.write("rc upgrade: target directory does not exist: %s\n" % target)
+        return 2
+
+    info = _detect_install_target()
+    ref = args.ref or "main"
+    print(f"rc upgrade")
+    print(f"  current_version = {info.get('version') or 'unknown'}")
+    print(f"  current_mode    = {info['mode']}")
+    print(f"  location        = {info['location'] or 'unknown'}")
+    print(f"  target          = {target}")
+    print(f"  ref             = {ref}")
+
+    if args.dry_run:
+        print("  (dry-run) would have run a pip install + rc init --check")
+        return 0
+
+    # Decide the upgrade command.
+    if info["mode"] == "editable":
+        cmd = [sys.executable, "-m", "pip", "install", "-e", ".[full]", "--upgrade"]
+        cwd = str(info["location"] and pathlib.Path(info["location"]).parents[2] or target)
+    else:
+        git_url = "git+https://github.com/jakubkrzysztofsikora/reasoning-core.git"
+        cmd = [
+            sys.executable, "-m", "pip", "install", "--upgrade",
+            f"reasoning-core[full] @ {git_url}@{ref}",
+        ]
+        cwd = None
+
+    print(f"  running: {' '.join(cmd)}")
+    proc = subprocess.run(cmd, cwd=cwd, check=False)
+    if proc.returncode != 0:
+        sys.stderr.write(f"rc upgrade: pip install failed (exit {proc.returncode})\n")
+        return proc.returncode
+
+    # Re-verify the hook wiring for the target repo.
+    print("  re-verifying hook wiring via rc init --check ...")
+    init_args = argparse.Namespace(target=str(target), no_sidecar=False, no_model=False, check=True)
+    rc = cmd_init(init_args)
+    if rc != 0:
+        sys.stderr.write("rc upgrade: rc init --check failed; inspect output above\n")
+        return rc
+
+    # Print new version.
+    info2 = _detect_install_target()
+    print(f"  done. new_version = {info2.get('version') or 'unknown'}")
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1680,6 +1787,14 @@ def main(argv: list | None = None) -> int:
     )
     init_uninstall.add_argument("--target", default=None)
     init_uninstall.set_defaults(func=cmd_init_uninstall)
+    upgrade_cmd = sub.add_parser(
+        "upgrade",
+        help="upgrade reasoning-core in place and re-verify hook wiring",
+    )
+    upgrade_cmd.add_argument("--target", default=None, help="repo to re-verify (default: cwd)")
+    upgrade_cmd.add_argument("--ref", default=None, help="git ref to upgrade to when not on an editable install (default: main)")
+    upgrade_cmd.add_argument("--dry-run", action="store_true", help="print the plan without changing anything")
+    upgrade_cmd.set_defaults(func=cmd_upgrade)
     doctor = sub.add_parser(
         "doctor",
         help="verify agent-hook wiring and evidence-pipeline prerequisites",

@@ -88,6 +88,14 @@ fallback flow is `pip install reasoning-core && pip install -r
 requirements.txt` (still no git clone). See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md)
 for moving off the old clone-and-install flow.
 
+To move between framework versions without re-doing the install:
+
+```bash
+rc upgrade                  # pip install --upgrade + rc init --check (idempotent)
+rc upgrade --ref v0.3.0     # pin a specific tag/branch
+rc upgrade --dry-run         # see the plan before it runs
+```
+
 When the gate blocks an edit, you see a `Decision ID` you can inspect or
 override from the terminal:
 
@@ -198,6 +206,7 @@ rc init                     # wire hooks into the current repo (replaces install
 rc init --no-sidecar        # same, but skip the launchd/systemd daemon
 rc init --no-model          # same, but skip the mamba-130m download
 rc init-uninstall           # revert rc init via .reasoning-core/install.manifest
+rc upgrade                  # pull the newest pip+git ref, re-verify hook wiring
 rc doctor                   # verify agent-hook wiring and evidence capture
 rc explain <decision-id>    # why the last edit was blocked
 rc bypass-next              # arm one bypass for the next Edit/Write

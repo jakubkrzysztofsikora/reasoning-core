@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reasoning-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local pre-edit gate for AI coding CLIs: audit/warn (default) or block (opt-in) on edits that drift off-plan, import what's banned, or break invariants."
 requires-python = ">=3.11"
 readme = "README.md"

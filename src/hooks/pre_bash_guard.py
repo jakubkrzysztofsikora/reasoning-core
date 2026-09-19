@@ -95,6 +95,22 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bgit\s+restore\b"),
     # `git stash apply` reapplies a stash to working tree.
     re.compile(r"\bgit\s+stash\s+apply\b"),
+    # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-01): the SHA-anchored
+    # `git checkout <sha>` regex misses reflog refs and symbolic revisions
+    # like `HEAD~1`, `HEAD^`, `origin/main`, branch names, and `--` paths.
+    # Block any `git checkout` that is not a benign read-only inspection
+    # (those go via `git status/log/diff/show`, all in SAFE_LEADING_TOKENS).
+    re.compile(r"\bgit\s+checkout\b"),
+    # `git reset --hard <ref>` rewrites working-tree files.
+    re.compile(r"\bgit\s+reset\b[^|;&]*--hard\b"),
+    # `git switch -f <branch>` rewrites the working tree to a branch.
+    re.compile(r"\bgit\s+switch\b[^|;&]*-[fCc]\b"),
+    # `git switch <branch>` (no force flag) still updates HEAD and the
+    # index/working tree. Read-only inspection never goes through
+    # `git switch`.
+    re.compile(r"\bgit\s+switch\b\s+[^|&;]+\b"),
+    # `git merge <ref>` brings in changes from another branch.
+    re.compile(r"\bgit\s+merge\b"),
     # Reviewer-flagged (3-reviewer convergent on commit c2cc135):
     # bare `\bRC_*\s*=\s*\S` over-blocks heredoc bodies, doc generators,
     # and comments containing the literal string. Anchored on COMMAND
@@ -114,6 +130,17 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_DRIFT_(?:DENY|WARN)\s*="),
     re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_RISK_DIM_THRESHOLD\s*="),
     re.compile(r"(?:^|[\n;]|&&|\|\|)\s*(?:export\s+)?RC_COHERENCE_THRESHOLD\s*="),
+    # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-03): shell-decode
+    # payload patterns. The previous regex only caught `base64 -d | bash|sh`.
+    # macOS uses `-D`, GNU uses `--decode`, and other decoders (openssl, xxd,
+    # python -c "import base64; ...") achieve the same outcome. Block any
+    # `... | <decoder> | <interpreter>` chain where the interpreter is one of
+    # the dynamic-execution sinks.
+    re.compile(r"\bbase64\b[^|;&]*-[dD]\b[^|;&]*\|\s*(?:bash|sh|zsh|eval|python|python3|node|perl|ruby)\b"),
+    re.compile(r"\bbase64\b[^|;&]*--decode\b[^|;&]*\|\s*(?:bash|sh|zsh|eval|python|python3|node|perl|ruby)\b"),
+    re.compile(r"\bopenssl\b[^|;&]*-d\b[^|;&]*\|\s*(?:bash|sh|zsh|eval|python|python3|node)\b"),
+    re.compile(r"\bxxd\b[^|;&]*-r\b[^|;&]*\|\s*(?:bash|sh|zsh|eval|python|python3|node)\b"),
+    re.compile(r"\bzstd\b[^|;&]*-d\b[^|;&]*\|\s*(?:bash|sh|zsh|eval|python|python3|node)\b"),
     # The classic "agent prefixes a real command with override" form:
     # `RC_X=val real_command args` — same anchor catches it.
 )
@@ -143,16 +170,34 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     # `cat <<EOF > path.py` heredocs
     re.compile(rf"<<\s*['\"]?\w+['\"]?[^|;&]*>\s*['\"]?[^|;&\s]*({_SRC_EXT_PATTERN})\b"),
     # `cp|mv|install|rsync <src> <dest>` where dest is a tracked source ext.
-    # Audit-hostile/2026-09-19-fixes: lifted from the lang-lock-only path
-    # so these trip the base guard regardless of RC_LANG_LOCK.
+    # Audit-hostile/2026-09-19-fixes: lifted from the lang-lock-only path.
+    # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-02): also fire when
+    # the destination is a guarded path fragment (e.g. `src/hooks/` even
+    # without a file extension) so `cp /tmp/x.py src/hooks/` trips the base
+    # guard regardless of RC_LANG_LOCK or dest filename.
     re.compile(rf"\b(?:cp|mv|install|rsync)\b[^|;&]+\s([^|;&\s]+(?:{_SRC_EXT_PATTERN}))\b"),
+    re.compile(rf"\b(?:cp|mv|install|rsync)\b[^|;&]+\s([^|;&\s]+(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json))"),
     # `pathlib.Path("x.py").write_text(...)` — modern idiom,
     # not covered by the open() regex above.
     re.compile(r"""pathlib\.Path\s*\([^)]+\)\.(?:write_text|write_bytes)\s*\("""),
+    # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-04): pathlib aliased
+    # as `from pathlib import Path; Path('x.py').write_text(...)`. Catch
+    # both `Path(...)` and `pathlib.Path(...)` writer methods.
+    re.compile(r"""\bPath\s*\([^)]+\)\.(?:write_text|write_bytes|write_lines)\s*\("""),
+    # `open('x.py', mode='w')` keyword-arg form (re-audit RC-SEC-04).
+    re.compile(r"""open\s*\(\s*['"][^'"]+['"]\s*,\s*mode\s*=\s*['"][wa]['"]"""),
+    # `open('x.py', 'wb')` second-positional binary form.
+    re.compile(r"""open\s*\(\s*['"][^'"]+['"]\s*,\s*['"][wa][bx]?['"]"""),
     # `git checkout|restore|stash apply|apply` writing into source paths.
     # The leading-tokens allowlist still contains "git" for benign commands
     # (status, log, diff, show) but these subcommands always need review.
     re.compile(rf"\bgit\s+(?:checkout|restore|stash\s+apply|apply)\b[^|;&]*([\w./\-]+(?:{_SRC_EXT_PATTERN}))\b"),
+    # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-04): heredoc stdin
+    # execution of python/node/perl/ruby. Trip when a guarded path fragment
+    # appears ANYWHERE in the heredoc body so an agent cannot smuggle a
+    # `open(...)` or `Path(...).write_text(...)` past the regex by piping
+    # via stdin. The fragment match alone is the trip signal.
+    re.compile(r"(?:python|python3|node|perl|ruby)\s*<<\s*['"]?\w+['"]?[\s\S]*?(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json)"),
     # `base64 -d | bash|sh|zsh|eval` payload obfuscation pattern.
     re.compile(r"""base64\b[^|;&]*-d\b[^|;&]*\|\s*(?:bash|sh|zsh|eval)\b"""),
     # `$(echo ... | base64 -d)` alternate obfuscation form.
