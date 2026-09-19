@@ -289,6 +289,58 @@ def _guarded_path_match(cmd: str) -> Optional[str]:
     return None
 
 
+# Patterns that pull a candidate redirect target out of a shell command. Each
+# captures the path (without surrounding quotes) into group 1.
+_REDIRECT_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # `> path`, `>> path`, `1> path`, `&> path`, `2> path`, `1>> path`
+    re.compile(r"""(?:>|>>|1>|2>|1>>|2>>|&>)\s*['"]?([^'"|;&\s]+)"""),
+    # `tee path`, `tee -a path`
+    re.compile(r"""\btee\b[^|;&]*\s+['"]?([^'"|;&\s]+)"""),
+    # `sed -i ... path`
+    re.compile(r"""\bsed\b[^|;&]*-i\b[^|;&]*['"]?([^'"|;&\s]+?)(?:['"]|$)"""),
+    # `python -c "...open('path', 'w')..."`
+    re.compile(r"""open\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"][wa]['"]"""),
+    # `pathlib.Path('path').write_text/write_bytes(...)`
+    re.compile(r"""[Pp]ath\s*\(\s*['"]([^'"]+)['"]\s*\)\.(?:write_text|write_bytes|write_lines)"""),
+    # `cp|mv|install|rsync <src> <dest>` — second arg is the target.
+    re.compile(r"""\b(?:cp|mv|install|rsync)\b\s+\S+\s+['"]?([^'"|;&\s]+)"""),
+)
+
+
+def _resolve_symlink_to_guarded(cmd: str) -> Optional[str]:
+    """RC-SEC-05: if a redirect target resolves through a symlink to a
+    guarded file, return the guarded fragment; else None.
+
+    Only returns a hit when:
+      - the candidate path exists on disk AND
+      - os.path.realpath() resolves to an absolute path that contains one
+        of the GUARDED_PATH_FRAGMENTS as a substring.
+    Failure modes (permission errors, missing files, weird filesystems)
+    return None so the regex layer still catches the obvious cases.
+    """
+    import os
+    for pat in _REDIRECT_TARGET_PATTERNS:
+        for m in pat.finditer(cmd):
+            target = m.group(1).strip()
+            if not target or target.startswith(("/", "~")) is False and "/" not in target:
+                # Skip bare filenames without slashes; not a symlink-overwrite
+                # vector (would be in cwd which we trust by default).
+                continue
+            try:
+                # Expand ~ if present.
+                expanded = os.path.expanduser(target)
+                if not os.path.exists(expanded):
+                    continue
+                real = os.path.realpath(expanded)
+                for frag in GUARDED_PATH_FRAGMENTS:
+                    if frag in real:
+                        return frag
+            except OSError:
+                # Permission denied, symlink loop, etc. — don't false-positive.
+                continue
+    return None
+
+
 def _src_write_match(cmd: str) -> Optional[str]:
     for pat in SRC_WRITE_PATTERNS:
         m = pat.search(cmd)
@@ -372,9 +424,12 @@ def screen_command(cmd: str) -> tuple[int, str]:
     bad_ext_path = _manifest_disallowed_extension(cmd)
     if bad_ext_path:
         return 2, (
-            "[hybrid-reasoner] BLOCKED: shell write to a path outside "
-            "the session's declared language family.\n"
-            f"  path: {bad_ext_path}"
+            "[hybrid-reasoner] BLOCKED: shell write to a path outside this "
+            "session's declared language family.\n"
+            f"  path: {bad_ext_path}\n"
+            "  fix: this repo was initialised for a different language. "
+            "Either run `rc init --check` to refresh the manifest, or use the "
+            "Edit / Write / MultiEdit tools so the SSM guard can score the change."
         )
 
     # Layer A: hard-deny patterns trump everything except the explicit override.
@@ -383,14 +438,22 @@ def screen_command(cmd: str) -> tuple[int, str]:
         if _override_active():
             return 0, f"[hybrid-reasoner] override: hard-deny pattern allowed via {ALLOW_OVERRIDE_ENV}=1 ({deny_reason})"
         return 2, (
-            "[hybrid-reasoner] BLOCKED: shell command targets the guard or sidecar.\n"
+            "[hybrid-reasoner] BLOCKED: this command targets the guard, hook, "
+            "or sidecar process and would disable the gate.\n"
             f"  matched: {deny_reason}\n"
-            f"  command: {cmd[:300]}\n"
-            f"  command: {cmd[:300]}"
+            "  fix: there is no compliant way to do this from a shell command. "
+            "If you genuinely need to bypass the guard (e.g. operator-initiated "
+            "rollback of the framework itself), set RC_ALLOW_GUARD_EDIT=1 in the "
+            "same command. The bypass is recorded in the audit log."
         )
 
     # Layer B: shell command targeting a guarded path (regardless of operation).
+    # Two triggers: substring match (existing), or symlink resolution
+    # (RC-SEC-05 re-audit) so `ln -s src/hooks/pre_bash_guard.py /tmp/x;
+    # echo > /tmp/x` trips.
     guarded = _guarded_path_match(cmd)
+    if guarded is None:
+        guarded = _resolve_symlink_to_guarded(cmd)
     if guarded:
         # Allow read-only ops on guarded paths so Claude can `cat .claude/settings.json`.
         # Only block if the command also looks like a write or kill.
@@ -398,10 +461,13 @@ def screen_command(cmd: str) -> tuple[int, str]:
             if _override_active():
                 return 0, f"[hybrid-reasoner] override: guarded-path write allowed via {ALLOW_OVERRIDE_ENV}=1 ({guarded})"
             return 2, (
-                "[hybrid-reasoner] BLOCKED: shell write to guard file.\n"
+                "[hybrid-reasoner] BLOCKED: shell write to a guarded file.\n"
                 f"  guarded path: {guarded}\n"
-                f"  command: {cmd[:300]}\n"
-                f"  command: {cmd[:300]}"
+                "  fix: use the Edit / Write / MultiEdit tool on the file "
+                "directly. Shell redirects, `tee`, `cp`, `mv`, `install`, "
+                "`rsync`, `git checkout`, `git restore`, `git apply`, and any "
+                "heredoc that writes to a guarded path are blocked. Symlink "
+                "overwrites are also caught via realpath resolution."
             )
 
     # Layer C: kill/pkill against sidecar process names.
@@ -410,10 +476,13 @@ def screen_command(cmd: str) -> tuple[int, str]:
             if _override_active():
                 return 0, f"[hybrid-reasoner] override: process kill allowed via {ALLOW_OVERRIDE_ENV}=1 ({token})"
             return 2, (
-                "[hybrid-reasoner] BLOCKED: shell kill targets sidecar process.\n"
+                "[hybrid-reasoner] BLOCKED: shell kill targets the sidecar "
+                "process.\n"
                 f"  process token: {token}\n"
-                f"  command: {cmd[:300]}\n"
-                f"  command: {cmd[:300]}"
+                "  fix: the sidecar (s2_core, mcp_reasoner, start-sidecar) must "
+                "stay running for the gate to score edits. To restart it "
+                "deliberately, ask the operator to run `rc restart` or "
+                "`launchctl kickstart -k gui/$UID/...`."
             )
 
     # Layer D: shell-level source rewrite. The write-pattern check runs BEFORE
@@ -429,8 +498,18 @@ def screen_command(cmd: str) -> tuple[int, str]:
             "[hybrid-reasoner] BLOCKED: shell-level source write detected.\n"
             f"  pattern: {src_pat}\n"
             f"  command: {cmd[:300]}\n"
-            "  reason: use the Edit / Write / MultiEdit tools so the SSM guard can score the change.\n"
-            f"  command: {cmd[:300]}"
+            "  fix: use the Edit / Write / MultiEdit tools on the file directly. "
+            "Those tools pipe through the SSM guard which scores the change. "
+            "Shell-level writes (>, >>, tee, sed -i, python -c open(), "
+            "pathlib.Path().write_text, cp / mv / install / rsync, "
+            "git checkout / restore / stash apply, base64 -d | bash, openssl / xxd "
+            "decoders piped to bash, python -c | python heredoc, or any "
+            "redirect via stdin) are blocked regardless of whether the file is "
+            "in src/ or /tmp.\n"
+            "  escape hatch: if you genuinely need to write via shell and you "
+            "are not trying to bypass the gate (e.g. generating a build "
+            "artifact outside src/), use a path that does not match any "
+            "SRC_EXTENSIONS entry and does not touch GUARDED_PATH_FRAGMENTS."
         )
 
     # No write pattern, no guard hit — let it through (with or without an
