@@ -141,6 +141,13 @@ class ImpactReport:
 from collections import OrderedDict
 _BASELINE_MAX_SESSIONS = int(os.environ.get("S2_BASELINE_MAX_SESSIONS", "256"))
 _BASELINE_TTL_S = float(os.environ.get("S2_BASELINE_TTL_S", "86400.0"))
+# Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SYS-03): per-session file cap.
+# Without this, a single session editing 5,000+ files accumulates 5,000 tensors
+# inside one session dict and the LRU session-cap eviction does nothing for
+# that session. Defaults to 200 files per session; env-tunable.
+_BASELINE_MAX_FILES_PER_SESSION = int(
+    os.environ.get("S2_BASELINE_MAX_FILES_PER_SESSION", "200")
+)
 _BASELINES: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 _BASELINES_LOCK = Lock()
 
@@ -273,6 +280,23 @@ def _persist_session_baseline_for_path(session_id: str, path: str, emb: Any) -> 
         # Cap: drop oldest entries until under the configured maximum.
         while len(_BASELINES) > _BASELINE_MAX_SESSIONS:
             _BASELINES.popitem(last=False)
+        # Re-audit RC-SYS-03: per-session file cap. Count only baseline
+        # entries (skip reserved keys like __ts__, __corpus__, __drift_p95__).
+        # When the cap is reached and a new path is being inserted, drop the
+        # oldest path entry (LRU within the session). This bounds memory
+        # growth from a single long-running session touching many files.
+        file_keys = [k for k in baselines if not k.startswith("__")]
+        if len(file_keys) > _BASELINE_MAX_FILES_PER_SESSION:
+            # Drop the oldest file key by iteration order (LRU-aware: the
+            # session-dict is only reordered at session-level move_to_end,
+            # so within a session the insertion order is the recency proxy).
+            # Find the first file key not equal to `path` and not in the
+            # reserved set.
+            for k in list(baselines.keys()):
+                if k.startswith("__") or k == path:
+                    continue
+                del baselines[k]
+                break
 
 
 # ---------------------------------------------------------------------------
@@ -975,6 +999,53 @@ def _summarize(
     )
 
 
+def _build_session_baseline_sync(
+    files: list[Any],
+) -> tuple[dict[str, Any], int]:
+    """Sync worker for /baseline (re-audit RC-SYS-02).
+
+    Runs the per-file ``embed(tokens)`` loop, stacks the resulting tensors,
+    and computes the corpus + drift_p95. Returns ``(file_baselines, n_files)``.
+    Raises :class:`BackboneUnavailableError` if the backbone fails (so the
+    async handler can translate to a 503 response).
+    """
+    import torch
+
+    file_baselines: dict[str, Any] = {}
+    vecs = []
+    for f in files:
+        if not isinstance(f, dict):
+            continue
+        src = f.get("src")
+        fpath = f.get("path") or "/tmp/baseline.txt"
+        if not isinstance(src, str):
+            continue
+        try:
+            pr = parse_source(fpath, src)
+            tokens = ast_to_tokens(pr.tree, src)
+        except UnsupportedLanguageError:
+            tokens = src
+        except Exception:  # noqa: BLE001
+            tokens = src
+        vec = embed(tokens)
+        file_baselines[fpath] = vec
+        vecs.append(vec)
+    if not vecs:
+        return file_baselines, 0
+    stacked = torch.stack(vecs)
+    corpus = stacked.mean(dim=0)
+    drifts: list[float] = []
+    for v in vecs:
+        d = float(_l2_distance(v, corpus))
+        drifts.append(d)
+    drifts_sorted = sorted(drifts)
+    drift_p95 = _percentile(drifts_sorted, 95.0)
+    file_baselines["__corpus__"] = corpus
+    file_baselines["__drift_p95__"] = float(drift_p95)
+    return file_baselines, len(vecs)
+
+
+
 def score_change(
     path: str,
     before_src: str,
@@ -1403,48 +1474,19 @@ def create_app():
                 status_code=400,
                 content={"error": "bad_request", "detail": "'files' must be a non-empty list"},
             )
+        # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SYS-02): offload
+        # the per-file embed() loop into a worker thread so the FastAPI
+        # event loop stays free to serve /health and concurrent /score calls.
+        # Same pattern as the /score async-offload that shipped in d7bb1a7.
         try:
-            import torch
-
-            file_baselines: dict[str, Any] = {}
-            vecs = []
-            for f in files:
-                if not isinstance(f, dict):
-                    continue
-                src = f.get("src")
-                fpath = f.get("path") or "/tmp/baseline.txt"
-                if not isinstance(src, str):
-                    continue
-                # Parse for AST tokens when grammar known; else fall back to raw.
-                try:
-                    pr = parse_source(fpath, src)
-                    tokens = ast_to_tokens(pr.tree, src)
-                except UnsupportedLanguageError:
-                    tokens = src
-                except Exception:  # noqa: BLE001
-                    tokens = src
-                vec = embed(tokens)
-                file_baselines[fpath] = vec
-                vecs.append(vec)
-            if not vecs:
+            file_baselines, n_files = await asyncio.to_thread(
+                _build_session_baseline_sync, files
+            )
+            if n_files == 0:
                 return JSONResponse(
                     status_code=400,
                     content={"error": "bad_request", "detail": "no embeddable files"},
                 )
-            stacked = torch.stack(vecs)
-            corpus = stacked.mean(dim=0)
-
-            # Compute pairwise drift distribution for percentile calibration.
-            # _l2_distance returns chord distance (already dimension-invariant).
-            drifts: list[float] = []
-            for v in vecs:
-                d = float(_l2_distance(v, corpus))
-                drifts.append(d)
-            drifts_sorted = sorted(drifts)
-            drift_p95 = _percentile(drifts_sorted, 95.0)
-
-            file_baselines["__corpus__"] = corpus
-            file_baselines["__drift_p95__"] = float(drift_p95)
         except BackboneUnavailableError as exc:
             return JSONResponse(
                 status_code=503,
@@ -1462,7 +1504,7 @@ def create_app():
             content={
                 "status": "ok",
                 "session_id": session_id,
-                "n_files": len(vecs),
+                "n_files": n_files,
                 "hidden_size": int(corpus.shape[0]) if hasattr(corpus, "shape") else 0,
                 "drift_p95": float(drift_p95),
             },
