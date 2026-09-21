@@ -43,6 +43,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import statistics
 import sys
 import time
@@ -233,72 +234,92 @@ def stratified_split(pairs: list[dict[str, Any]], *, seed: int = 42,
 # ---------------------------------------------------------------------------
 
 
-def _load_embedder(backend: str) -> tuple[Any, Any]:
-    """Load the named backend's model + tokenizer. Returns (model, tokenizer)
-    or raises. Uses ``src.ssm_backbone._try_load_backend`` when available;
-    falls back to a transformers AutoModel path for backends that haven't
-    been wired into the main registry yet (mamba3-*).
+def _revision_env_key_for(backend: str) -> str:
+    """Resolve the RC_<REPO_SLUG>_REVISION env var for a backend."""
+    from src import ssm_backbone  # noqa: PLC0415
+    if backend not in ssm_backbone._BACKENDS:
+        return ""
+    return ssm_backbone._revision_env_key(ssm_backbone._BACKENDS[backend].checkpoint)
 
-    The fallback path is intentionally minimal so this script can run in
-    CI without the full sidecar stack: it loads the AutoModel, embeds the
-    mean-pooled last hidden state, and returns numpy arrays. Any exception
-    is re-raised with a one-line hint about the most likely cause (missing
-    package, gated repo, kernel unavailable, etc.).
+
+def _resolve_latest_sha(repo_id: str) -> str:
+    """Fetch the current main-branch SHA for a HF repo. Used by the
+    pre-reg harness to override the sidecar's fail-closed posture when
+    measuring backends that haven't been pinned yet."""
+    from huggingface_hub import HfApi  # type: ignore
+    info = HfApi().model_info(repo_id)
+    return info.sha
+
+
+def _ensure_revision_pinned(backend: str) -> None:
+    """If the registry doesn't have a pinned revision for this backend,
+    fetch the latest main-branch SHA and inject it as the env-var override
+    (RC_<REPO_SLUG>_REVISION) that ``_resolve_revision_for_backend`` honours.
+
+    The pre-reg harness is allowed to override the sidecar's fail-closed
+    posture because measurement requires pinning mutable refs that
+    production explicitly refuses. The resolved SHA is recorded in the
+    run manifest for reproducibility.
+
+    Bails out silently for ``random-mamba`` -- the in-process control has
+    no HF checkpoint to pin.
     """
     from src import ssm_backbone  # noqa: PLC0415
+    if backend == "random-mamba":
+        return
     if backend not in ssm_backbone._BACKENDS:
         raise KeyError(f"unknown backend: {backend!r}")
     cfg = ssm_backbone._BACKENDS[backend]
-
-    # The mamba-130m / codestral / unixcoder / bge-code / random paths
-    # already have first-class loaders in ssm_backbone.py.
-    if backend in {"mamba-130m", "codestral-mamba", "codestral-mamba-gguf",
-                   "unixcoder-base", "bge-code", "random-mamba"}:
-        try:
-            return ssm_backbone._try_load_backend(backend)
-        except Exception as exc:
-            raise RuntimeError(
-                f"failed to load {backend} via _try_load_backend: {exc}"
-            ) from exc
-
-    # Fallback for the new mamba3-* candidates (and any future candidate
-    # not yet wired into _try_load_backend). Uses AutoModel + mean pooling.
+    if ssm_backbone._PINNED_REVISIONS.get(cfg.checkpoint):
+        return
     try:
-        import torch  # type: ignore
-        from transformers import AutoModel, AutoTokenizer  # type: ignore
-    except ImportError as exc:
+        sha = _resolve_latest_sha(cfg.checkpoint)
+    except Exception as exc:  # noqa: BLE001
         raise RuntimeError(
-            f"transformers/torch missing for {backend}: {exc}"
+            f"failed to resolve latest SHA for {cfg.checkpoint}: {exc}. "
+            f"Add it to _PINNED_REVISIONS or run pin_model_cards.py first."
         ) from exc
+    env_key = ssm_backbone._revision_env_key(cfg.checkpoint)
+    os.environ[env_key] = sha
 
+
+def _load_embedder(backend: str) -> Any:
+    """Load the named backend via ssm_backbone and return a callable that
+    takes a string and returns the pooled embedding as a flat list.
+
+    Uses ``RC_EMBEDDER=<backend>`` + ``ssm_backbone.embed`` (the canonical
+    entry point) so the harness exercises the same code path production
+    uses. Returns the ``ssm_backbone.embed`` callable directly.
+
+    Raises on any failure with a one-line hint about the most likely cause
+    (missing package, gated repo, kernel unavailable, etc.).
+    """
+    os.environ["RC_EMBEDDER"] = backend
+    from src import ssm_backbone  # noqa: PLC0415
+    # ssm_backbone.embed() loads on first call. Trigger that here so
+    # the harness can surface load failures as BackendResult.n_load_failures.
+    # The handle is cached internally keyed by the active backend, so we
+    # simply call embed; subsequent calls reuse the cached handle.
     try:
-        tokenizer = AutoTokenizer.from_pretrained(cfg.checkpoint, trust_remote_code=False)
-        model = AutoModel.from_pretrained(cfg.checkpoint, trust_remote_code=False)
-    except Exception as exc:
-        raise RuntimeError(
-            f"failed to load {cfg.checkpoint}@{(cfg.revision or 'main')}: {exc}. "
-            f"This is the most common failure mode for the mamba3-* candidates "
-            f"until pin_model_cards.py has run on a host with web access."
-        ) from exc
-    model.eval()
-    return model, tokenizer
+        ssm_backbone.embed("warmup")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"failed to load {backend}: {exc}") from exc
+    return ssm_backbone.embed
 
 
-def _embed(embedder: tuple[Any, Any], text: str, *, max_len: int = 4096) -> list[float]:
-    """Embed a single text and return the mean-pooled last hidden state as
-    a flat Python list of floats. CPU only; no_grad context."""
-    import torch  # type: ignore
-    model, tokenizer = embedder
-    if not text:
-        text = " "  # avoid empty-string tokenizer crashes
-    enc = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_len)
-    with torch.no_grad():
-        out = model(**enc)
-    # Mean-pool over the sequence dimension. (Last hidden state shape:
-    # (1, seq, hidden).)
-    last = out.last_hidden_state if hasattr(out, "last_hidden_state") else out[0]
-    pooled = last.mean(dim=1).squeeze(0).tolist()
-    return pooled
+def _embed(embedder: Any, text: str, *, max_len: int = 4096) -> list[float]:
+    """Embed a single text and return the pooled vector as a flat list of
+    floats. ``embedder`` is the ``ssm_backbone.embed`` callable."""
+    result = embedder(text or " ")
+    # ssm_backbone.embed returns either a torch.Tensor, a numpy array, or
+    # a _TensorLike (random-mamba torch-free path). Normalize to a flat
+    # list of floats regardless.
+    if hasattr(result, "tolist"):
+        flat = result.flatten().tolist() if hasattr(result, "flatten") else result.tolist()
+        return [float(x) for x in flat]
+    if isinstance(result, (list, tuple)):
+        return [float(x) for x in result]
+    raise TypeError(f"embed returned unexpected type: {type(result).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +332,7 @@ def measure_backend(backend: str, pairs: list[dict[str, Any]], *,
     """Embed all (before, after) pairs through `backend` and record metrics."""
     result = BackendResult(backend=backend, n_pairs=len(pairs))
     try:
+        _ensure_revision_pinned(backend)
         embedder = _load_embedder(backend)
     except Exception as exc:  # noqa: BLE001
         result.n_load_failures += 1
@@ -464,6 +486,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "split_seed": args.seed,
         "baseline_backend": args.baseline,
         "candidate_backend": args.candidate,
+        "resolved_revisions": {b: os.environ.get(_revision_env_key_for(b)) for b in args.backends if b != "random-mamba"},
         "gates": [
             {
                 "name": v.name,
