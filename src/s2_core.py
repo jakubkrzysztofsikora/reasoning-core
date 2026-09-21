@@ -1518,6 +1518,8 @@ def create_app():
                 content={"error": "internal_error", "detail": str(exc)},
             )
         _set_session_baseline(session_id, file_baselines)
+        corpus = file_baselines.get("__corpus__")
+        drift_p95_val = file_baselines.get("__drift_p95__", 0.0)
         return JSONResponse(
             status_code=200,
             content={
@@ -1525,7 +1527,7 @@ def create_app():
                 "session_id": session_id,
                 "n_files": n_files,
                 "hidden_size": int(corpus.shape[0]) if hasattr(corpus, "shape") else 0,
-                "drift_p95": float(drift_p95),
+                "drift_p95": float(drift_p95_val),
             },
         )
 

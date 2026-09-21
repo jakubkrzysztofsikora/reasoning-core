@@ -182,21 +182,62 @@ after ~48 h of shadow review and manually authoring a `PLAN.md` to promote to
 
 ## Audit & hardening
 
-A hostile technical audit of this codebase was filed on 2026-09-19 and is
-publicly addressed in [`docs/AUDIT_RESPONSE_2026_09_19.md`](docs/AUDIT_RESPONSE_2026_09_19.md).
-Verified findings (async-event-loop starvation, supervisor self-termination,
-`_BASELINES` memory leak, singleflight blocking, several shell-guard bypasses)
-were fixed on the `audit-hostile/2026-09-19-fixes` branch; claims the audit
-got wrong (label polarity, the `ais<0.4` dead-code claim, install.sh direnv
-trust) are documented as rejected. Per `AGENTS.md`, a pre-fix and post-fix
-immutable baseline were captured before and after the changes.
+A hostile technical audit of this codebase was filed on 2026-09-19 and a
+hostile follow-up on 2026-09-19-reaudit. Both are publicly addressed in
+[`docs/AUDIT_RESPONSE_2026_09_19.md`](docs/AUDIT_RESPONSE_2026_09_19.md).
+
+**Round 1** (`audit-hostile/2026-09-19-fixes`, merged): async-event-loop
+starvation, supervisor self-termination, `_BASELINES` memory leak,
+singleflight blocking, several shell-guard bypasses, direnv auto-approval,
+wheel-install import crash. Claims the audit got wrong (label polarity, the
+`ais<0.4` dead-code claim, install.sh direnv trust) are documented as
+rejected.
+
+**Round 2** (`audit-hostile/2026-09-19-reaudit-fixes`, current): `/baseline`
+offload (RC-SYS-02), per-session file cap (RC-SYS-03), symlink-resolved
+guarded-path block (RC-SEC-05 -- the resolver now blocks unconditionally on
+realpath hits, not gated on the source-extension regex), `direnv allow .`
+sentinel (RC-SEC-06), and the whitepaper + headline-numbers retraction of
+the 8-cell set (RC-ML-02 / RC-ML-03). The 8-cell table in `BENCHMARKS.md`
+and `whitepaper/sections/results.tex` is now boxed as
+`RETRACTED 2026-09-19`; the surviving-5 cells yield an exact two-sided
+sign-test p-value of **1.00 (coin flip)** and we make no directional product
+claim. The pre-registered iter-2 acceptance criterion (>=7/8 wins with
+paired bootstrap 95% CI excluding 0 on impl quality) requires additional
+n>=3 evidence before any directional claim can be made.
 
 The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
 `git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
-`pathlib.Path().write_text(...)`, and `base64 -d | bash|sh|zsh|eval`.
-Tunable knobs: `S2_HEALTH_TIMEOUT_S` (default 15s), `S2_HEALTH_GRACE_S`
-(default 60s), `S2_BASELINE_MAX_SESSIONS` (default 256),
-`S2_BASELINE_TTL_S` (default 24h).
+`pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
+`python3 -c "open(... 'w')"`, and **any redirect whose target resolves
+through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
+(default 15s), `S2_HEALTH_GRACE_S` (default 60s),
+`S2_BASELINE_MAX_SESSIONS` (default 256), `S2_BASELINE_TTL_S` (default 24h),
+`S2_BASELINE_MAX_FILES_PER_SESSION` (default 200).
+
+**Open research items** (deferred, not bugs):
+
+- **Embedder swap.** Mamba-130m is the default backbone; the dup-embed
+  module agrees in code comments that it is "the wrong model for code."
+  Four candidates are under evaluation: `state-spaces/mamba3-siso-893m`,
+  `state-spaces/mamba3-mimo-894m`, `state-spaces/mamba3-siso-1.5b`, plus
+  the Mamba-3 paper at <https://arxiv.org/abs/2603.15569> (Mamba-3 SISO
+  decodes at 0.156 ms / token vs Mamba-2 at 0.203 ms; 7x faster than
+  vLLM Transformer at 16K context: 140.61 ms vs 976.50 ms).
+- **Windowed diff embeddings.** Replace 512-token truncation with
+  diff-localized windowing + AST-scope context.
+- **Auto-sizing on `rc init`.** Pick the largest mamba3 variant that
+  fits available RAM/CPU without killing the host. Planned alongside
+  the embedder swap.
+- **Scoring-v3 re-calibration sweep.** Reconcile the algebraic redundancy
+  of AIS / CD / Novelty; repurpose the `ais < t["ais"]` check as a
+  `mahal_anomaly` shadow signal.
+
+Pre-baselines for the three research tracks are captured as
+`baseline-2026-09-19-{embedder-ablation-pre, windowing-pre, scoring-v3-pre}.json`.
+Per `AGENTS.md`, a pre-fix and post-fix immutable baseline were captured
+before and after each change: see the AUDIT_RESPONSE doc for the full
+registry and the `rc baseline compare` recipes.
 
 ## `rc` CLI
 

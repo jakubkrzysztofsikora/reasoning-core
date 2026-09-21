@@ -294,8 +294,11 @@ def test_hard_cap_symbolic_fallback_advise_mode_warns(tmp_path):
     assert "rule_engine" in proc.stderr.lower() or "os import" in proc.stderr.lower()
 
 
-def test_hard_cap_helpers_isolated():
+def test_hard_cap_helpers_isolated(monkeypatch):
     """Importable helper functions return sane values."""
+    # Pin the env so a developer shell with S2_HARD_CAP_MS=5000 doesn't
+    monkeypatch.delenv("S2_HARD_CAP_MS", raising=False)
+    monkeypatch.delenv("S2_TIMEOUT", raising=False)
     import importlib
     sys.path.insert(0, os.path.join(REPO_ROOT, "src", "hooks"))
     try:

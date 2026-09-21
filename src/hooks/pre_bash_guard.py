@@ -452,11 +452,33 @@ def screen_command(cmd: str) -> tuple[int, str]:
     # (RC-SEC-05 re-audit) so `ln -s src/hooks/pre_bash_guard.py /tmp/x;
     # echo > /tmp/x` trips.
     guarded = _guarded_path_match(cmd)
+    symlink_resolved = False
     if guarded is None:
         guarded = _resolve_symlink_to_guarded(cmd)
+        if guarded is not None:
+            symlink_resolved = True
     if guarded:
         # Allow read-only ops on guarded paths so Claude can `cat .claude/settings.json`.
-        # Only block if the command also looks like a write or kill.
+        # Only block if the command also looks like a write or kill. The
+        # symlink-resolved path is the exception: it ALREADY proves the
+        # command intends to write to a guarded file via a non-source-
+        # extension target (the entire attack the resolver was added to
+        # stop), so any redirect into the symlink is by definition a write
+        # and must be blocked even if the bare target filename has no
+        # source extension. RC-SEC-05 closure.
+        if symlink_resolved:
+            if _override_active():
+                return 0, f"[hybrid-reasoner] override: symlink-resolved guarded-path write allowed via {ALLOW_OVERRIDE_ENV}=1 ({guarded})"
+            return 2, (
+                "[hybrid-reasoner] BLOCKED: symlink overwrite of a guarded file.\n"
+                f"  guarded path (realpath): {guarded}\n"
+                "  fix: do not write through symlinks that resolve into "
+                "src/hooks/, src/mcp/, the sidecar binary, the kill-switch "
+                "state, or the agent settings. Use the Edit / Write / "
+                "MultiEdit tool on the actual target file. Symlinks whose "
+                "realpath lands on a guarded path are treated as writes "
+                "regardless of the symlink's own filename or extension."
+            )
         if _src_write_match(cmd) or any(p.search(cmd) for p in HARD_DENY_PATTERNS):
             if _override_active():
                 return 0, f"[hybrid-reasoner] override: guarded-path write allowed via {ALLOW_OVERRIDE_ENV}=1 ({guarded})"
