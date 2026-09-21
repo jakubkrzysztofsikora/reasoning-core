@@ -41,8 +41,8 @@ jobs:
           - { os: macos-14,        python: '3.13', platform: macosx_arm64 }
           - { os: macos-13,        python: '3.11', platform: macosx_x86_64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - name: Set up QEMU (multi-arch)
@@ -68,7 +68,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_COMMAND: 'python -m pytest tests/test_data_accessor.py -q'
         run: python -m cibuildwheel --output-dir wheelhouse
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.platform }}
           path: wheelhouse/*.whl
@@ -77,15 +77,15 @@ jobs:
     name: build sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
             python-version: '3.12'
       - name: Build sdist
         run: |
           python -m pip install --upgrade build
           python -m build --sdist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -96,7 +96,7 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
       - name: Sign each wheel with sigstore (keyless, OIDC)
@@ -123,8 +123,8 @@ jobs:
     permissions:
       id-token: write  # OIDC for PyPI Trusted Publisher
     steps:
-      - uses: actions/download-artifact@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v8
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Publish via Trusted Publisher
