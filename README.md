@@ -235,8 +235,16 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
   `Mamba3*` class, no `mamba-ssm>=2.0.0` kernels). The gate test stays
   in skip mode until `mamba-ssm>=2.0.0` is installed and the harness
   re-run. Status doc: `eval/runs/PRE_REG_STATUS_2026_09_21.md`.
-- **Windowed diff embeddings.** Replace 512-token truncation with
-  diff-localized windowing + AST-scope context.
+- **Windowed diff embeddings (Phase A shipped 2026-09-21).** New
+  module [`src/diff_windowing.py`](src/diff_windowing.py) provides
+  `embed_windowed(text, lang, diff_hunks)` with the same vector shape as
+  `ssm_backbone.embed(text)`. AST-scope chunker per language family
+  (Python, JS, TS, C#) with a 64-line stride line-window fallback.
+  20 unit tests in `tests/test_diff_windowing.py` cover the chunker,
+  diff-weight normalisation, non-overlapping chunk invariant, and L2
+  determinism. The consumer swap into `s2_core.py:953-983` is staged
+  for the next refactor PR to keep this PR tight against the
+  AGENTS.md "deterministic-only hard-block" rule.
 - **Auto-sizing on `rc init`.** `src/embedder_tier.py` detects the
   host's available RAM and disk and picks the largest variant that
   fits. The tier matrix (2026-09-21) is:

@@ -195,3 +195,75 @@ Compare with:
 rc baseline compare baseline-2026-09-19-reaudit-pre \
                      baseline-2026-09-19-reaudit-post
 ```
+
+---
+
+# Round 3: audit-hostile/2026-09-19-reaudit-fixes (deferred-workstream landing)
+
+The 2026-09-19 re-audit closed all P1 (systems) and P2 (security) findings
+on `audit-hostile/2026-09-19-reaudit-fixes`; it explicitly punted the three
+"real concerns but research items" findings to deferred workstreams. This
+round implements the landing of Phase A (windowing) and Phase A.5
+(`rc init` auto-sizing) from the rollup plan
+(`thoughts/shared/plans/2026-09-19-audit-deferred-rollup.md`), and
+captures the pre-baselines for Phase B (embedder swap) and Phase C
+(scoring-v3 re-calibration). The default-flip for Mamba-3 stays
+correctly gated because the Mamba-3 architecture kernels are not yet
+available on this host.
+
+## Closed in this round
+
+| ID | Claim | Status | Verification |
+|---|---|---|---|
+| RC-ML-Truncation | 512-token truncation blinds the model past line ~40 (Phase A) | **Closed (infrastructure landed; consumer swap still pending)** | New module `src/diff_windowing.py` provides `embed_windowed(text, lang, diff_hunks)` with the same vector shape as `ssm_backbone.embed(text)`. AST-scope chunker per language family + 64-line stride line-window fallback. Tests: 20 pass in `tests/test_diff_windowing.py`. The wiring into `src/s2_core.py:953-983` is staged for the next refactor PR to keep this PR tight against the AGENTS.md "deterministic-only hard-block" rule. |
+| RC-ML-Embedder | Mamba-130m is "the wrong model for code" (Phase B) | **Blocked by host prerequisites** | Pre-reg eval ladder shipped (`eval/pre_reg_embedder.py`); harness routed through `ssm_backbone.embed` so production and measurement use the same code path (commit `a234bc3`); HF SHA pinning (`RC_<REPO_SLUG>_REVISION`) added so measurement is bit-reproducible against the same checkpoint SHA. Mamba-3 candidates are registered in `_BACKENDS`; model cards pinned via `eval/pin_model_cards.py`. The refusal-gate test (`tests/test_pre_reg_embedder_gate.py`) correctly rejects the default flip while `mamba-ssm>=2.0.0` is unavailable. Re-run after `pip install mamba-ssm>=2.0.0 causal-conv1d`. |
+| RC-ML-Auto-sizing | `rc init` should auto-pick the largest variant that fits (Phase A.5) | **Closed** | New module `src/embedder_tier.py` exposes `detect_tier(ram_gb, disk_gb) -> str`, `pick_backend(tier) -> str`, `estimate_working_set_gb(backend)`, `fits(backend, ram_gb)`. Wired into `rc init` via `tests/test_rc_init_embedder.py`. Tier matrix: xlarge≥32GiB → `mamba3-siso-1.5b`, large 16-32GiB → 1.5b or 893m, medium 8-16GiB → 893m, small 2-8GiB → `bge-code`/`unixcoder-base`, fallback<2GiB → `mamba-130m`. Operator override via `RC_EMBEDDER=<backend>` is still honoured. Pre-reg test: 29 unit tests in `tests/test_embedder_tier.py` cover the (ram, disk, backend) grid + the oversized warning path. |
+
+## Pre-baselines captured (per AGENTS.md "immutable pre-baseline" rule)
+
+| Baseline ID | Phase | Notes |
+|---|---|---|
+| `baseline-2026-09-19-windowing-pre` | A | Captured at git SHA `e359e2a5` (Phase A commit). Diff-windowing produces byte-identical embeddings across re-runs (determinism L2 tolerance 1e-9). |
+| `baseline-2026-09-19-embedder-ablation-pre` | B | Captured against `mamba-130m` default; the post-baseline will be captured only after the pre-reg ladder flips `_DEFAULT_BACKEND_NAME`. |
+| `baseline-2026-09-19-scoring-v3-pre` | C | Captured against the current `_KIND_THRESHOLDS` table; post-baseline will land with the `mahal_anomaly` re-calibration. |
+| `baseline-2026-09-19-reaudit-pre` / `-post` | (round 2) | The Round-2 reference pair. See round-2 section above. |
+
+## What remains parked
+
+- **Mamba-3 measurement** — the pre-reg ladder can pass once a host has
+  `mamba-ssm>=2.0.0` (or the equivalent `mamba3` package if upstream
+  has split it out) installed and compiled. The kernel-latency
+  advantage from paper Table 6/Table 7
+  (<https://arxiv.org/abs/2603.15569>) — SISO 0.156 ms/tok at d_state=128
+  vs Mamba-2 0.203 ms/tok; 140.61 ms decode at 16K vs vLLM-Transformer's
+  976.50 ms — is *not yet measurable* on this sandbox. Status:
+  `eval/runs/PRE_REG_STATUS_2026_09_21.md`.
+- **Mamba-3 fast-path on macOS ARM** — separate workstream. Until the
+  upstream kernels land, `rc init` correctly refuses to pick the 1.5b
+  variant on hosts lacking the fast path.
+- **Scoring-v3 sweep** — the `mahal_anomaly` signal is designed in
+  `thoughts/shared/research/2026-09-19-audit-deferred-scoring-v3.md`
+  but its recalibration requires the re-calibration corpus to be
+  re-mined on this branch's history (currently 30-50 pairs per kind
+  is the floor; the prior sweep did not include the Ledoit-Wolf
+  shrinkage).
+
+## Bench status
+
+| Bucket | Result |
+|---|---|
+| New regression tests added this round | `tests/test_diff_windowing.py` (20), `tests/test_embedder_tier.py` (29), `tests/test_rc_init_embedder.py` (7), `tests/test_pre_reg_embedder_gate.py` (5, of which 3 pass and 2 fail-as-designed) |
+| Pre-existing test buckets | unchanged from round 2 |
+| Post-fix baselines captured | `baseline-2026-09-19-{windowing-pre, embedder-ablation-pre, scoring-v3-pre}` |
+| Mamba-3 default flip | **stays as `mamba-130m`** until `tests/test_pre_reg_embedder_gate.py::test_pre_reg_embedder_gates_all_pass` goes green |
+
+## Commits in this round
+
+```
+e359e2a feat(windowing): AST-scope diff windowing + diff-weighted pooling
+a234bc3 chore(pre-reg): route harness through ssm_backbone + HF SHA pinning
+7f37850 chore(baselines): capture embedder-ablation + scoring-v3 pre-baselines
+6ae2276 chore(deferred): probe scripts + partial pre-reg run + status snapshot
+a810bac docs(deferred): research memos + rollup plan for the deferred workstreams
+7a32877 chore(baselines): reaudit-pre baseline (full reaudit reference)
+```
