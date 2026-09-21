@@ -108,7 +108,7 @@ jobs:
             cosign sign-blob --yes "$whl" --output-signature "$whl.sig" --bundle "$whl.bundle"
           done
       - name: SLSA build provenance
-        uses: slsa-framework/slsa-github-generator@v1.9.0
+        uses: slsa-framework/slsa-github-generator@v2.1.0
         id: slsa
         with:
           base64-subjects: ${{ needs.build_wheels.outputs.digests }}
