@@ -103,6 +103,47 @@ def install_envrc(target: Path, manifest: Path, substitutions: dict[str, str],
         result.skipped.append(str(path.relative_to(target)))
         return
     text = _render(_read_template("envrc/direnv.envrc"), substitutions)
+    # Embedder auto-pick (2026-09-21): ask the embedder_tier module to
+    # pick the largest variant that fits the host's available RAM and
+    # disk. Honour RC_EMBEDDER if the operator already pinned one. The
+    # pick is appended to .envrc as `export RC_EMBEDDER=<pick>` and
+    # recorded in the install manifest under `embedder_tier` and
+    # `embedder_backend` so `rc upgrade` and `rc doctor` can re-verify.
+    try:
+        from src import embedder_tier  # noqa: PLC0415 -- late import to keep _init.py light
+        requested = os.environ.get("RC_EMBEDDER", "").strip() or None
+        decision = embedder_tier.decide(requested_backend=requested)
+        tier_line = (
+            f"\\n# Auto-picked by embedder_tier on {os.environ.get('HOSTNAME', 'localhost')}: "
+            f"tier={decision.tier} backend={decision.backend} "
+            f"working_set={decision.estimated_working_set_gb}GiB "
+            f"available_ram={decision.available_ram_gb}GiB. "
+            f"Reason: {decision.reason}\\n"
+            f"export RC_EMBEDDER={decision.backend}\\n"
+        )
+        # If the operator explicitly pinned a backend that doesn't fit,
+        # surface a warning (rc_cli is responsible for refusing to start
+        # unless RC_ALLOW_OVERSIZED_BACKBONE=1 is set; we only warn here).
+        if not decision.fits and requested:
+            result.warned.append(
+                f"operator-pinned backend {decision.backend!r} does not fit the host: "
+                f"working-set={decision.estimated_working_set_gb:.2f} GiB, "
+                f"available RAM={decision.available_ram_gb:.2f} GiB. "
+                f"Set RC_ALLOW_OVERSIZED_BACKBONE=1 to override."
+            )
+        if decision.is_oversized:
+            result.warned.append(
+                f"embedder_tier picked {decision.backend!r} for tier={decision.tier} but "
+                f"only {decision.fit_margin_gb:.1f} GiB of headroom remains. "
+                f"Sidecar may swap if host load rises."
+            )
+        text = text + tier_line
+        # Record into the manifest so rc upgrade/doctor can re-verify.
+        _record(manifest, f"embedder_tier={decision.tier}")
+        _record(manifest, f"embedder_backend={decision.backend}")
+        _record(manifest, f"embedder_working_set_gb={decision.estimated_working_set_gb}")
+    except Exception as exc:  # noqa: BLE001 -- never let the sizer block init
+        result.warned.append(f"embedder_tier auto-pick failed: {type(exc).__name__}: {exc}")
     path.write_text(text)
     result.wrote.append(str(path.relative_to(target)))
     _record(manifest, ".envrc")
@@ -491,16 +532,39 @@ def download_default_model(result: InitResult, target_dir: Optional[Path] = None
         return False
     cache_dir = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
     cache_dir.mkdir(parents=True, exist_ok=True)
+    # 2026-09-21: respect the auto-picked backend from embedder_tier if
+    # RC_EMBEDDER isn't already pinned. The picked backend lives in
+    # _BACKENDS (src/ssm_backbone.py); the previous behaviour hard-coded
+    # MAMBA_130M_REPO regardless of the host's tier.
+    picked = os.environ.get("RC_EMBEDDER", MAMBA_130M_REPO)
+    try:
+        from src import ssm_backbone as _ssm  # noqa: PLC0415
+        try:
+            backend = _ssm._BACKENDS[picked]
+            repo_id = backend.checkpoint
+            revision = backend.revision or "main"
+        except KeyError:
+            # Operator-typed backend not in registry; treat the value
+            # as a raw HF repo id and pin to main.
+            repo_id = picked
+            revision = "main"
+    except Exception as exc:  # noqa: BLE001
+        repo_id = picked
+        revision = "main"
+        result.warned.append(
+            f"could not resolve {picked!r} via _BACKENDS ({type(exc).__name__}: {exc}); "
+            f"falling back to raw repo id {repo_id!r}"
+        )
     try:
         snapshot_download(
-            repo_id=MAMBA_130M_REPO,
-            revision=MAMBA_130M_REVISION,
+            repo_id=repo_id,
+            revision=revision,
             cache_dir=str(cache_dir),
         )
         result.model_downloaded = True
         return True
     except Exception as exc:  # noqa: BLE001 — surface any HF failure
-        result.warned.append(f"model download failed ({MAMBA_130M_REPO}@{MAMBA_130M_REVISION}): {exc}")
+        result.warned.append(f"model download failed ({repo_id}@{revision}): {exc}")
         return False
 
 

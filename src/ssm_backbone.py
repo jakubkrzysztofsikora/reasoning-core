@@ -247,6 +247,41 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
         revision="main",
         license="mit",
     ),
+    # Mamba-3 candidates. These are registered as opt-in backends so the
+    # rc init auto-sizer (src/embedder_tier.py) and the model-card pinner
+    # (eval/pin_model_cards.py) can find them. They remain NOT in the
+    # default backend until the pre-reg eval from the embedder memo
+    # (thoughts/shared/research/2026-09-19-audit-deferred-embedder.md,
+    # 2026-09-21 revision) passes. max_seq_len and hidden_size are
+    # placeholders pending pin_model_cards.py verification of the actual
+    # HF model cards; the listed values match the paper's quoted claims.
+    "mamba3-siso-893m": _EmbedderBackend(
+        name="mamba3-siso-893m",
+        checkpoint="state-spaces/mamba3-siso-893m",
+        pooling="mean",
+        max_seq_len=16384,
+        hidden_size=1536,
+        revision="main",
+        license="apache-2.0",
+    ),
+    "mamba3-mimo-894m": _EmbedderBackend(
+        name="mamba3-mimo-894m",
+        checkpoint="state-spaces/mamba3-mimo-894m",
+        pooling="mean",
+        max_seq_len=16384,
+        hidden_size=1536,
+        revision="main",
+        license="apache-2.0",
+    ),
+    "mamba3-siso-1.5b": _EmbedderBackend(
+        name="mamba3-siso-1.5b",
+        checkpoint="state-spaces/mamba3-siso-1.5b",
+        pooling="mean",
+        max_seq_len=16384,
+        hidden_size=2048,
+        revision="main",
+        license="apache-2.0",
+    ),
     "random-mamba": _EmbedderBackend(
         name="random-mamba",
         checkpoint="__random_mamba__",
@@ -298,6 +333,9 @@ _ALLOWED_CHECKPOINTS = frozenset({
     "gabriellarson/Mamba-Codestral-7B-v0.1-GGUF",
     "BAAI/bge-code-v1",
     "microsoft/unixcoder-base",
+    "state-spaces/mamba3-siso-893m",
+    "state-spaces/mamba3-mimo-894m",
+    "state-spaces/mamba3-siso-1.5b",
     "__random_mamba__",
 })
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -307,6 +345,9 @@ _PINNED_REVISIONS: dict[str, str] = {
     "sshleifer/tiny-gpt2":        "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
     "mistralai/Mamba-Codestral-7B-v0.1": "4f086c08c1e0f07bdc50ca25125dbbf7475d21da",
     "microsoft/unixcoder-base": "5604afdc964f6c53782a6813140ade5216b99006",
+    # Mamba-3 candidates: no SHA pinned yet. pin_model_cards.py fills
+    # these in from the live HF model cards; until then operators can
+    # override per-checkpoint via RC_<REPO_SLUG>_REVISION.
 }
 
 

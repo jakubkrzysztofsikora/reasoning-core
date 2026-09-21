@@ -177,7 +177,12 @@ export RC_RULE_ENGINE=1            # enforce .reasoning-core/rules.yaml
 
 Per-machine overrides → `.envrc.local` (gitignored). Run `rc enable-enforcement`
 after ~48 h of shadow review and manually authoring a `PLAN.md` to promote to
-`RC_MODE=copilot`. Full env-var table: [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
+`RC_MODE=copilot`. `rc init` auto-picks the largest embedder that fits
+the host's available RAM and disk via `src/embedder_tier.py`; the
+chosen tier + backend are written to `.envrc` (override at any time
+with `export RC_EMBEDDER=<backend>` before `direnv reload`). The
+auto-pick honours an existing `RC_EMBEDDER` pin. Full env-var table:
+[`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
 
 ## Audit & hardening
@@ -217,18 +222,39 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
 
 **Open research items** (deferred, not bugs):
 
-- **Embedder swap.** Mamba-130m is the default backbone; the dup-embed
-  module agrees in code comments that it is "the wrong model for code."
-  Four candidates are under evaluation: `state-spaces/mamba3-siso-893m`,
-  `state-spaces/mamba3-mimo-894m`, `state-spaces/mamba3-siso-1.5b`, plus
-  the Mamba-3 paper at <https://arxiv.org/abs/2603.15569> (Mamba-3 SISO
-  decodes at 0.156 ms / token vs Mamba-2 at 0.203 ms; 7x faster than
-  vLLM Transformer at 16K context: 140.61 ms vs 976.50 ms).
+- **Embedder swap (option 3, blocked 2026-09-21).** The default stays
+  at `mamba-130m` until the pre-reg eval ladder passes five gates
+  (AUC >= 0.70, inversion >= 0.05, anisotropy reduction >= 0.04,
+  latency parity, falsifiability). The Mamba-3 candidates are
+  registered in `_BACKENDS` (see `src/ssm_backbone.py`), the harness is
+  shipped (`eval/pre_reg_embedder.py`), and the refusal-gate test is
+  shipped (`tests/test_pre_reg_embedder_gate.py`). Model-card pulls
+  succeeded (`state-spaces/mamba3-siso-893m` etc., see
+  `eval/calibrated/model_cards.json` for the pinned metadata) but the
+  checkpoints cannot be loaded by the current transformers stack (no
+  `Mamba3*` class, no `mamba-ssm>=2.0.0` kernels). The gate test stays
+  in skip mode until `mamba-ssm>=2.0.0` is installed and the harness
+  re-run. Status doc: `eval/runs/PRE_REG_STATUS_2026_09_21.md`.
 - **Windowed diff embeddings.** Replace 512-token truncation with
   diff-localized windowing + AST-scope context.
-- **Auto-sizing on `rc init`.** Pick the largest mamba3 variant that
-  fits available RAM/CPU without killing the host. Planned alongside
-  the embedder swap.
+- **Auto-sizing on `rc init`.** `src/embedder_tier.py` detects the
+  host's available RAM and disk and picks the largest variant that
+  fits. The tier matrix (2026-09-21) is:
+
+  | Tier    | RAM window    | Backend chosen               | Notes |
+  |---------|---------------|------------------------------|-------|
+  | xlarge  | ≥ 32 GiB      | `mamba3-siso-1.5b`           | Opt-in MIMO if available |
+  | large   | 16-32 GiB     | `mamba3-siso-1.5b` or `-893m` | MIMO if RAM allows |
+  | medium  | 8-16 GiB      | `mamba3-siso-893m`           | Best Mamba-3 fit |
+  | small   | 2-8 GiB       | `bge-code` or `unixcoder-base` | Mamba-3 won't fit |
+  | fallback| < 2 GiB       | `mamba-130m` (legacy default) | Last resort |
+
+  Operators can override the auto-pick via `export RC_EMBEDDER=<backend>`
+  before `direnv reload`. Pre-reg: `tests/test_embedder_tier.py`
+  exercises a 12-cell (ram, disk) grid + operator-pin + oversized
+  warning paths. The auto-pick decision is recorded in the immutable
+  baseline manifest (`embedder_tier`, `embedder_backend`,
+  `embedder_working_set_gb`).
 - **Scoring-v3 re-calibration sweep.** Reconcile the algebraic redundancy
   of AIS / CD / Novelty; repurpose the `ais < t["ais"]` check as a
   `mahal_anomaly` shadow signal.
