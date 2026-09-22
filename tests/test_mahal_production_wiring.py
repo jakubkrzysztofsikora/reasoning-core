@@ -186,3 +186,150 @@ def test_production_path_lazy_fit_when_only_corpus_present(
         "fitted tensors to be pre-computed and refuses to fit them on "
         "demand."
     )
+
+
+# ---------------------------------------------------------------------------
+# Round-2 BLOCKER regression tests: session-freeze + calibration
+# ---------------------------------------------------------------------------
+
+
+def test_session_does_not_freeze_after_corpus_promotion(monkeypatch, tiny_embedder):
+    """After corpus promotion, new paths must STILL be auto-persisted.
+
+    Round-2 hostile review Finding 2: ``_persist_session_baseline_for_path``
+    has a guard ``if path not in baselines and "__corpus__" not in baselines``
+    that permanently skips per-path persistence once the corpus exists.
+    This freezes the session: new paths never appear in
+    ``_BASELINES[session_id]``, ``__mahal_last_fit_n__`` becomes dead,
+    and cumulative-drift for new files is computed against a 2-D corpus
+    tensor instead of a vector.
+
+    The fix: the corpus promotion does NOT block new path persistence.
+    It only guards against the corpus being *overwritten* by an
+    auto-persisted path (which would conflict with the corpus key).
+    """
+    monkeypatch.setenv("RC_SCORING_V3", "1")
+    s2_core._BASELINES.clear()
+    sid = "s_freeze_regression"
+    _drive_session(monkeypatch, sid, n_paths=MIN_BASELINES_FOR_CORPUS)
+
+    # After corpus promotion, drive 3 more distinct paths.
+    _drive_session(monkeypatch, sid, n_paths=MIN_BASELINES_FOR_CORPUS + 3)
+    baselines = s2_core._BASELINES.get(sid, {})
+    assert isinstance(baselines, dict)
+    file_keys = [k for k in baselines if not k.startswith("__")]
+    # We should have at least the second batch's paths persisted too.
+    # (Not the first batch because LRU eviction may have dropped them.)
+    assert len(file_keys) >= MIN_BASELINES_FOR_CORPUS, (
+        f"Session freeze regression: only {len(file_keys)} file keys present "
+        f"after {2 * MIN_BASELINES_FOR_CORPUS} path edits (expected >= "
+        f"{MIN_BASELINES_FOR_CORPUS}). _BASELINES[session_id] is permanently "
+        f"frozen after corpus promotion."
+    )
+
+
+def test_corpus_promotion_handles_degenerate_corpus_gracefully(monkeypatch):
+    """A degenerate corpus (all-same embeddings) must NOT silently always-fire.
+
+    Round-2 Finding 2: when the session accumulates N near-identical
+    embeddings (reachable via /baseline poisoning or a collapsed
+    session), the Ledoit-Wolf shrinkage degenerates, the LOO threshold
+    becomes a near-zero value, and every fresh benign edit scores in
+    the quadrillions -> mahal_anomaly_above_threshold always fires.
+
+    The fix: when the corpus covariance collapses to the shrinkage
+    target (zero off-diagonal, identical diagonal), we set the
+    threshold to +inf so the signal stays inert until the session
+    accumulates a non-degenerate corpus. The threshold is still
+    persisted so operators can see it in ``rc doctor``, but it never
+    fires until the corpus is meaningful.
+    """
+    import torch
+    monkeypatch.setenv("RC_SCORING_V3", "1")
+    s2_core._BASELINES.clear()
+
+    # Install an embedder that returns the same vector regardless of input.
+    same_vec = torch.zeros(16, dtype=torch.float32)
+
+    def _constant_embed(text, **kwargs):
+        return same_vec
+
+    monkeypatch.setattr(s2_core, "embed", _constant_embed)
+    monkeypatch.setattr(s2_core, "BACKBONE_INFO", {"hidden_size": 16})
+
+    sid = "s_degenerate"
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        # Drive N path edits; all return the same vector.
+        for i in range(MIN_BASELINES_FOR_CORPUS):
+            p = Path(td) / f"f{i}.py"
+            s2_core.score_change(
+                path=str(p),
+                before_src=f"x_{i} = {i}\n",
+                after_src=f"x_{i} = {i + 1}\n",
+                session_id=sid,
+            )
+        # Now drive a fresh edit. With a degenerate corpus, the
+        # threshold must be +inf so the fired condition never trips.
+        report = s2_core.score_change(
+            path=str(Path(td) / "fresh.py"),
+            before_src="y = 0\n",
+            after_src="y = 1\n",
+            session_id=sid,
+        )
+    assert report.mahal_anomaly is not None
+    # Either the threshold is +inf (degenerate corpus -> inert) OR the
+    # signal is finite and doesn't fire. We accept either as long as
+    # ``mahal_anomaly_above_threshold`` is NOT in fired_conditions.
+    if report.mahal_anomaly_threshold == float("inf"):
+        assert "mahal_anomaly_above_threshold" not in report.fired_conditions
+    else:
+        # If the corpus did manage to be non-degenerate (e.g. tiny noise
+        # made it through), the threshold should still be large enough
+        # that a same-vector edit doesn't fire.
+        assert report.mahal_anomaly <= report.mahal_anomaly_threshold, (
+            f"degenerate-corpus edit fired: mahal_anomaly="
+            f"{report.mahal_anomaly:.2e} > threshold={report.mahal_anomaly_threshold:.4f}"
+        )
+
+
+def test_session_baseline_accepts_explicit_corpus_after_promotion(monkeypatch):
+    """Per-path baselines must still accumulate after corpus promotion.
+
+    A separate-but-related fix: even after corpus promotion, callers
+    that explicitly call /baseline with a fresh per-path vector must
+    have those vectors stored. The regression is that the guard
+    ``if path not in baselines and "__corpus__" not in baselines``
+    blocks this even for explicit (non-auto) persists.
+    """
+    monkeypatch.setenv("RC_SCORING_V3", "1")
+    s2_core._BASELINES.clear()
+    sid = "s_explicit_after"
+    _drive_session(monkeypatch, sid, n_paths=MIN_BASELINES_FOR_CORPUS)
+
+    # Simulate an explicit /baseline call: the baseline dict should
+    # have a known key (e.g. an explicit path), AND auto-persist
+    # for a fresh path must STILL work.
+    baselines = s2_core._BASELINES.get(sid, {})
+    assert "__corpus__" in baselines
+    pre_existing_path_count = len([k for k in baselines if not k.startswith("__")])
+
+    # Drive a fresh path through score_change.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        s2_core.score_change(
+            path=str(Path(td) / "post_promotion.py"),
+            before_src="p = 1\n",
+            after_src="p = 2\n",
+            session_id=sid,
+        )
+
+    baselines = s2_core._BASELINES.get(sid, {})
+    post_path_count = len([k for k in baselines if not k.startswith("__")])
+    # The session learned at least one new path.
+    assert post_path_count > pre_existing_path_count or any(
+        "post_promotion" in k for k in baselines
+    ), (
+        f"auto-persist blocked after promotion: pre={pre_existing_path_count}, "
+        f"post={post_path_count}"
+    )

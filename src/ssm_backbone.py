@@ -355,6 +355,32 @@ def backend_loadability_probe(backend_name: str) -> bool:
             import mamba_ssm  # noqa: F401 -- side-effect-free probe
         except ImportError:
             return False
+        # Anti-spoof: refuse to trust a sys.path-installed ``
+        # `` file (the round-2 review noted that a file named
+        # ``mamba_ssm`` placed on ``sys.path`` flips the probe). We
+        # require the package to expose at least one of the
+        # canonical kernel entry points.
+        try:
+            import mamba_ssm.ops.selective_scan_interface  # noqa: F401
+        except (ImportError, AttributeError):
+            return False
+    # RC-LOAD-PROBE-01 (round-2 Finding 3): every non-mamba3 backend
+    # must have a pinned SHA in ``_PINNED_REVISIONS`` or the loader
+    # will fail-closed on the unpinned revision. Refuse to bless a
+    # backend whose checkpoint is not pinned (or whose pin is the
+    # placeholder ``REVIEWER_PIN_REQUIRED`` -- meaning pin_model_cards
+    # has not run yet).
+    backend = _BACKENDS.get(backend_name)
+    if backend is not None:
+        pin = _PINNED_REVISIONS.get(backend.checkpoint)
+        if not pin or pin == "REVIEWER_PIN_REQUIRED":
+            # Allow the legacy mamba-130m fallback because the loader
+            # has its own fail-closed path that defaults to it when
+            # RC_EMBEDDER is unset. The probe does NOT have to bless
+            # legacy mamba-130m for the picker to use it; the picker
+            # only invokes the probe for non-legacy picks.
+            if backend_name != "mamba-130m":
+                return False
     return True
 
 
@@ -394,6 +420,13 @@ _PINNED_REVISIONS: dict[str, str] = {
     "sshleifer/tiny-gpt2":        "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
     "mistralai/Mamba-Codestral-7B-v0.1": "4f086c08c1e0f07bdc50ca25125dbbf7475d21da",
     "microsoft/unixcoder-base": "5604afdc964f6c53782a6813140ade5216b99006",
+    # bge-code pin (RC-LOAD-PROBE-01 / round-2 Finding 3): fetched
+    # from the live HF model card by pin_model_cards.py. Until
+    # pin_model_cards.py runs on this host we accept the operator
+    # override via ``RC_BAAI_BGE_CODE_V1_REVISION``.
+    "BAAI/bge-code-v1": os.environ.get(
+        "RC_BAAI_BGE_CODE_V1_REVISION", ""
+    ) or "REVIEWER_PIN_REQUIRED",
     # Mamba-3 candidates: no SHA pinned yet. pin_model_cards.py fills
     # these in from the live HF model cards; until then operators can
     # override per-checkpoint via RC_<REPO_SLUG>_REVISION.

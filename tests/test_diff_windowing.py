@@ -131,19 +131,28 @@ def test_chunk_source_falls_back_to_line_window_for_huge_function():
     assert total_bytes >= len(huge.encode("utf-8"))
 
 
-def test_chunk_source_caps_max_chunks():
-    """A 50-function file must be capped at _MAX_CHUNKS_PER_FILE (32)."""
+def test_chunk_source_preserves_every_chunk_after_round2_fix():
+    """ROUND-2 RC-WINDOWING-STRIDE-01: the previous cap-and-stride
+    subsampling silently dropped chunks that contained diff hunks in
+    files with > ~32 chunks. The round-2 fix preserves every chunk
+    when the cap is exceeded; the embedder downstream enforces the
+    cost cap via its own max_seq_len budget. The cost-cap contract
+    moved from chunk_source to the embedder call site.
+    """
     if not _grammar_python():
         pytest.skip("tree-sitter python grammar not installed")
-    from src.grammars import _load_language  # type: ignore
     from src.grammars import get_parser  # type: ignore
 
     src = "".join(f"def f{i}():\n    return {i}\n\n" for i in range(50))
-    # use src.grammars.get_parser
     parser = get_parser("python")
     tree = parser.parse(bytes(src, "utf-8"))
     chunks = chunk_source(src, tree=tree)
-    assert len(chunks) <= 32
+    # The chunker must keep every chunk -- the stride subsampling
+    # was the bug. The embedder call site bounds the actual embed
+    # cost (see ``embed_windowed`` -> per-chunk embed_fn call).
+    assert len(chunks) == 50, (
+        f"chunk_source dropped chunks: have {len(chunks)}, expected 50"
+    )
 
 
 # ---------------------------------------------------------------------------

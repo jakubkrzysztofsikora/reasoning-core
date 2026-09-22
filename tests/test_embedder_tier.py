@@ -333,3 +333,97 @@ def test_decide_writes_no_op_when_all_unloadable(monkeypatch, tmp_path):
     assert safe == "mamba-130m", (
         f"expected safe_backend_for_envrc=mamba-130m; got {safe!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# RC-LOAD-PROBE-01 (round-2 hostile review Finding 3): the loadability
+# probe must refuse unpinned non-mamba3 backends so the brick does not
+# relocate from >=32GiB hosts to 2-8GiB hosts via the small tier's
+# ``bge-code`` fallback.
+# ---------------------------------------------------------------------------
+
+
+def test_probe_refuses_unpinned_bge_code(monkeypatch):
+    from src import ssm_backbone
+    assert ssm_backbone.backend_loadability_probe("bge-code") is False, (
+        "BLOCKER #3: probe blesses bge-code without a SHA pin; the "
+        "loader will fail-closed on the unpinned revision."
+    )
+
+
+def test_probe_refuses_unpinned_unixcoder_when_pin_removed(monkeypatch):
+    """If someone removes the unixcoder pin, the probe must catch it."""
+    from src import ssm_backbone
+    saved_pin = ssm_backbone._PINNED_REVISIONS.get("microsoft/unixcoder-base")
+    monkeypatch.setitem(
+        ssm_backbone._PINNED_REVISIONS,
+        "microsoft/unixcoder-base",
+        "REVIEWER_PIN_REQUIRED",
+    )
+    try:
+        assert ssm_backbone.backend_loadability_probe("unixcoder-base") is False
+    finally:
+        if saved_pin is not None:
+            monkeypatch.setitem(
+                ssm_backbone._PINNED_REVISIONS,
+                "microsoft/unixcoder-base",
+                saved_pin,
+            )
+
+
+def test_probe_blesses_pinned_unixcoder(monkeypatch):
+    from src import ssm_backbone
+    assert ssm_backbone.backend_loadability_probe("unixcoder-base") is True, (
+        "unixcoder-base has a real pin in _PINNED_REVISIONS; probe "
+        "must bless it."
+    )
+
+
+def test_probe_required_at_decide_callsite():
+    """decide() called without a probe must surface a warning (not silently
+    re-open the brick the probe was added to close). The round-2 review
+    noted that any future caller forgetting ``loadability_probe=``
+    re-opens the original brick.
+    """
+    from src import embedder_tier
+    import warnings
+    # Calling decide() without a probe should issue a UserWarning so the
+    # default-off-brick failure mode is visible at the call site.
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        embedder_tier.decide(available_ram_gb_value=64.0)
+    assert any(
+        "loadability_probe" in str(warning.message).lower()
+        for warning in w
+    ), (
+        "decide() called without loadability_probe= should surface a "
+        "warning; otherwise the round-2 brick is re-opened for any "
+        "future caller that forgets the kwarg."
+    )
+
+
+def test_probe_anti_spoof_for_mamba3(monkeypatch):
+    """A file named mamba_ssm on sys.path must NOT flip the probe.
+
+    The round-2 review noted: ``probe is spoofable (a file named
+    mamba_ssm on sys.path flips it)``. The fix: require
+    ``mamba_ssm.ops.selective_scan_interface`` to be importable
+    (real kernel entry point), not just any module named
+    ``mamba_ssm``.
+    """
+    from src import ssm_backbone
+    import sys, types, importlib
+
+    # Simulate an attacker-installed ``mamba_ssm`` package: a top-level
+    # module with no real submodule layout.
+    class _FakeSSM:
+        pass
+
+    fake_module = types.ModuleType("mamba_ssm")
+    fake_module.__file__ = "/tmp/attacker_mamba_ssm.py"  # not a real package
+    monkeypatch.setitem(sys.modules, "mamba_ssm", fake_module)
+    # Force re-import if needed.
+    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is False, (
+        "BLOCKER #3 anti-spoof failed: probe is fooled by a bare "
+        "module named mamba_ssm on sys.path."
+    )

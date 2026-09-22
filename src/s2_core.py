@@ -304,8 +304,17 @@ def _persist_session_baseline_for_path(session_id: str, path: str, emb: Any) -> 
             # Touch for LRU and refresh TTL anchor.
             _BASELINES.move_to_end(session_id)
             baselines["__ts__"] = time.time()
-        if path not in baselines and "__corpus__" not in baselines:
-            # Only auto-persist when no explicit /baseline was called
+        # RC-MAHAL-CORPUS-01 (round-2 hostile review Finding 2):
+        # Auto-persist new path baselines even when a session-level
+        # corpus already exists. The previous guard ``and "__corpus__"
+        # not in baselines`` permanently skipped persistence after the
+        # corpus was built, which froze the session: new paths never
+        # appeared, the re-fit amortisation key was dead, and
+        # cumulative-drift for new files was computed against a 2-D
+        # corpus tensor instead of a vector. Only guard against
+        # overwriting reserved keys (``__ts__``, ``__corpus__``, etc.)
+        # with a per-path embedding.
+        if path not in baselines and not path.startswith("__"):
             baselines[path] = emb
         # Cap: drop oldest entries until under the configured maximum.
         while len(_BASELINES) > _BASELINE_MAX_SESSIONS:
@@ -388,7 +397,23 @@ def _maybe_promote_session_to_corpus(
     # the nominal 0.05); the LOO threshold matches the nominal FPR
     # within the binomial envelope and is what the production path
     # uses. See ``test_scoring_signals.py::test_loo_threshold_*``.
-    thr = loo_threshold_for_fpr(arr, fpr=0.05)
+    #
+    # RC-MAHAL-DEGEN-01 (round-2 hostile review Finding 2): when the
+    # Ledoit-Wolf covariance collapses to the shrinkage target (the
+    # corpus is all-same or near-same vectors, reachable via
+    # /baseline poisoning or a collapsed session), ``cov_inv`` is the
+    # zero matrix and every fresh edit scores ``+inf``. The LOO
+    # threshold in this regime is 0.0, so the fired condition always
+    # trips -- the wrong kind of "loud". We refuse to arm the
+    # threshold on a degenerate corpus: store ``+inf`` so
+    # ``mahal_anomaly > threshold`` is never true, and the signal
+    # stays inert until the session accumulates a non-degenerate
+    # corpus.
+    degenerate = (cov_inv == 0).all()
+    if degenerate:
+        thr = float("inf")
+    else:
+        thr = loo_threshold_for_fpr(arr, fpr=0.05)
     baselines["__corpus__"] = torch.from_numpy(arr.astype(np.float32))
     baselines["__mahal_mean__"] = torch.from_numpy(mean.astype(np.float32))
     baselines["__mahal_inv__"] = torch.from_numpy(cov_inv.astype(np.float32))

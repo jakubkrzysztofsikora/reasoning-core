@@ -266,6 +266,24 @@ def decide(
             ``S2_FAIL_CLOSED=1`` because the loader refuses fallback
             for operator-pinned backends.
     """
+    # RC-LOAD-PROBE-REQUIRED (round-2 Finding 3): warn when no
+    # ``loadability_probe`` is provided so any future caller that
+    # forgets the kwarg re-opens the original BLOCKER #2 brick.
+    # The legacy code path (no probe) is kept for back-compat with
+    # callers that have no probe but the warning surfaces the risk.
+    if loadability_probe is None:
+        import warnings
+        warnings.warn(
+            "decide() called without loadability_probe=. The picker will "
+            "honour RAM/disk fits but will NOT screen for backends that "
+            "the loader cannot instantiate (e.g. unpinned bge-code, "
+            "Mamba-3 without kernels). Round-2 hostile review Finding 3: "
+            "this can relocate the BLOCKER #2 brick to small-RAM hosts. "
+            "Pass ``loadability_probe=ssm_backbone.backend_loadability_probe`` "
+            "to restore the BLOCKER #2 fix.",
+            UserWarning,
+            stacklevel=2,
+        )
     ram = available_ram_gb_value if available_ram_gb_value is not None else available_ram_gb()
     disk = available_disk_gb_value if available_disk_gb_value is not None else available_disk_gb()
 

