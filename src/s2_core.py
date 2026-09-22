@@ -23,6 +23,8 @@ import json
 import logging
 import math
 import os
+
+import numpy as np  # used by Phase C (scoring-v3 mahal_anomaly)
 import sys
 import time
 from collections import deque
@@ -96,6 +98,15 @@ class ImpactReport:
     fired_conditions: list[str] = field(default_factory=list)
     fired_dims: list[str] = field(default_factory=list)
     fired_margins: dict[str, float] = field(default_factory=dict)
+    # Phase C (audit-deferred scoring-v3): Mahalanobis anomaly score
+    # against the session's benign-embedding corpus. NOT a scalar
+    # transform of cosine similarity, which is what makes it an
+    # independent signal alongside coherence_delta / AIS / novelty.
+    # ``None`` when RC_SCORING_V3=0 or no corpus is fitted for the
+    # session. Threshold is reported separately so operators can audit
+    # the operating point without recomputing.
+    mahal_anomaly: Optional[float] = None
+    mahal_anomaly_threshold: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -119,6 +130,10 @@ class ImpactReport:
             out["file_kind"] = str(self.file_kind)
         if self.cd_threshold is not None:
             out["cd_threshold"] = float(self.cd_threshold)
+        if self.mahal_anomaly is not None:
+            out["mahal_anomaly"] = float(self.mahal_anomaly)
+        if self.mahal_anomaly_threshold is not None:
+            out["mahal_anomaly_threshold"] = float(self.mahal_anomaly_threshold)
         return out
 
 
@@ -1108,6 +1123,80 @@ def score_change(
     # novelty in [0, 1]: 1 - max(cos, 0).
     novelty = max(0.0, min(1.0, 1.0 - max(cos, 0.0)))
 
+    # ---- Phase C: mahal_anomaly (audit-deferred scoring-v3) -----------------
+    # Independent of cosine similarity by construction. Computed against the
+    # session's persisted benign-embedding corpus (``__corpus__``) under the
+    # Ledoit-Wolf shrunk inverse covariance. Default-off so existing
+    # deployments are unaffected; opt in with ``RC_SCORING_V3=1``.
+    mahal_anomaly_value: Optional[float] = None
+    mahal_anomaly_threshold_value: Optional[float] = None
+    if os.environ.get("RC_SCORING_V3") == "1":
+        try:
+            from src.scoring_signals import (
+                fit_benign_corpus,
+                mahal_anomaly_against_corpus,
+            )
+            corpus_blob: Optional[torch.Tensor] = None
+            mean_blob: Optional[torch.Tensor] = None
+            inv_blob: Optional[torch.Tensor] = None
+            thr_blob: Optional[float] = None
+            if session_id:
+                baseline = _BASELINES.get(session_id)
+                if isinstance(baseline, dict):
+                    corpus_blob = baseline.get("__corpus__")  # type: ignore[assignment]
+                    mean_blob = baseline.get("__mahal_mean__")  # type: ignore[assignment]
+                    inv_blob = baseline.get("__mahal_inv__")  # type: ignore[assignment]
+                    thr_blob = baseline.get("__mahal_threshold__")  # type: ignore[assignment]
+            # Fallback: if the session has a corpus tensor but no fitted mean
+            # / inverse yet, fit them on the fly. This keeps the on-disk
+            # baseline manifest compatible with installs that pre-date the
+            # v3 scoring rollout.
+            if (
+                corpus_blob is not None
+                and mean_blob is None
+                and inv_blob is None
+            ):
+                arr = (
+                    corpus_blob.detach().cpu().numpy()
+                    if hasattr(corpus_blob, "detach")
+                    else np.asarray(corpus_blob, dtype=np.float64)
+                )
+                m, inv = fit_benign_corpus(arr)
+                mean_blob = torch.from_numpy(m.astype(np.float32))
+                inv_blob = torch.from_numpy(inv.astype(np.float32))
+                if session_id:
+                    _BASELINES.setdefault(session_id, {})
+                    _BASELINES[session_id]["__mahal_mean__"] = mean_blob
+                    _BASELINES[session_id]["__mahal_inv__"] = inv_blob
+            if (
+                corpus_blob is not None
+                and mean_blob is not None
+                and inv_blob is not None
+            ):
+                mean_np = (
+                    mean_blob.detach().cpu().numpy()
+                    if hasattr(mean_blob, "detach")
+                    else np.asarray(mean_blob, dtype=np.float64)
+                )
+                inv_np = (
+                    inv_blob.detach().cpu().numpy()
+                    if hasattr(inv_blob, "detach")
+                    else np.asarray(inv_blob, dtype=np.float64)
+                )
+                mahal_anomaly_value = mahal_anomaly_against_corpus(
+                    emb_after.detach().cpu().numpy()
+                    if hasattr(emb_after, "detach")
+                    else np.asarray(emb_after, dtype=np.float64),
+                    mean_np,
+                    inv_np,
+                )
+                if thr_blob is not None:
+                    mahal_anomaly_threshold_value = float(thr_blob)
+        except Exception as exc:
+            logger.debug("Phase C mahal_anomaly failed (non-fatal): %s", exc)
+            mahal_anomaly_value = None
+            mahal_anomaly_threshold_value = None
+
     risk_vector_8 = _compute_risk_vector(
         parse_before,
         parse_after,
@@ -1225,6 +1314,21 @@ def score_change(
         fired_conditions.append("coherence_delta_above_threshold")
         fired_margins["coherence_delta_above_threshold"] = float(coherence_delta - t["cd"])
 
+    # Phase C fired condition (RC-SCORING-V3-01): mahal_anomaly is an
+    # INDEPENDENT signal, not a scalar transform of cos. We trip when the
+    # squared Mahalanobis distance exceeds the per-session benign threshold
+    # at FPR=0.05. Degenerate calibrations (cov_inv is zero) yield +inf
+    # which always exceeds the threshold -- a deliberate fail-loud.
+    if (
+        mahal_anomaly_value is not None
+        and mahal_anomaly_threshold_value is not None
+        and mahal_anomaly_value > mahal_anomaly_threshold_value
+    ):
+        fired_conditions.append("mahal_anomaly_above_threshold")
+        fired_margins["mahal_anomaly_above_threshold"] = float(
+            mahal_anomaly_value - mahal_anomaly_threshold_value
+        )
+
     dim_breaches = [
         (RISK_LABELS[i], float(dim - dim_ceiling))
         for i, dim in enumerate(risk_vector)
@@ -1262,6 +1366,8 @@ def score_change(
         fired_conditions=fired_conditions,
         fired_dims=fired_dims,
         fired_margins=fired_margins,
+        mahal_anomaly=mahal_anomaly_value,
+        mahal_anomaly_threshold=mahal_anomaly_threshold_value,
     )
 
 
