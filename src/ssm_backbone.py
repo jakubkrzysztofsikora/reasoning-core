@@ -309,6 +309,55 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
     ),
 }
 
+
+def backend_loadability_probe(backend_name: str) -> bool:
+    """Cheap ``backend_name -> bool`` probe for the auto-sizer.
+
+    BLOCKER #2 fix (2026-09-22 hostile review): previously, ``rc init``
+    auto-picked ``mamba3-siso-1.5b`` on >=32GiB hosts and wrote it to
+    ``.envrc`` as an operator pin, even though the current transformers
+    stack has no ``Mamba3*`` class and the checkpoint cannot be loaded.
+    The loader then refuses fallback for operator-pinned backends, so
+    the gate 503s every score and ``S2_FAIL_CLOSED=1`` blocks every edit.
+
+    This function asks "would ``load_backbone()`` succeed for this
+    backend on this host *without* downloading weights or pulling
+    model files?". The check is purely syntactic + registry-based:
+
+    * Unknown backend name -> ``False``.
+    * Mamba-3 backends (``mamba3-*``) require the
+      ``mamba-ssm>=2.0.0`` (or equivalent) kernel package; if it is
+      not importable on this host the backend is unloadable.
+      ``load_backbone()`` would otherwise hang on the sequential
+      Python fallback and ultimately fail with a size-mismatch
+      error (the Mamba-130M class doesn't match the 1536-dim
+      Mamba-3 hidden size).
+    * All other backends are loadable *a priori*; the registry
+      entry is the source of truth. The actual download + load
+      still happens at runtime in ``load_backbone()``; this probe
+      only screens for the known-bad class of failures.
+
+    The probe is intentionally cheap: no I/O, no HF API calls, no
+    weight downloads. It runs in microseconds.
+    """
+    if backend_name not in _BACKENDS:
+        return False
+    if backend_name.startswith("mamba3-"):
+        # Mamba-3 requires the upstream ``mamba-ssm`` kernels (or an
+        # equivalent registered backend) to load. The current
+        # transformers stack ships ``Mamba*`` for the original
+        # Mamba-130M architecture but no ``Mamba3*`` class, so the
+        # sequential Python fallback fails with a size-mismatch on
+        # the very first parameter copy. Until upstream lands a
+        # CPU fast-path or a transformers-registered Mamba3 class,
+        # any mamba3-* backend is unloadable on this host.
+        try:
+            import mamba_ssm  # noqa: F401 -- side-effect-free probe
+        except ImportError:
+            return False
+    return True
+
+
 # Default to a backend with a real SHA pin so a fresh install works without
 # operator-supplied revision overrides. ``codestral-mamba`` / ``bge-code`` /
 # ``unixcoder-base`` carry ``revision="main"`` in the registry and are

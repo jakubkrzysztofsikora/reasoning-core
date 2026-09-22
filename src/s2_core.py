@@ -25,6 +25,11 @@ import math
 import os
 
 import numpy as np  # used by Phase C (scoring-v3 mahal_anomaly)
+
+try:
+    import torch  # used by Phase A (diff-windowing wiring) for tensor coercion
+except ImportError:  # pragma: no cover
+    torch = None  # type: ignore[assignment]
 import sys
 import time
 from collections import deque
@@ -107,6 +112,14 @@ class ImpactReport:
     # the operating point without recomputing.
     mahal_anomaly: Optional[float] = None
     mahal_anomaly_threshold: Optional[float] = None
+    # Phase A (audit-deferred windowing): True iff this score_change
+    # call used the chunked embedder (src.diff_windowing.embed_windowed)
+    # instead of the legacy ``embed(before_tokens)/embed(after_tokens)``
+    # path. ``None`` means the operator has not opted in; ``False``
+    # means the flag was set but the chunked path fell back to the
+    # legacy path (e.g. chunker raised on an unsupported grammar);
+    # ``True`` means the windowed embeddings drove the scoring.
+    windowed_embed_active: Optional[bool] = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -134,6 +147,8 @@ class ImpactReport:
             out["mahal_anomaly"] = float(self.mahal_anomaly)
         if self.mahal_anomaly_threshold is not None:
             out["mahal_anomaly_threshold"] = float(self.mahal_anomaly_threshold)
+        if self.windowed_embed_active is not None:
+            out["windowed_embed_active"] = bool(self.windowed_embed_active)
         return out
 
 
@@ -312,6 +327,73 @@ def _persist_session_baseline_for_path(session_id: str, path: str, emb: Any) -> 
                     continue
                 del baselines[k]
                 break
+        # Phase C (BLOCKER #1 fix): when the per-session file cap is
+        # accumulated, fold the per-path baselines into a session-level
+        # benign corpus and run Ledoit-Wolf shrinkage + FPR=0.05
+        # threshold. The previous Phase C landing shipped a
+        # mahal_anomaly field that no production path could populate:
+        # the /baseline route writes per-file __corpus__ at the path
+        # level (not session), and the score_change path never built a
+        # session-level corpus. This is the production-side fix.
+        try:
+            _maybe_promote_session_to_corpus(session_id, baselines)
+        except Exception as exc:  # noqa: BLE001 -- never let mahal block scoring
+            logger.debug(
+                "session corpus promotion failed (non-fatal): %s", exc,
+            )
+
+
+def _maybe_promote_session_to_corpus(
+    session_id: str, baselines: dict[str, Any]
+) -> None:
+    """Fold per-path baselines into a session-level corpus + threshold.
+
+    Called from ``_persist_session_baseline_for_path`` under the
+    ``_BASELINES_LOCK``. The promotion is idempotent: if
+    ``__corpus__`` already exists, we only re-fit when the path
+    count has grown by a configurable delta (default 5) since the
+    last fit, to amortise the O(n*d^2) Ledoit-Wolf cost.
+    """
+    min_paths = int(os.environ.get("RC_MAHAL_CORPUS_MIN", "5"))
+    # Count non-reserved entries (per-path embeddings).
+    path_keys = [k for k in baselines if not k.startswith("__")]
+    if len(path_keys) < min_paths:
+        return
+    # If we already have a corpus, only re-fit when the count has
+    # grown by at least ``min_paths`` since the last fit (cheap
+    # amortisation; avoids re-fitting on every edit).
+    last_fit_n = baselines.get("__mahal_last_fit_n__", 0)
+    if "__corpus__" in baselines and len(path_keys) - last_fit_n < min_paths:
+        return
+    # Stack all per-path embeddings into a (n, d) matrix.
+    embs = []
+    for k in path_keys:
+        v = baselines[k]
+        if hasattr(v, "detach"):
+            embs.append(v.detach().cpu().numpy())
+        else:
+            embs.append(np.asarray(v, dtype=np.float64))
+    if not embs:
+        return
+    arr = np.stack(embs).astype(np.float64)
+    from src.scoring_signals import (
+        fit_benign_corpus,
+        loo_threshold_for_fpr,
+        mahal_anomaly_against_corpus,
+    )
+    mean, cov_inv = fit_benign_corpus(arr)
+    # Honest out-of-sample threshold via leave-one-out (LOO). The
+    # 2026-09-22 hostile review Finding 3 noted that the in-sample
+    # ``threshold_for_fpr`` over-fits at n=5 (realized FPR 0.20 vs
+    # the nominal 0.05); the LOO threshold matches the nominal FPR
+    # within the binomial envelope and is what the production path
+    # uses. See ``test_scoring_signals.py::test_loo_threshold_*``.
+    thr = loo_threshold_for_fpr(arr, fpr=0.05)
+    baselines["__corpus__"] = torch.from_numpy(arr.astype(np.float32))
+    baselines["__mahal_mean__"] = torch.from_numpy(mean.astype(np.float32))
+    baselines["__mahal_inv__"] = torch.from_numpy(cov_inv.astype(np.float32))
+    baselines["__mahal_threshold__"] = float(thr)
+    baselines["__mahal_last_fit_n__"] = len(path_keys)
 
 
 # ---------------------------------------------------------------------------
@@ -1089,19 +1171,54 @@ def score_change(
     before_tokens = ast_to_tokens(parse_before.tree, before_src or "")
     after_tokens = ast_to_tokens(parse_after.tree, after_src or "")
 
-    # Forward pass through the real Mamba backbone.
-    try:
-        emb_before = embed(before_tokens)
-        emb_after = embed(after_tokens)
-        cos = _cosine_similarity(emb_before, emb_after)
-        raw_l2 = _l2_distance(emb_before, emb_after)
-    except BackboneUnavailableError:
-        # We propagate this -- the sidecar should fail loudly rather than
-        # silently degrade scoring quality.
-        raise
-    except Exception as exc:
-        logger.exception("Backbone forward pass failed: %s", exc)
-        raise BackboneUnavailableError(f"forward pass failed: {exc}") from exc
+    # Forward pass through the real Mamba backbone. Phase A wiring:
+    # when RC_DIFF_WINDOWING=1 we use ``embed_windowed`` (chunked +
+    # diff-weighted pooling) instead of the legacy whole-file embed +
+    # 512-token truncation path. On any failure the legacy path is
+    # preserved (fail-loud but graceful).
+    windowed_active: Optional[bool] = None
+    if os.environ.get("RC_DIFF_WINDOWING") == "1":
+        try:
+            from .diff_windowing import embed_windowed as _embed_windowed
+            emb_before_np, emb_after_np = _embed_windowed(
+                before_src or "",
+                after_src or "",
+                lang=parse_before.language,
+                tree_before=parse_before.tree,
+                tree_after=parse_after.tree,
+            )
+            emb_before = torch.as_tensor(emb_before_np)
+            emb_after = torch.as_tensor(emb_after_np)
+            cos = _cosine_similarity(emb_before, emb_after)
+            raw_l2 = _l2_distance(emb_before, emb_after)
+            windowed_active = True
+        except Exception as exc:
+            logger.debug(
+                "Phase A embed_windowed failed; falling back to embed(): %s",
+                exc,
+            )
+            windowed_active = False
+            emb_before = None  # type: ignore[assignment]
+            emb_after = None  # type: ignore[assignment]
+    # Legacy path: either the operator has not opted in to windowing,
+    # or the windowed embedder raised and we need to fail-loud but
+    # gracefully degrade. In both cases we re-enter the original
+    # ``embed(before_tokens)/embed(after_tokens)`` flow.
+    if windowed_active is None or windowed_active is False:
+        try:
+            emb_before = embed(before_tokens)
+            emb_after = embed(after_tokens)
+            cos = _cosine_similarity(emb_before, emb_after)
+            raw_l2 = _l2_distance(emb_before, emb_after)
+        except BackboneUnavailableError:
+            # We propagate this -- the sidecar should fail loudly rather
+            # than silently degrade scoring quality.
+            raise
+        except Exception as exc:
+            logger.exception("Backbone forward pass failed: %s", exc)
+            raise BackboneUnavailableError(
+                f"forward pass failed: {exc}"
+            ) from exc
 
     # AIS in [0, 1]: 1.0 == identical embeddings. Map cos in [-1,1] -> [0,1].
     ais = max(0.0, min(1.0, (cos + 1.0) / 2.0))
@@ -1368,6 +1485,7 @@ def score_change(
         fired_margins=fired_margins,
         mahal_anomaly=mahal_anomaly_value,
         mahal_anomaly_threshold=mahal_anomaly_threshold_value,
+        windowed_embed_active=windowed_active,
     )
 
 

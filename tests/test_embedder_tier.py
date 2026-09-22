@@ -211,3 +211,125 @@ def test_decision_is_frozen():
     )
     with pytest.raises((AttributeError, Exception)):
         decision.backend = "mamba-130m"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# BLOCKER #2 regression tests: rc init must not pick a backend that
+# fails to load. The audit verified that on a 40GB host decide() picks
+# mamba3-siso-1.5b but the embedder cannot be loaded by the current
+# transformers stack (no Mamba3* class, no mamba-ssm kernels), so the
+# gate bricks with S2_FAIL_CLOSED=1.
+#
+# decide() must accept a ``loadability_probe`` callable; if the probe
+# says a candidate backend won't load, decide() must fall through to
+# the next tier rather than write a backend to .envrc that bricks the
+# gate. The default behaviour (no probe) stays backwards compatible.
+# ---------------------------------------------------------------------------
+
+
+def test_decide_skips_unloadable_tier_top_entry(monkeypatch):
+    """If the xlarge pick is unloadable, decide() walks down the tier matrix."""
+
+    def _probe_unloadable(backend: str) -> bool:
+        # mamba3-siso-1.5b is unloadable on this host (no Mamba3* class).
+        return backend != "mamba3-siso-1.5b"
+
+    d = embedder_tier.decide(
+        available_ram_gb_value=40.0,
+        available_disk_gb_value=100.0,
+        loadability_probe=_probe_unloadable,
+    )
+    assert d.backend != "mamba3-siso-1.5b", (
+        f"decide() picked an unloadable backend: {d.backend!r}"
+    )
+    # And it surfaces why in the reason string so operators can audit.
+    assert "mamba3-siso-1.5b" in d.reason or "unloadable" in d.reason.lower()
+
+
+def test_decide_falls_back_to_legacy_when_all_mamba3_unloadable(monkeypatch):
+    """If every Mamba-3 candidate is unloadable, decide() falls to mamba-130m."""
+
+    def _probe_nothing_works(backend: str) -> bool:
+        # Only the legacy mamba-130m loads on this host.
+        return backend == "mamba-130m"
+
+    d = embedder_tier.decide(
+        available_ram_gb_value=40.0,
+        available_disk_gb_value=100.0,
+        loadability_probe=_probe_nothing_works,
+    )
+    assert d.backend == "mamba-130m", (
+        f"expected fallback to mamba-130m when no Mamba-3 candidate loads; "
+        f"got {d.backend!r}"
+    )
+
+
+def test_decide_default_probe_accepts_pure_ram_decision(monkeypatch):
+    """Without a probe, decide() still works (back-compat for callers).
+
+    The 8-GB tier matrix was widened in 2026-09-22 to also include
+    mamba3-mimo-894m (4.5 GB working-set, fits 8 GB at 80 % headroom),
+    so we accept any of the Mamba-3 / bge-code / unixcoder-base /
+    mamba-130m variants as a valid pick.
+    """
+    d = embedder_tier.decide(
+        available_ram_gb_value=8.0,
+        available_disk_gb_value=100.0,
+    )
+    assert isinstance(d.backend, str)
+    assert d.backend in {
+        "mamba3-siso-893m",
+        "mamba3-mimo-894m",
+        "bge-code",
+        "unixcoder-base",
+        "mamba-130m",
+    }
+
+
+def test_decide_marks_operator_pinned_unloadable_in_reason(monkeypatch):
+    """Operator-pinned backend that won't load must surface a clear reason."""
+
+    def _probe_unloadable(backend: str) -> bool:
+        return False  # nothing loads
+
+    d = embedder_tier.decide(
+        available_ram_gb_value=64.0,
+        available_disk_gb_value=200.0,
+        requested_backend="mamba3-siso-1.5b",
+        loadability_probe=_probe_unloadable,
+    )
+    # Operator pins bypass the tier walk, but reason must surface that
+    # the pin is unloadable so the caller knows to refuse.
+    assert d.backend == "mamba3-siso-1.5b"  # operator's pin is honoured
+    assert (
+        "unloadable" in d.reason.lower()
+        or "loadability" in d.reason.lower()
+    ), f"reason did not surface unloadability: {d.reason!r}"
+
+
+def test_decide_writes_no_op_when_all_unloadable(monkeypatch, tmp_path):
+    """rc init must NOT write a brick-inducing backend to .envrc.
+
+    End-to-end: when no probe says any Mamba-3 candidate loads, the
+    caller (rc_cli.init) writes ``RC_EMBEDDER=mamba-130m`` to .envrc
+    rather than the auto-pick. This test verifies decide()'s
+    ``safe_backend_for_envrc`` field reports the fallback candidate
+    rather than the unloadable pick.
+    """
+
+    def _probe_only_legacy(backend: str) -> bool:
+        return backend == "mamba-130m"
+
+    d = embedder_tier.decide(
+        available_ram_gb_value=64.0,
+        available_disk_gb_value=200.0,
+        loadability_probe=_probe_only_legacy,
+    )
+    # Auto-pick is mamba3-siso-1.5b on 64GB host, but unloadable.
+    # The safe backend to write to .envrc is the legacy default.
+    assert d.backend != "mamba3-siso-1.5b"
+    # And the report carries a flag the caller can read.
+    safe = getattr(d, "safe_backend_for_envrc", None)
+    assert safe == "mamba-130m", (
+        f"expected safe_backend_for_envrc=mamba-130m; got {safe!r}"
+    )

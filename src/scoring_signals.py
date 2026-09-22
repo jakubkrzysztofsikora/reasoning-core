@@ -58,6 +58,7 @@ __all__ = [
     "fit_benign_corpus",
     "mahal_anomaly_against_corpus",
     "threshold_for_fpr",
+    "loo_threshold_for_fpr",
 ]
 
 
@@ -141,6 +142,14 @@ def threshold_for_fpr(distances: np.ndarray, fpr: float) -> float:
     distances. With Ledoit-Wolf shrinkage this is stable for ``n >= 5``
     per the calibration success criterion.
 
+    NOTE: this is an IN-SAMPLE quantile -- the FPR is calibrated and
+    evaluated on the same corpus. Use ``loo_threshold_for_fpr`` for an
+    honest out-of-sample threshold when the corpus is small. The
+    production scoring path (s2_core._maybe_promote_session_to_corpus)
+    uses ``loo_threshold_for_fpr`` for this reason; this function
+    remains for tests that explicitly want the in-sample estimate.
+    See 2026-09-22 hostile review Finding 3 for the rationale.
+
     Parameters
     ----------
     distances
@@ -165,3 +174,69 @@ def threshold_for_fpr(distances: np.ndarray, fpr: float) -> float:
     if arr.size == 0:
         return 0.0
     return float(np.quantile(arr, 1.0 - fpr))
+
+
+def loo_threshold_for_fpr(
+    benign_embs: np.ndarray,
+    fpr: float,
+) -> float:
+    """Honest out-of-sample FPR threshold via leave-one-out (LOO).
+
+    For each row in ``benign_embs`` we (1) fit Ledoit-Wolf on the
+    other n-1 rows, (2) score the held-out row against the fitted
+    inverse, (3) accumulate the LOO distance. The threshold is then
+    the ``(1 - fpr)`` quantile of the LOO distances. With n=5 the
+    realized FPR is approximately 0.05 (versus the 0.20 an in-sample
+    quantile produces) -- matches the host review's Finding 3 critique.
+
+    Parameters
+    ----------
+    benign_embs
+        ``(n, d)`` array of benign embeddings, ``n >= 2``. The function
+        returns 0.0 for n < 2 so callers fall through to a safe default.
+    fpr
+        Target false-positive rate in (0, 1).
+
+    Returns
+    -------
+    float
+        LOO threshold value. Returns 0.0 if ``n < 2`` or the corpus
+        is degenerate.
+
+    Raises
+    ------
+    ValueError
+        If ``fpr`` is outside (0, 1) or ``benign_embs`` is not 2-D.
+    """
+    if not (0.0 < fpr < 1.0):
+        raise ValueError(f"fpr must be in (0, 1); got {fpr!r}")
+    arr = np.asarray(benign_embs, dtype=np.float64)
+    if arr.ndim != 2:
+        raise ValueError(
+            f"benign_embs must be 2-D (n_samples, dim); got shape {arr.shape!r}"
+        )
+    n = arr.shape[0]
+    if n < 2:
+        return 0.0
+    loo_dists = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        # Fit on all rows except i.
+        mask = np.ones(n, dtype=bool)
+        mask[i] = False
+        train = arr[mask]
+        if train.shape[0] < 2:
+            loo_dists[i] = 0.0
+            continue
+        try:
+            m, inv = fit_benign_corpus(train)
+        except ValueError:
+            loo_dists[i] = 0.0
+            continue
+        if (inv == 0).all():
+            loo_dists[i] = float("inf")
+            continue
+        loo_dists[i] = mahal_anomaly_against_corpus(arr[i], m, inv)
+    finite = loo_dists[np.isfinite(loo_dists)]
+    if finite.size == 0:
+        return 0.0
+    return float(np.quantile(finite, 1.0 - fpr))

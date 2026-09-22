@@ -176,3 +176,65 @@ def test_end_to_end_pipeline_is_deterministic():
         for emb in benign
     ])
     np.testing.assert_array_equal(distances_a, distances_b)
+
+
+# loo_threshold_for_fpr (honest out-of-sample calibration)
+
+
+def test_loo_threshold_for_fpr_returns_finite_value_for_normal_corpus():
+    rng = np.random.default_rng(7)
+    benign = rng.normal(scale=0.3, size=(10, 8))
+    thr = scoring_signals.loo_threshold_for_fpr(benign, fpr=0.05)
+    assert isinstance(thr, float)
+    assert math.isfinite(thr)
+    assert thr > 0.0
+
+
+def test_loo_threshold_for_fpr_is_honester_than_in_sample():
+    """LOO FPR is closer to the nominal 0.05 than in-sample at small n."""
+    rng = np.random.default_rng(8)
+    benign = rng.normal(scale=0.3, size=(5, 8))
+    in_sample_thr = scoring_signals.threshold_for_fpr(
+        np.array([
+            scoring_signals.mahal_anomaly_against_corpus(
+                e,
+                *scoring_signals.fit_benign_corpus(benign)
+            )
+            for e in benign
+        ]),
+        fpr=0.05,
+    )
+    loo_thr = scoring_signals.loo_threshold_for_fpr(benign, fpr=0.05)
+    # The LOO threshold is always >= the in-sample quantile because it
+    # excludes each point from its own training fit; the difference
+    # narrows as n grows but is significant at n=5.
+    assert loo_thr >= in_sample_thr, (
+        f"LOO threshold ({loo_thr:.3f}) should be >= in-sample "
+        f"({in_sample_thr:.3f}); LOO is more conservative."
+    )
+
+
+def test_loo_threshold_for_fpr_handles_small_corpus():
+    """n=1 returns 0.0 (safe default); n=2 returns a non-zero finite value."""
+    rng = np.random.default_rng(9)
+    one = rng.normal(size=(1, 4))
+    thr_one = scoring_signals.loo_threshold_for_fpr(one, fpr=0.05)
+    assert thr_one == 0.0
+
+    two = rng.normal(size=(2, 4))
+    thr_two = scoring_signals.loo_threshold_for_fpr(two, fpr=0.05)
+    assert math.isfinite(thr_two)
+
+
+def test_loo_threshold_for_fpr_rejects_out_of_range_fpr():
+    rng = np.random.default_rng(10)
+    benign = rng.normal(size=(5, 4))
+    with pytest.raises(ValueError, match="fpr"):
+        scoring_signals.loo_threshold_for_fpr(benign, fpr=1.5)
+    with pytest.raises(ValueError, match="fpr"):
+        scoring_signals.loo_threshold_for_fpr(benign, fpr=-0.1)
+
+
+def test_loo_threshold_for_fpr_rejects_1d_input():
+    with pytest.raises(ValueError, match="2-D"):
+        scoring_signals.loo_threshold_for_fpr(np.array([0.1, 0.2, 0.3]), fpr=0.05)

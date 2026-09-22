@@ -74,6 +74,17 @@ class TierDecision:
     fit_margin_gb: float        # available - estimated working set; >=0 if fit
     reason: str                 # human-readable, audit-log friendly
     candidates_considered: list[str] = field(default_factory=list)
+    # When the auto-pick is unloadable on this host (e.g. Mamba-3
+    # checkpoint registered but no Mamba3* class in the installed
+    # transformers stack), ``safe_backend_for_envrc`` reports the
+    # fallback backend the caller should write to .envrc instead.
+    # ``None`` means the auto-pick IS loadable -- the caller may use
+    # ``backend`` directly. Added as a post-fix for the 2026-09-22
+    # BLOCKER #2 finding (rc init bricked >=32GiB hosts).
+    safe_backend_for_envrc: Optional[str] = None
+    # When the operator pinned a backend that won't load on this host,
+    # this is True so callers can refuse to write it to .envrc.
+    pinned_unloadable: bool = False
 
     @property
     def fits(self) -> bool:
@@ -231,6 +242,8 @@ def decide(
     available_ram_gb_value: Optional[float] = None,
     available_disk_gb_value: Optional[float] = None,
     requested_backend: Optional[str] = None,
+    loadability_probe: Optional["callable"] = None,
+    legacy_fallback: str = "mamba-130m",
 ) -> TierDecision:
     """Pick the embedder backend for this host.
 
@@ -240,26 +253,69 @@ def decide(
         requested_backend: if set and non-empty, use that backend instead of
             the auto-tier pick. Refuses to return it if it doesn't fit; the
             caller must then confirm via ``RC_ALLOW_OVERSIZED_BACKBONE=1``.
+        loadability_probe: optional callable ``backend -> bool``. When
+            provided and the auto-pick (or operator pin) returns False,
+            decide() walks the tier matrix down to the next loadable
+            candidate. If no Mamba-3 candidate is loadable, falls back
+            to ``legacy_fallback`` (default ``mamba-130m``) so ``rc init``
+            does NOT write a brick-inducing backend to .envrc.
+            Post-fix for BLOCKER #2 (2026-09-22 hostile review):
+            on a 40GB host, the previous code picked
+            ``mamba3-siso-1.5b`` (registered but unloadable on the
+            current transformers stack), which bricks the gate with
+            ``S2_FAIL_CLOSED=1`` because the loader refuses fallback
+            for operator-pinned backends.
     """
     ram = available_ram_gb_value if available_ram_gb_value is not None else available_ram_gb()
     disk = available_disk_gb_value if available_disk_gb_value is not None else available_disk_gb()
 
-    # 1. If the operator pinned a backend, honour it (with fit check).
+    # 1. If the operator pinned a backend, honour it (with fit check +
+    # loadability probe). The probe is the BLOCKER #2 fix: previously,
+    # pinning an unloadable backend (e.g. mamba3-siso-1.5b without the
+    # Mamba3* transformers class) silently bricked the gate because the
+    # loader refuses fallback for operator-pinned backends.
     if requested_backend:
         working_set = estimate_working_set_gb(requested_backend)
         margin = ram - working_set
+        loadable = (
+            loadability_probe(requested_backend)
+            if loadability_probe is not None
+            else True
+        )
+        if loadable:
+            decision = TierDecision(
+                backend=requested_backend,
+                tier="operator-pinned",
+                estimated_working_set_gb=round(working_set, 3),
+                available_ram_gb=round(ram, 3),
+                fit_margin_gb=round(margin, 3),
+                reason=(
+                    f"operator pinned {requested_backend} via RC_EMBEDDER; "
+                    f"working-set={working_set:.2f} GiB, available={ram:.2f} GiB, "
+                    f"margin={margin:+.2f} GiB"
+                ),
+                candidates_considered=[requested_backend],
+            )
+            return decision
+        # Operator-pinned backend is NOT loadable on this host. Surface
+        # the failure in the report and return a decision whose
+        # ``pinned_unloadable`` flag is True so the caller (rc init)
+        # refuses to write the pin to .envrc.
         decision = TierDecision(
             backend=requested_backend,
-            tier="operator-pinned",
+            tier="operator-pinned-unloadable",
             estimated_working_set_gb=round(working_set, 3),
             available_ram_gb=round(ram, 3),
             fit_margin_gb=round(margin, 3),
             reason=(
-                f"operator pinned {requested_backend} via RC_EMBEDDER; "
-                f"working-set={working_set:.2f} GiB, available={ram:.2f} GiB, "
-                f"margin={margin:+.2f} GiB"
+                f"operator pinned {requested_backend} but it is NOT loadable "
+                f"on this host (loadability_probe returned False). "
+                f"Working-set={working_set:.2f} GiB, available={ram:.2f} GiB. "
+                f"Caller must unset RC_EMBEDDER or pick a loadable backend."
             ),
             candidates_considered=[requested_backend],
+            safe_backend_for_envrc=legacy_fallback,
+            pinned_unloadable=True,
         )
         return decision
 
@@ -267,7 +323,13 @@ def decide(
     #    (tier_name, backend, min_ram_gb, max_ram_gb). The first entry
     #    whose RAM window contains the host's available RAM AND whose
     #    working-set fits within RAM_HEADROOM wins.
+    #
+    # BLOCKER #2 audit trail: when a loadability probe is provided
+    # and rejects a candidate, we record it in ``skipped_unloadable``
+    # so the reason text tells the operator why their top-of-matrix
+    # pick was bypassed.
     candidates: list[str] = []
+    skipped_unloadable: list[str] = []
     for tier, backend, min_ram, max_ram in TIERS:
         candidates.append(backend)
         if ram < min_ram:
@@ -282,7 +344,14 @@ def decide(
         checkpoint_size = working_set / WORKING_SET_MULTIPLIER
         if disk > 0 and disk < checkpoint_size * 1.5:
             continue
-        return TierDecision(
+        # BLOCKER #2: when a loadability probe is provided, only honour
+        # a tier entry whose backend actually loads on this host.
+        # Without a probe we keep the previous behaviour (auto-pick
+        # and let the loader decide at runtime).
+        if loadability_probe is not None and not loadability_probe(backend):
+            skipped_unloadable.append(f"{backend}({tier})")
+            continue
+        decision = TierDecision(
             backend=backend,
             tier=tier,
             estimated_working_set_gb=round(working_set, 3),
@@ -296,9 +365,45 @@ def decide(
             ),
             candidates_considered=candidates,
         )
+        return decision
 
-    # 3. Fallback: pick the smallest available backend and flag it.
-    fallback = "unixcoder-base"
+    # 3. Fallback: no candidate passed the (RAM + disk + loadability)
+    # gates. If a probe was provided and it said every Mamba-3
+    # candidate is unloadable, the safe answer is the legacy fallback
+    # (default ``mamba-130m``) rather than ``unixcoder-base`` -- the
+    # former is guaranteed to load because it is the legacy default.
+    # Without a probe, we keep the previous ``unixcoder-base`` fallback
+    # path (back-compat for callers that have no probe).
+    probe_said_all_unloadable = (
+        loadability_probe is not None
+        and not any(
+            loadability_probe(c)
+            for c in {
+                "mamba3-siso-1.5b",
+                "mamba3-siso-893m",
+                "mamba3-mimo-894m",
+            }
+        )
+    )
+    if probe_said_all_unloadable:
+        fallback = legacy_fallback
+        reason_extra = (
+            f"no Mamba-3 candidate is loadable on this host (probe returned "
+            f"False for every Mamba-3 variant); falling back to legacy "
+            f"default {fallback} so rc init does not brick the gate."
+        )
+    else:
+        fallback = "unixcoder-base"
+        skip_msg = (
+            f" (skipped unloadable: {', '.join(skipped_unloadable)})"
+            if skipped_unloadable
+            else ""
+        )
+        reason_extra = (
+            f"no Mamba-3 candidate fits the host (RAM={ram:.2f} GiB, "
+            f"disk={disk:.2f} GiB){skip_msg}; falling back to {fallback} "
+            f"(working-set={estimate_working_set_gb(fallback):.2f} GiB)"
+        )
     working_set = estimate_working_set_gb(fallback)
     return TierDecision(
         backend=fallback,
@@ -306,11 +411,9 @@ def decide(
         estimated_working_set_gb=round(working_set, 3),
         available_ram_gb=round(ram, 3),
         fit_margin_gb=round(ram - working_set, 3),
-        reason=(
-            f"no Mamba-3 candidate fits the host (RAM={ram:.2f} GiB, disk={disk:.2f} GiB); "
-            f"falling back to {fallback} (working-set={working_set:.2f} GiB)"
-        ),
+        reason=reason_extra,
         candidates_considered=candidates,
+        safe_backend_for_envrc=fallback,
     )
 
 

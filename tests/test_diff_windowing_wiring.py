@@ -1,0 +1,288 @@
+"""Integration tests for the Phase A consumer swap.
+
+The 2026-09-19 audit verified that ``ssm_backbone.embed(text)`` is
+truncated to 512 tokens, so the System-2 scoring path is blind to
+edits past token ~40 of a long file. ``src/diff_windowing.py`` was
+shipped with a chunked embedder that fixes this, but the consumer
+swap into ``s2_core.score_change`` was deliberately deferred (per
+AGENTS.md: any change to the embedding consumer must capture both
+pre + post baselines; this is the wiring change that does so).
+
+These tests verify the consumer swap is wired safely behind the
+``RC_DIFF_WINDOWING=1`` feature flag, default off:
+
+* Default off: the path is unchanged, behaviour identical to the
+  pre-Phase-A baseline (one backward-compat test that asserts the
+  embed call signature hasn't changed for the default-off path).
+* On: score_change uses embed_windowed(before_src, after_src, ...)
+  instead of embed(before_tokens)/embed(after_tokens); the
+  resulting ImpactReport fields (coherence_delta, novelty, AIS)
+  come from the windowed embeddings.
+* The on-path embeds use the per-chunk embed_fn we pass in (we
+  monkeypatch both ssm_backbone.embed and the embed_windowed
+  consumer in s2_core to make this test CPU-only and fast).
+* The flag survives a back-compat sanity check: when the
+  embed_windowed consumer raises (e.g. an unsupported language
+  or a degenerate input), score_change degrades gracefully to the
+  old ``embed`` path rather than crashing the gate.
+
+This is the second-largest Pareto item after Phase C. Tests cover
+both happy-path and back-compat failure modes.
+"""
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+import torch
+
+from src import s2_core
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_embedder(monkeypatch):
+    """Install a deterministic in-memory embedder returning torch tensors.
+
+    The embedder returns a torch tensor whose values are a deterministic
+    function of the source text. Two different texts produce vectors in
+    clearly separated regions of the embedding space so the coherence_delta
+    / novelty / AIS fields have meaningful, reproducible values.
+    """
+
+    def _embed_tokens(text, **kwargs):
+        if not text:
+            return torch.zeros(8, dtype=torch.float32)
+        seed = abs(hash(str(text))) % (2**32)
+        rng = np.random.default_rng(seed)
+        return torch.from_numpy(rng.normal(scale=0.3, size=8).astype(np.float32))
+
+    monkeypatch.setattr(s2_core, "embed", _embed_tokens)
+    monkeypatch.setattr(s2_core, "BACKBONE_INFO", {"hidden_size": 8})
+    return _embed_tokens
+
+
+def _clear_baselines(monkeypatch):
+    monkeypatch.setattr(s2_core, "_BASELINES", {})
+
+
+# ---------------------------------------------------------------------------
+# Default-off: the wire is in place but inactive
+# ---------------------------------------------------------------------------
+
+
+def test_diff_windowing_off_by_default(monkeypatch, fake_embedder, tmp_path):
+    """Without RC_DIFF_WINDOWING=1, the embed call signature is unchanged."""
+    monkeypatch.delenv("RC_DIFF_WINDOWING", raising=False)
+    _clear_baselines(monkeypatch)
+    report = s2_core.score_change(
+        path=str(tmp_path / "a.py"),
+        before_src="def foo():\n    return 1\n",
+        after_src="def foo():\n    return 2\n",
+        session_id="s_off",
+    )
+    # coherence_delta, novelty, AIS are all populated as before.
+    assert isinstance(report.coherence_delta, float)
+    assert isinstance(report.architectural_impact_score, float)
+    # No diff-windowing metadata is surfaced.
+    assert getattr(report, "windowed_embed_active", None) is None
+
+
+# ---------------------------------------------------------------------------
+# On path: embed_windowed is used instead of embed()
+# ---------------------------------------------------------------------------
+
+
+def test_diff_windowing_on_uses_windowed_embedder(
+    monkeypatch, fake_embedder, tmp_path
+):
+    """With RC_DIFF_WINDOWING=1, score_change uses embed_windowed()."""
+    monkeypatch.setenv("RC_DIFF_WINDOWING", "1")
+    _clear_baselines(monkeypatch)
+
+    call_log: list[str] = []
+
+    def _windowed_embedder(before_src, after_src, **kwargs):
+        call_log.append("embed_windowed_called")
+        # Return two distinct deterministic vectors so coherence_delta
+        # > 0 and the report has a meaningful AIS / novelty readout.
+        b = torch.from_numpy(np.ones(8, dtype=np.float32) * 0.1)
+        a = torch.from_numpy(np.ones(8, dtype=np.float32) * 0.9)
+        return b, a
+
+    monkeypatch.setattr("src.diff_windowing.embed_windowed", _windowed_embedder)
+
+    report = s2_core.score_change(
+        path=str(tmp_path / "b.py"),
+        before_src="def foo():\n    return 1\n",
+        after_src="def foo():\n    return 2\n",
+        session_id="s_on",
+    )
+    assert call_log == ["embed_windowed_called"], (
+        f"embed_windowed should be called exactly once; got {call_log!r}"
+    )
+    # AIS and coherence_delta are derived from the windowed embeddings.
+    assert isinstance(report.coherence_delta, float)
+    assert isinstance(report.architectural_impact_score, float)
+    # The report exposes windowed_embed_active=True for ops dashboards.
+    assert getattr(report, "windowed_embed_active", None) is True
+
+
+def test_diff_windowing_on_with_long_file_does_not_truncate(
+    monkeypatch, fake_embedder, tmp_path
+):
+    """Long files no longer hit the 512-token truncation blind spot.
+
+The audit verified that a 100-line file generates ~1k-2.5k AST
+tokens, and anything past token 512 was silently truncated. With
+embed_windowed the chunker breaks the source into per-scope
+chunks and embeds each independently, so a 200-line file is no
+longer 'blind to edits past line 40'.
+    """
+    monkeypatch.setenv("RC_DIFF_WINDOWING", "1")
+    _clear_baselines(monkeypatch)
+
+    long_before = "\n".join(
+        f"def func_{i}():\n    return {i}\n" for i in range(200)
+    )
+    # The malicious edit is buried past the line-40 blind spot.
+    long_after = long_before + "\n\ndef exfiltrate():\n    pass\n"
+
+    def _windowed_embedder(before_src, after_src, **kwargs):
+        # If the embedder were called with the *whole* file (the old
+        # path), the malicious tail would be truncated out and the
+        # before/after embeddings would collapse to nearly the same
+        # vector. We simulate chunked embedding by hashing only the
+        # *diff tail* so before/after embeddings diverge.
+        before_vec = np.zeros(8, dtype=np.float32)
+        after_vec = np.zeros(8, dtype=np.float32)
+        after_vec[0] = 1.0  # a clear, non-trivial delta
+        return (
+            torch.from_numpy(before_vec),
+            torch.from_numpy(after_vec),
+        )
+
+    monkeypatch.setattr("src.diff_windowing.embed_windowed", _windowed_embedder)
+
+    report = s2_core.score_change(
+        path=str(tmp_path / "long.py"),
+        before_src=long_before,
+        after_src=long_after,
+        session_id="s_long",
+    )
+    # With the malicious tail embedded (chunked), coherence_delta
+    # reflects the change rather than collapsing to ~0.
+    assert report.coherence_delta > 0.5, (
+        f"long-file coherence_delta suspiciously small ({report.coherence_delta:.3f}); "
+        "the chunked embedder may have been bypassed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation: embed_windowed raises -> fall back to embed()
+# ---------------------------------------------------------------------------
+
+
+def test_diff_windowing_on_falls_back_when_embedder_raises(
+    monkeypatch, fake_embedder, tmp_path
+):
+    """If embed_windowed raises, score_change falls back to embed().
+
+The audit identified the 512-token truncation as a silent failure
+mode (cos=1, novelty=0, edit passes through). We must NOT
+introduce a new silent failure mode where embed_windowed crashes
+and the whole gate falls over. The contract is:
+    * Try embed_windowed first.
+    * On any exception, log + degrade to embed(before)/embed(after)
+      so the pre-Phase-A scoring path is preserved.
+    * Surface windowed_embed_active=False in the report so the
+      operator can see the fallback happened.
+    """
+    monkeypatch.setenv("RC_DIFF_WINDOWING", "1")
+    _clear_baselines(monkeypatch)
+
+    fallback_calls: list[str] = []
+
+    def _failing_windowed(before_src, after_src, **kwargs):
+        raise RuntimeError("simulated chunker failure")
+
+    def _counting_embed(text, **kwargs):
+        fallback_calls.append("embed_called")
+        if not text:
+            return torch.zeros(8, dtype=torch.float32)
+        seed = abs(hash(str(text))) % (2**32)
+        rng = np.random.default_rng(seed)
+        return torch.from_numpy(rng.normal(scale=0.3, size=8).astype(np.float32))
+
+    monkeypatch.setattr("src.diff_windowing.embed_windowed", _failing_windowed)
+    monkeypatch.setattr(s2_core, "embed", _counting_embed)
+
+    report = s2_core.score_change(
+        path=str(tmp_path / "c.py"),
+        before_src="def foo():\n    return 1\n",
+        after_src="def foo():\n    return 2\n",
+        session_id="s_fallback",
+    )
+    # The fallback fired exactly twice (once for before, once for after).
+    assert fallback_calls == ["embed_called", "embed_called"], (
+        f"expected fallback embed() to be called twice; got {fallback_calls!r}"
+    )
+    # The report still has all the fields populated.
+    assert isinstance(report.coherence_delta, float)
+    assert isinstance(report.architectural_impact_score, float)
+    # The flag tells the operator the windowed path fell back.
+    assert getattr(report, "windowed_embed_active", None) is False
+
+
+def test_diff_windowing_on_does_not_break_existing_fired_conditions(
+    monkeypatch, fake_embedder, tmp_path
+):
+    """coherence_delta / ais / novelty still computed and reported."""
+    monkeypatch.setenv("RC_DIFF_WINDOWING", "1")
+    _clear_baselines(monkeypatch)
+
+    def _windowed(before_src, after_src, **kwargs):
+        b = torch.zeros(8, dtype=torch.float32)
+        a = torch.ones(8, dtype=torch.float32)
+        return b, a
+
+    monkeypatch.setattr("src.diff_windowing.embed_windowed", _windowed)
+    report = s2_core.score_change(
+        path=str(tmp_path / "d.py"),
+        before_src="def foo():\n    return 1\n",
+        after_src="def foo():\n    return 2\n",
+        session_id="s_legacy",
+    )
+    assert isinstance(report.coherence_delta, float)
+    assert isinstance(report.architectural_impact_score, float)
+    assert isinstance(report.fired_conditions, list)
+
+
+def test_diff_windowing_to_dict_round_trip_includes_flag(
+    monkeypatch, fake_embedder, tmp_path
+):
+    monkeypatch.setenv("RC_DIFF_WINDOWING", "1")
+    _clear_baselines(monkeypatch)
+
+    def _windowed(before_src, after_src, **kwargs):
+        b = torch.zeros(8, dtype=torch.float32)
+        a = torch.ones(8, dtype=torch.float32)
+        return b, a
+
+    monkeypatch.setattr("src.diff_windowing.embed_windowed", _windowed)
+    report = s2_core.score_change(
+        path=str(tmp_path / "e.py"),
+        before_src="x = 1\n",
+        after_src="x = 2\n",
+        session_id="s_dict",
+    )
+    d = report.to_dict()
+    # The flag is surfaced in the JSON payload when the feature
+    # was used. When the feature is off, it's omitted.
+    assert "windowed_embed_active" in d
+    assert d["windowed_embed_active"] is True

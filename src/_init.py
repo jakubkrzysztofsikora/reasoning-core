@@ -111,15 +111,27 @@ def install_envrc(target: Path, manifest: Path, substitutions: dict[str, str],
     # `embedder_backend` so `rc upgrade` and `rc doctor` can re-verify.
     try:
         from src import embedder_tier  # noqa: PLC0415 -- late import to keep _init.py light
+        from src.ssm_backbone import backend_loadability_probe
         requested = os.environ.get("RC_EMBEDDER", "").strip() or None
-        decision = embedder_tier.decide(requested_backend=requested)
+        decision = embedder_tier.decide(
+            requested_backend=requested,
+            loadability_probe=backend_loadability_probe,
+        )
+        # BLOCKER #2 fix: if the auto-pick is unloadable on this host
+        # (e.g. Mamba-3 registered but no Mamba3* transformers class),
+        # use ``safe_backend_for_envrc`` rather than ``decision.backend``
+        # so we do NOT brick the gate with a backend that the loader
+        # will refuse. The TierDecision already surfaces the unloadable
+        # state in ``reason``; we additionally raise an explicit warning
+        # so the operator sees it in ``rc doctor``.
+        chosen = decision.safe_backend_for_envrc or decision.backend
         tier_line = (
             f"\\n# Auto-picked by embedder_tier on {os.environ.get('HOSTNAME', 'localhost')}: "
-            f"tier={decision.tier} backend={decision.backend} "
+            f"tier={decision.tier} backend={chosen} "
             f"working_set={decision.estimated_working_set_gb}GiB "
             f"available_ram={decision.available_ram_gb}GiB. "
             f"Reason: {decision.reason}\\n"
-            f"export RC_EMBEDDER={decision.backend}\\n"
+            f"export RC_EMBEDDER={chosen}\\n"
         )
         # If the operator explicitly pinned a backend that doesn't fit,
         # surface a warning (rc_cli is responsible for refusing to start
@@ -131,9 +143,16 @@ def install_envrc(target: Path, manifest: Path, substitutions: dict[str, str],
                 f"available RAM={decision.available_ram_gb:.2f} GiB. "
                 f"Set RC_ALLOW_OVERSIZED_BACKBONE=1 to override."
             )
+        # BLOCKER #2: refuse to write an unloadable operator pin to .envrc.
+        if decision.pinned_unloadable and requested:
+            result.warned.append(
+                f"operator-pinned backend {decision.backend!r} is NOT loadable on this host. "
+                f"Writing fallback {chosen!r} to .envrc instead. "
+                f"Unset RC_EMBEDDER or pick a loadable backend."
+            )
         if decision.is_oversized:
             result.warned.append(
-                f"embedder_tier picked {decision.backend!r} for tier={decision.tier} but "
+                f"embedder_tier picked {chosen!r} for tier={decision.tier} but "
                 f"only {decision.fit_margin_gb:.1f} GiB of headroom remains. "
                 f"Sidecar may swap if host load rises."
             )
