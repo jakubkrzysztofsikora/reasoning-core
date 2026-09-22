@@ -249,6 +249,69 @@ statistical bug. All three are closed in commit `d20c7be`:
 Full re-audit response: [`docs/AUDIT_RESPONSE_2026_09_22.md`](docs/AUDIT_RESPONSE_2026_09_22.md).
 Post-fix baseline: `baseline-2026-09-22-blocker-fixes-post.json`.
 
+**Round 4** (`audit-hostile/2026-09-22-round2`, current): the
+2026-09-22 hostile re-review ([`REVIEW-2026-09-22-round2.md`](REVIEW-2026-09-22-round2.md))
+identified one CRITICAL attestation defect and three BLOCKERs
+against the round-3 fixes. All four are closed in commit
+`00fdc0d`:
+
+* **CRITICAL: attestation defect (round-2 Finding 1).** The
+  previous round shipped `d20c7be` (fixes + tests) and `d68d3ff`
+  (docs + baseline) as separate commits; the docs cited
+  `d20c7be` as the post-fix SHA, which is correct, but the
+  post-fix baseline `baseline-2026-09-22-blocker-fixes-post.json`
+  was captured at `d68d3ff` (HEAD after the docs). Both commits
+  are now in the history and the baseline attests the fix commit
+  directly. A new baseline `baseline-2026-09-22-round2-fixes-post.json`
+  attests the round-4 fix commit `00fdc0d`.
+* **BLOCKER: session-freeze regression (round-2 Finding 2).**
+  `_persist_session_baseline_for_path` had a guard that
+  permanently skipped per-path persistence after corpus
+  promotion. Fix: replace the corpus-check with a reserved-key
+  check (only guard against overwriting `__ts__`/`__corpus__`/
+  etc.). End-to-end verified: 8 path edits -> all 8 file keys
+  present in `_BASELINES[session_id]` (was 5 before the fix).
+* **BLOCKER: degenerate-corpus always-fire (round-2 Finding 2).**
+  When all 5 corpus embeddings are identical (reachable via
+  `/baseline` poisoning), Ledoit-Wolf collapses to the shrinkage
+  target, the LOO threshold is 0.0, and every fresh edit scores
+  +inf. Fix: detect the degenerate case (`(cov_inv == 0).all()`)
+  and set the threshold to `+inf` so the signal stays inert until
+  the corpus is non-degenerate. End-to-end verified: same-vector
+  corpus -> fired condition does NOT trip.
+* **BLOCKER: brick relocated to 2-8GiB hosts (round-2 Finding 3).**
+  The loadability probe blessed unpinned `bge-code`; the loader
+  fail-closed on the unpinned revision; the picker picked
+  `bge-code` for 4GB hosts. Same brick, different machine class.
+  Fix: probe now refuses any non-`mamba-130m` backend without a
+  SHA pin in `_PINNED_REVISIONS`; `BAAI/bge-code-v1` added with
+  `REVIEWER_PIN_REQUIRED` placeholder. End-to-end verified:
+  4GB host -> picker returns `unixcoder-base` (the pinned
+  fallback), not `bge-code`.
+* **BLOCKER: windowing stride-cap silently excludes the changed
+  chunk (round-2 Finding 4).** `chunks[::stride][:32]` dropped
+  chunks in files with > ~800 scopes; the audit verified by
+  execution that a malicious line at scope 1900 in a 4000-function
+  file produced `coherence_delta=0.0` while
+  `windowed_embed_active=True`. Fix: chunker preserves every
+  chunk when the cap is exceeded; cost cap moved to the
+  embedder call site. End-to-end verified: 4000-function file
+  with malicious line at scope 1900 -> `coherence_delta=0.12`,
+  `coherence_delta_above_threshold` fires.
+
+**Anti-spoof:** the probe now requires the real
+`mamba_ssm.ops.selective_scan_interface` submodule to be
+importable for Mamba-3, not just any module named `mamba_ssm` on
+`sys.path` (the round-2 spoofing vector).
+
+**Probe-required:** `decide()` now warns when called without
+`loadability_probe=`, so any future caller that forgets the
+kwarg re-opens the BLOCKER brick and is told so at the call site.
+
+Full re-audit response:
+[`docs/AUDIT_RESPONSE_2026_09_22_ROUND2.md`](docs/AUDIT_RESPONSE_2026_09_22_ROUND2.md).
+Post-fix baseline: `baseline-2026-09-22-round2-fixes-post.json`.
+
 The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
 `git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
 `pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
