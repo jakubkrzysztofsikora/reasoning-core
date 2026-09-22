@@ -213,6 +213,42 @@ claim. The pre-registered iter-2 acceptance criterion (>=7/8 wins with
 paired bootstrap 95% CI excluding 0 on impl quality) requires additional
 n>=3 evidence before any directional claim can be made.
 
+**Round 3** (`audit-hostile/2026-09-22-hostile`, current): the
+2026-09-22 hostile re-review ([`REVIEW-2026-09-22.md`](REVIEW-2026-09-22.md))
+identified two BLOCKERs against the round-3 work and one MAJOR
+statistical bug. All three are closed in commit `d20c7be`:
+
+* **BLOCKER #1: `mahal_anomaly` was a fixture-only feature.**
+  The 22 previous Phase C tests seeded `__mahal_*__` keys directly into
+  `_BASELINES`, but no production code path populated them. The fix:
+  `_persist_session_baseline_for_path` now folds accumulated per-path
+  embeddings into a session-level `__corpus__` when the per-session
+  file count crosses `RC_MAHAL_CORPUS_MIN` (default 5), then runs
+  Ledoit-Wolf shrinkage + a leave-one-out FPR threshold. End-to-end
+  verified: 5 path edits -> `__corpus__` `(5, 768)` -> `__mahal_threshold__`
+  ~7.16 -> `ImpactReport.mahal_anomaly` ~1.32M -> fired condition
+  `mahal_anomaly_above_threshold` fires correctly.
+* **BLOCKER #2: `rc init` bricked ≥32GiB hosts.** The picker returned
+  `mamba3-siso-1.5b` on a 40GB host but the loader refused fallback for
+  operator-pinned backends, so every `/score` 503'd. The fix:
+  `src/ssm_backbone.backend_loadability_probe()` returns False for any
+  `mamba3-*` backend unless `mamba-ssm>=2.0.0` is importable; `decide()`
+  walks the tier matrix past unloadable candidates; `install_envrc()`
+  writes `safe_backend_for_envrc` rather than `backend` when the
+  auto-pick is unloadable. End-to-end verified: simulated 40GB host,
+  `rc init` writes `RC_EMBEDDER=mamba-130m` with a clear "not loadable
+  on this host" reason.
+* **Finding 3 (MAJOR): in-sample FPR over-fits at small n.** The
+  `threshold_for_fpr()` quantile was calibrated and evaluated on the
+  same corpus; at n=5 the realised FPR was 0.20 vs the nominal 0.05.
+  The fix: new `loo_threshold_for_fpr()` does leave-one-out calibration;
+  the production path uses it; `threshold_for_fpr` is retained as the
+  in-sample estimator for tests that want it. 5 new tests, 20/20
+  scoring_signals tests pass.
+
+Full re-audit response: [`docs/AUDIT_RESPONSE_2026_09_22.md`](docs/AUDIT_RESPONSE_2026_09_22.md).
+Post-fix baseline: `baseline-2026-09-22-blocker-fixes-post.json`.
+
 The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
 `git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
 `pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
@@ -244,20 +280,33 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
   (Python, JS, TS, C#) with a 64-line stride line-window fallback.
   20 unit tests in `tests/test_diff_windowing.py` cover the chunker,
   diff-weight normalisation, non-overlapping chunk invariant, and L2
-  determinism. The consumer swap into `s2_core.py:953-983` is staged
-  for the next refactor PR to keep this PR tight against the
-  AGENTS.md "deterministic-only hard-block" rule.
+  determinism. The consumer swap into `s2_core.py:953-983` shipped
+  in commit `d20c7be` under the `RC_DIFF_WINDOWING=1` flag (default
+  off). 6 integration tests in `tests/test_diff_windowing_wiring.py`
+  cover default-off no-op, on-path uses windowed embedder, long-file
+  blindness fix, graceful fallback when chunker raises, fired-
+  condition co-existence, JSON round-trip.
 - **Auto-sizing on `rc init`.** `src/embedder_tier.py` detects the
   host's available RAM and disk and picks the largest variant that
   fits. The tier matrix (2026-09-21) is:
 
-  | Tier    | RAM window    | Backend chosen               | Notes |
-  |---------|---------------|------------------------------|-------|
-  | xlarge  | ≥ 32 GiB      | `mamba3-siso-1.5b`           | Opt-in MIMO if available |
-  | large   | 16-32 GiB     | `mamba3-siso-1.5b` or `-893m` | MIMO if RAM allows |
-  | medium  | 8-16 GiB      | `mamba3-siso-893m`           | Best Mamba-3 fit |
+  | Tier    | RAM window    | Backend chosen (loadable only) | Notes |
+  |---------|---------------|-------------------------------|-------|
+  | xlarge  | ≥ 32 GiB      | `mamba3-siso-1.5b` if loadable, else legacy | Refused when Mamba-3 kernel missing (BLOCKER #2 fix) |
+  | large   | 16-32 GiB     | `mamba3-siso-1.5b` or `-893m` if loadable | MIMO if RAM allows |
+  | medium  | 8-16 GiB      | `mamba3-siso-893m` if loadable, else `unixcoder-base` | Best Mamba-3 fit |
   | small   | 2-8 GiB       | `bge-code` or `unixcoder-base` | Mamba-3 won't fit |
   | fallback| < 2 GiB       | `mamba-130m` (legacy default) | Last resort |
+
+  **Loadability probe (BLOCKER #2 fix, 2026-09-22):** every entry above
+  is now gated by `src.ssm_backbone.backend_loadability_probe()`, which
+  returns False for any `mamba3-*` backend unless `mamba-ssm>=2.0.0`
+  is importable on this host. When the auto-pick is unloadable,
+  `decide()` walks the tier matrix down to the next loadable
+  candidate; when no Mamba-3 variant loads, the safe fallback is
+  `mamba-130m` (the legacy default), NOT an unloadable backend that
+  would brick the gate. The probe is pure syntactic + import check;
+  no I/O, no HF downloads.
 
   Operators can override the auto-pick via `export RC_EMBEDDER=<backend>`
   before `direnv reload`. Pre-reg: `tests/test_embedder_tier.py`
@@ -274,20 +323,29 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
   `RC_SCORING_V3=1` (default off, opt-in) and a benign corpus exists
   for the session. New fired condition `mahal_anomaly_above_threshold`
   trips when the squared Mahalanobis distance exceeds the per-session
-  threshold at FPR=0.05. The algebraic-redundancy of AIS / CD /
-  Novelty is preserved (the existing 3-way redundancy is *not* changed,
-  per AGENTS.md: deterministic checks are the only hard block) but the
-  new signal is independent by construction. 22 new tests in
+  threshold at FPR=0.05 (production uses the leave-one-out
+  `loo_threshold_for_fpr`; see BLOCKER-fix commit `d20c7be`). The
+  algebraic-redundancy of AIS / CD / Novelty is preserved (the
+  existing 3-way redundancy is *not* changed, per AGENTS.md:
+  deterministic checks are the only hard block) but the new signal
+  is independent by construction. 20 unit tests in
   [`tests/test_scoring_signals.py`](tests/test_scoring_signals.py)
-  and [`tests/test_scoring_v3_wiring.py`](tests/test_scoring_v3_wiring.py)
+  (15 initial + 5 LOO), 7 wiring tests in
+  [`tests/test_scoring_v3_wiring.py`](tests/test_scoring_v3_wiring.py),
+  and 4 end-to-end production-path tests in
+  [`tests/test_mahal_production_wiring.py`](tests/test_mahal_production_wiring.py)
   cover the math (centroid symmetry, PSD inverse, distance scaling,
-  FPR quantile match, OOD detection, determinism) and the end-to-end
-  wiring (default-off no-op, on-path with corpus, no-corpus stays
-  None, fired-condition co-exists with the existing checks, JSON
-  round-trip). Post-fix manifest:
-  `baseline-2026-09-22-scoring-v3-post.json`. The k-NN density and
-  regression-head signals from the memo are deferred as separate
-  workstreams (research notes preserved at
+  FPR quantile match, OOD detection, determinism, LOO honesty), the
+  fixture-path wiring (default-off no-op, on-path with corpus, no-
+  corpus stays None, fired-condition co-exists, JSON round-trip),
+  AND the production path (drives 5 real `score_change` edits
+  through the unmonkeypatched stack and asserts the corpus /
+  threshold / `ImpactReport.mahal_anomaly` are populated). Post-
+  fix manifests `baseline-2026-09-22-scoring-v3-post.json` and
+  `baseline-2026-09-22-blocker-fixes-post.json` both reflect the
+  shipped state. The k-NN density and regression-head signals from
+  the memo are deferred as separate workstreams (research notes
+  preserved at
   `thoughts/shared/research/2026-09-19-audit-deferred-scoring-v3.md`).
 
 Pre-baselines for the three research tracks are captured as
