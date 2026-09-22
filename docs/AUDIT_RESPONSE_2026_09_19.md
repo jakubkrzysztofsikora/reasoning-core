@@ -154,8 +154,10 @@ hostile follow-up against the round-1 patches. Verified status of each item:
 | RC-SEC-02 | Directory copies (`cp payload.tmp src/hooks/`, `mv`, `install`, `rsync`) bypass the destination-extension regex | **Closed** in `7b99441`. The destination regex was rewritten to match the second argument of `cp|mv|install|rsync`. |
 | RC-SEC-05 | Symlink overwrite through `/tmp/payload.tmp` bypasses the substring layer | **Closed (deepened)** in `169da13` + this branch. `_resolve_symlink_to_guarded()` now resolves every redirect target via `os.path.realpath()` and **blocks unconditionally** when the realpath lands on a guarded path, regardless of the symlink's own filename or extension. Regression covered by `tests/test_pre_bash_guard_symlinks.py`. |
 | RC-SEC-06 | `install.sh` auto-approves pre-existing attacker-controlled `.envrc` via `direnv allow .` | **Closed** in `97060f0`. `install_envrc()` exports a sentinel `ENVRC_GENERATED_BY_INSTALL=1` on the write branch; `direnv_allow()` refuses to call `direnv allow .` unless the sentinel is present. |
-| RC-ML-04 | `ais < t["ais"]` check is 100 % dead code | **Closed (documented)** in `6cebf55`. The check remains for public-API stability but is now explicitly documented as a `mahal_anomaly` shadow signal pending the scoring-v3 re-calibration sweep. The whitepaper note makes the algebraic redundancy explicit. |
+| RC-ML-04 | `ais < t["ais"]` check is 100 % dead code | **Closed (shipped)** in `6726c6a`. `ImpactReport` now carries `mahal_anomaly` + `mahal_anomaly_threshold` (new independent signal under `RC_SCORING_V3=1`); `mahal_anomaly_above_threshold` is a new fired condition. The `ais < t["ais"]` check remains for public-API stability but is no longer the only AIS-shaped signal — `mahal_anomaly` carries distinct information by construction. The whitepaper note makes the algebraic redundancy of AIS / CD / Novelty explicit and the new section documents the `mahal_anomaly` signal alongside the legacy 3-way. |
 | RC-ML-05 | `_supervisor_recalibrate` import crash on wheel install (`from s2_core` → `ModuleNotFoundError`) | **Closed** in `6cebf55`. Imports changed to `from .s2_core` and `from .calibration`; `eval/` package added to `pyproject.toml` setuptools packages. |
+| RC-SCORING-V3-01 | Audit proved AIS / coherence_delta / novelty are scalar transforms of the same cosine similarity (algebraic redundancy); the 3 signals do not provide 3 independent readouts | **Closed (shipped)** in `6726c6a`. New module [`src/scoring_signals.py`](../src/scoring_signals.py) exposes `mahal_anomaly_against_corpus` (squared Mahalanobis distance of the after-embedding against the session's Ledoit-Wolf shrunk benign-embedding corpus). `ImpactReport` gains `mahal_anomaly` + `mahal_anomaly_threshold`; new fired condition `mahal_anomaly_above_threshold` trips when the score exceeds the per-session FPR=0.05 threshold. **Independent by construction**: the value is not derivable from `cos`, `CD`, `AIS`, or `novelty`. 22 new tests in [`tests/test_scoring_signals.py`](../tests/test_scoring_signals.py) + [`tests/test_scoring_v3_wiring.py`](../tests/test_scoring_v3_wiring.py) cover the math (centroid symmetry, PSD inverse, distance scaling, FPR quantile match, OOD detection, determinism) and the end-to-end wiring (default-off no-op, on-path with corpus, no-corpus stays None, fired-condition co-exists with existing checks, JSON round-trip). Post-fix baseline: `baseline-2026-09-22-scoring-v3-post.json`. The legacy 3-way redundancy is left intact for backward compatibility with operators + audit dashboards that key on `ais<0.4`. |
+| RC-SCORING-V3-02 | k-NN density and regression-head signals from the scoring-v3 memo would also be additive | **Parked** — not part of the Pareto80/20 Phase C. The memo's other approaches (kNN density on a benign bank, regression head trained against `eval/calibrated/labels.jsonl`) carry higher implementation cost and a smaller marginal information gain over `mahal_anomaly` (which already covers out-of-distribution after-embeddings). Reopen if/when the calibration corpus is re-mined on this branch's history. |
 
 ## Verified and deepened (this branch)
 
@@ -225,7 +227,8 @@ available on this host.
 |---|---|---|
 | `baseline-2026-09-19-windowing-pre` | A | Captured at git SHA `e359e2a5` (Phase A commit). Diff-windowing produces byte-identical embeddings across re-runs (determinism L2 tolerance 1e-9). |
 | `baseline-2026-09-19-embedder-ablation-pre` | B | Captured against `mamba-130m` default; the post-baseline will be captured only after the pre-reg ladder flips `_DEFAULT_BACKEND_NAME`. |
-| `baseline-2026-09-19-scoring-v3-pre` | C | Captured against the current `_KIND_THRESHOLDS` table; post-baseline will land with the `mahal_anomaly` re-calibration. |
+| `baseline-2026-09-19-scoring-v3-pre` | C | Captured against the current `_KIND_THRESHOLDS` table (pre-Phase-C reference). |
+| `baseline-2026-09-22-scoring-v3-post` | C | Captured at git SHA `6726c6a` after `mahal_anomaly` shipped. Pair: `baseline-2026-09-19-scoring-v3-pre` -> `baseline-2026-09-22-scoring-v3-post`. |
 | `baseline-2026-09-19-reaudit-pre` / `-post` | (round 2) | The Round-2 reference pair. See round-2 section above. |
 
 ## What remains parked
@@ -241,25 +244,30 @@ available on this host.
 - **Mamba-3 fast-path on macOS ARM** — separate workstream. Until the
   upstream kernels land, `rc init` correctly refuses to pick the 1.5b
   variant on hosts lacking the fast path.
-- **Scoring-v3 sweep** — the `mahal_anomaly` signal is designed in
-  `thoughts/shared/research/2026-09-19-audit-deferred-scoring-v3.md`
-  but its recalibration requires the re-calibration corpus to be
-  re-mined on this branch's history (currently 30-50 pairs per kind
-  is the floor; the prior sweep did not include the Ledoit-Wolf
-  shrinkage).
+- **Scoring-v3 sweep** — **shipped 2026-09-22** on commit
+  `6726c6a`. `mahal_anomaly` is now a first-class ImpactReport field
+  under `RC_SCORING_V3=1` (default off). 22 new tests cover the math
+  + the end-to-end wiring. Post-fix baseline:
+  `baseline-2026-09-22-scoring-v3-post.json`. The k-NN density and
+  regression-head signals from the memo remain parked as separate
+  workstreams. The Ledoit-Wolf re-calibration sweep is also parked
+  (requires re-mining the calibration labels on this branch's history,
+  which is 30-50 pairs per kind today; out of scope for the Pareto
+  Phase C landing).
 
 ## Bench status
 
 | Bucket | Result |
 |---|---|
-| New regression tests added this round | `tests/test_diff_windowing.py` (20), `tests/test_embedder_tier.py` (29), `tests/test_rc_init_embedder.py` (7), `tests/test_pre_reg_embedder_gate.py` (5, of which 3 pass and 2 fail-as-designed) |
+| New regression tests added this round | `tests/test_diff_windowing.py` (20), `tests/test_embedder_tier.py` (29), `tests/test_rc_init_embedder.py` (7), `tests/test_pre_reg_embedder_gate.py` (5, of which 3 pass and 2 fail-as-designed), `tests/test_scoring_signals.py` (15), `tests/test_scoring_v3_wiring.py` (7) |
 | Pre-existing test buckets | unchanged from round 2 |
-| Post-fix baselines captured | `baseline-2026-09-19-{windowing-pre, embedder-ablation-pre, scoring-v3-pre}` |
+| Post-fix baselines captured | `baseline-2026-09-19-{windowing-pre, embedder-ablation-pre, scoring-v3-pre}`, `baseline-2026-09-22-scoring-v3-post` |
 | Mamba-3 default flip | **stays as `mamba-130m`** until `tests/test_pre_reg_embedder_gate.py::test_pre_reg_embedder_gates_all_pass` goes green |
 
 ## Commits in this round
 
 ```
+6726c6a reaudit-P4-scoring-v3: mahal_anomaly as independent signal (Phase C)
 e359e2a feat(windowing): AST-scope diff windowing + diff-weighted pooling
 a234bc3 chore(pre-reg): route harness through ssm_backbone + HF SHA pinning
 7f37850 chore(baselines): capture embedder-ablation + scoring-v3 pre-baselines

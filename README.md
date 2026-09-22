@@ -202,8 +202,10 @@ rejected.
 offload (RC-SYS-02), per-session file cap (RC-SYS-03), symlink-resolved
 guarded-path block (RC-SEC-05 -- the resolver now blocks unconditionally on
 realpath hits, not gated on the source-extension regex), `direnv allow .`
-sentinel (RC-SEC-06), and the whitepaper + headline-numbers retraction of
-the 8-cell set (RC-ML-02 / RC-ML-03). The 8-cell table in `BENCHMARKS.md`
+sentinel (RC-SEC-06), the whitepaper + headline-numbers retraction of the 8-cell set
+(RC-ML-02 / RC-ML-03), and the Phase C `mahal_anomaly` independent
+signal (RC-ML-04 closed by adding a non-redundant signal alongside
+the dead-but-back-compat `ais<0.4` check). The 8-cell table in `BENCHMARKS.md`
 and `whitepaper/sections/results.tex` is now boxed as
 `RETRACTED 2026-09-19`; the surviving-5 cells yield an exact two-sided
 sign-test p-value of **1.00 (coin flip)** and we make no directional product
@@ -263,9 +265,30 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
   warning paths. The auto-pick decision is recorded in the immutable
   baseline manifest (`embedder_tier`, `embedder_backend`,
   `embedder_working_set_gb`).
-- **Scoring-v3 re-calibration sweep.** Reconcile the algebraic redundancy
-  of AIS / CD / Novelty; repurpose the `ais < t["ais"]` check as a
-  `mahal_anomaly` shadow signal.
+- **Scoring-v3 (Phase C, shipped 2026-09-22).** New module
+  [`src/scoring_signals.py`](src/scoring_signals.py) exposes
+  `fit_benign_corpus`, `mahal_anomaly_against_corpus`, and
+  `threshold_for_fpr` -- pure-numpy wrappers over the existing
+  `src.calibration._ledoit_wolf_cov` + `_mahalanobis_sq`. The new
+  `ImpactReport.mahal_anomaly` field is computed when
+  `RC_SCORING_V3=1` (default off, opt-in) and a benign corpus exists
+  for the session. New fired condition `mahal_anomaly_above_threshold`
+  trips when the squared Mahalanobis distance exceeds the per-session
+  threshold at FPR=0.05. The algebraic-redundancy of AIS / CD /
+  Novelty is preserved (the existing 3-way redundancy is *not* changed,
+  per AGENTS.md: deterministic checks are the only hard block) but the
+  new signal is independent by construction. 22 new tests in
+  [`tests/test_scoring_signals.py`](tests/test_scoring_signals.py)
+  and [`tests/test_scoring_v3_wiring.py`](tests/test_scoring_v3_wiring.py)
+  cover the math (centroid symmetry, PSD inverse, distance scaling,
+  FPR quantile match, OOD detection, determinism) and the end-to-end
+  wiring (default-off no-op, on-path with corpus, no-corpus stays
+  None, fired-condition co-exists with the existing checks, JSON
+  round-trip). Post-fix manifest:
+  `baseline-2026-09-22-scoring-v3-post.json`. The k-NN density and
+  regression-head signals from the memo are deferred as separate
+  workstreams (research notes preserved at
+  `thoughts/shared/research/2026-09-19-audit-deferred-scoring-v3.md`).
 
 Pre-baselines for the three research tracks are captured as
 `baseline-2026-09-19-{embedder-ablation-pre, windowing-pre, scoring-v3-pre}.json`.
