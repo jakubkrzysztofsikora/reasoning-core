@@ -312,6 +312,32 @@ Full re-audit response:
 [`docs/AUDIT_RESPONSE_2026_09_22_ROUND2.md`](docs/AUDIT_RESPONSE_2026_09_22_ROUND2.md).
 Post-fix baseline: `baseline-2026-09-22-round2-fixes-post.json`.
 
+**Round 5** (`audit-hostile/2026-09-23-round5-security`, current):
+the round-2 review's own audit found the security layer untouched
+and 0/13 findings re-verified. Per the Pareto 80/20 directive,
+this commit closes the cheap, high-frequency subset of those
+findings plus the arithmetic-error doc fix the review flagged:
+
+* **Security (6/13 closed):** `python3 src/rc_cli.py bypass-next`,
+  `.envrc.local` unguarded writes (shell + Python + Node),
+  `git stash pop / cherry-pick / revert / am / pull / fast-import`,
+  `node -E` (uppercase), and `pkill -STOP -f reasoning-core-sidecar`.
+  End-to-end verified: 11/11 attack vectors now blocked, 3/3
+  benign commands still allowed. The remaining 7 security
+  findings (audit log chain rewritability, symlink TOCTOU races,
+  etc.) are documented as known limits in `pre_bash_guard.py` --
+  they require filesystem-level mitigations, not regex additions.
+* **Doc arithmetic (Finding 7):** the surviving-5 plan-quality
+  mean was published as `2.20 (-35.3%)` in `BENCHMARKS.md` and
+  `docs/whitepaper/sections/results.tex`, but the doc's own rows
+  recompute to `2.60 (-23.5%)`. Corrected in both documents;
+  regression tests prevent reintroduction.
+* **Tests:** `tests/test_pre_bash_guard_round5.py` adds 13
+  regression tests (11 regex + 2 doc); the pre-existing pre-bash
+  suite is now 83 tests (was 70). All green.
+
+Post-fix baseline: `baseline-2026-09-23-round5-security-post.json`.
+
 The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
 `git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
 `pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
