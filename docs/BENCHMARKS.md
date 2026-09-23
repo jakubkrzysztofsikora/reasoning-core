@@ -128,7 +128,7 @@ retracted rows and are withdrawn.
 | **Wall clock / task** | withdrawn | withdrawn | — | — |
 | **Tokens / task (main)** | 65 820 | 46 031 | −19 789 | **−30.1%** |
 | Impl quality (BARS 1–5) | 3.20 | 2.80 | −0.40 | −12.5% |
-| Plan quality (BARS 1–5) | 3.40 | 2.20 | −1.20 | −35.3% |
+| Plan quality (BARS 1–5) | 3.40 | 2.60 | −0.80 | −23.5% |
 | **Task wins** (lexicographic rule) | 2 / 5 | 3 / 5 | — | — |
 | **Task wins** (with ≥ 1.0 BARS gap requirement) | 2 / 5 | 2 / 5 | — | — |
 | **Sign-test p-value (exact binomial, one-sided)** | — | **p = 0.50** | — | — |

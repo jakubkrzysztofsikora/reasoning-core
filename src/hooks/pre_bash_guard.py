@@ -61,6 +61,29 @@ GUARDED_PROCESS_TOKENS = (
 )
 
 # Commands that we always reject as obvious bypass attempts.
+#
+# Round-5 known limits (NOT in scope for the regex set; documented
+# for honest disclosure):
+#
+# * APFS case-folding (macOS): ``.ENVRC.local`` and ``.EnvRc.LOCAL``
+#   are the same file on APFS (case-insensitive, case-preserving).
+#   The regex set is case-sensitive; APFS bypass is a known limit.
+#   Mitigation: enforce case in the filesystem, or use a HFS+/ext4
+#   mount for the guard-protected paths.
+# * Audit log chain: the audit log is append-only at the file level
+#   but the file itself is rewritable by anyone with write access
+#   to its parent directory. Out of scope for the regex set.
+# * Symlink races: the symlink-resolver uses ``os.path.realpath``
+#   at evaluation time; a TOCTOU between resolve and the actual
+#   write is a known limit. The string-level guard catches the
+#   common case (redirect into a symlink whose target resolves to
+#   a guarded path); atomic races are not closed by this layer.
+#
+# The regex set closes the high-frequency bypass vectors identified
+# in the 2026-09-22 hostile re-review (round-2 Finding 5 + the
+# round-5 follow-up). The known-limit list is the residual surface
+# that requires filesystem-level or OS-level mitigations.
+
 HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # pkill / kill / killall against our sidecar / mcp processes
     re.compile(r"\b(?:p?kill(?:all)?|launchctl\s+(?:unload|kill))\b.*\b(?:s2_core|mcp_reasoner|start-sidecar)\b"),
@@ -79,7 +102,20 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # shim and the underlying python invocation.
     re.compile(r"\brc\s+bypass-next\b"),
     re.compile(r"\bsrc\.rc_cli\b.*bypass-next\b"),
-    re.compile(r"kill_switches\.json"),
+    # Round-5 RC-SEC-PATH-FORM: the path-form ``python3 src/rc_cli.py
+    # bypass-next`` and ``python src/rc_cli.py bypass-next`` slip the
+    # above regex set. Match any python invocation that points at
+    # src/rc_cli.py followed by bypass-next on the same argv.
+    re.compile(r"\bpython\w*\s+[^|;&]*src/rc_cli\.py[^|;&]*\bbypass-next\b"),
+    re.compile(r"\bkill_switches\.json\b"),
+    # Round-5 RC-SEC-ENVRC-LOCAL: .envrc.local is the per-project
+    # downgrade channel (read by stop_reconcile.py). One append
+    # permanently downgrades the next session to warn-only. Block
+    # shell redirects and Python/Node writes to .envrc.local.
+    re.compile(r"(?:>|>>|tee\b)\s*[^|;&]*\.envrc\.local\b"),
+    re.compile(r"\b(?:echo|cat|printf|sed)\b[^|;&]*>\s*[^|;&]*\.envrc\.local\b"),
+    re.compile(r"\b(?:writeFileSync|writeFile|write_text|fwrite)\b[^|;&]*\.envrc\.local\b"),
+    re.compile(r"\bPath\(['\"]\\?\.?/?[^'\"]*\\?\.envrc\.local['\"]\)\.(?:write_text|write_bytes)"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
     # `git apply` always writes working-tree files from a patch. Reviewer-flagged
@@ -111,6 +147,26 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bgit\s+switch\b\s+[^|&;]+\b"),
     # `git merge <ref>` brings in changes from another branch.
     re.compile(r"\bgit\s+merge\b"),
+    # Round-5 RC-SEC-GIT-REWRITES: working-tree rewrite paths the
+    # previous regex set missed. Each one rewrites guarded files
+    # without going through git checkout <sha> -- so the SHA regex
+    # below never fires.
+    re.compile(r"\bgit\s+stash\s+pop\b"),
+    re.compile(r"\bgit\s+cherry-pick\b"),
+    re.compile(r"\bgit\s+revert\b"),
+    re.compile(r"\bgit\s+am\b"),
+    re.compile(r"\bgit\s+pull\b(?!\s+--rebase=merges?)"),
+    re.compile(r"\bgit\s+fast-import\b"),
+    # Round-5 RC-SEC-NODE-UPPERCASE: node -E (uppercase E) is
+    # the same as node -e but with extended regex; the existing
+    # regex only catches lowercase. Block both.
+    re.compile(r"\bnode\s+-E\b"),
+    # Round-5 RC-SEC-PKILL-FREEZE: pkill -STOP -f <process> is
+    # not a kill -- it's a freeze. The sidecar continues to exist
+    # (so S2_FAIL_CLOSED never trips) but no longer processes
+    # requests. Block any pkill/kill against the sidecar's process
+    # title regardless of signal.
+    re.compile(r"\b(?:p?kill(?:all)?|kill\s+-STOP)\b[^|;&]*\b(?:reasoning-core-sidecar|s2_core|mcp_reasoner|start-sidecar)\b"),
     # Reviewer-flagged (3-reviewer convergent on commit c2cc135):
     # bare `\bRC_*\s*=\s*\S` over-blocks heredoc bodies, doc generators,
     # and comments containing the literal string. Anchored on COMMAND
