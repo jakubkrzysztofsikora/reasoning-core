@@ -29,7 +29,7 @@ from src import scoring_signals
 def test_fit_benign_corpus_returns_centroid_and_inverse_covariance():
     rng = np.random.default_rng(0)
     embs = rng.normal(size=(40, 8))
-    mean, cov_inv = scoring_signals.fit_benign_corpus(embs)
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(embs)
     assert mean.shape == (8,)
     assert cov_inv.shape == (8, 8)
     np.testing.assert_allclose(mean, embs.mean(axis=0), atol=1e-9)
@@ -41,15 +41,15 @@ def test_fit_benign_corpus_returns_centroid_and_inverse_covariance():
 def test_fit_benign_corpus_is_deterministic_across_runs():
     rng = np.random.default_rng(0)
     embs = rng.normal(size=(40, 8))
-    mean_a, inv_a = scoring_signals.fit_benign_corpus(embs)
-    mean_b, inv_b = scoring_signals.fit_benign_corpus(embs)
+    mean_a, _cov_a, inv_a = scoring_signals.fit_benign_corpus(embs)
+    mean_b, _cov_b, inv_b = scoring_signals.fit_benign_corpus(embs)
     np.testing.assert_array_equal(mean_a, mean_b)
     np.testing.assert_array_equal(inv_a, inv_b)
 
 
 def test_fit_benign_corpus_handles_single_sample_via_shrinkage():
     embs = np.array([[0.1, 0.2, 0.3, 0.4]])
-    mean, cov_inv = scoring_signals.fit_benign_corpus(embs)
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(embs)
     assert mean.shape == (4,)
     assert cov_inv.shape == (4, 4)
     assert np.isfinite(cov_inv).all()
@@ -71,7 +71,7 @@ def test_fit_benign_corpus_rejects_1d_input():
 def test_mahal_anomaly_is_zero_at_centroid():
     rng = np.random.default_rng(1)
     embs = rng.normal(size=(50, 8))
-    mean, cov_inv = scoring_signals.fit_benign_corpus(embs)
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(embs)
     d = scoring_signals.mahal_anomaly_against_corpus(mean, mean, cov_inv)
     assert math.isclose(d, 0.0, abs_tol=1e-9)
 
@@ -79,7 +79,7 @@ def test_mahal_anomaly_is_zero_at_centroid():
 def test_mahal_anomaly_grows_with_distance_from_centroid():
     rng = np.random.default_rng(2)
     embs = rng.normal(size=(50, 8))
-    mean, cov_inv = scoring_signals.fit_benign_corpus(embs)
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(embs)
     near = mean + rng.normal(scale=0.1, size=8)
     far = mean + rng.normal(scale=5.0, size=8)
     d_near = scoring_signals.mahal_anomaly_against_corpus(near, mean, cov_inv)
@@ -92,7 +92,7 @@ def test_mahal_anomaly_grows_with_distance_from_centroid():
 def test_mahal_anomaly_is_non_negative_and_finite():
     rng = np.random.default_rng(3)
     embs = rng.normal(size=(30, 8))
-    mean, cov_inv = scoring_signals.fit_benign_corpus(embs)
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(embs)
     point = rng.normal(size=8) * 3.0
     d = scoring_signals.mahal_anomaly_against_corpus(point, mean, cov_inv)
     assert d >= 0.0
@@ -119,7 +119,7 @@ def test_mahal_anomaly_returns_inf_for_degenerate_zero_inverse():
 def test_threshold_for_fpr_target_is_quantile_of_benign_distances():
     rng = np.random.default_rng(4)
     embs = rng.normal(size=(200, 8))
-    mean, cov_inv = scoring_signals.fit_benign_corpus(embs)
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(embs)
     distances = np.array([
         scoring_signals.mahal_anomaly_against_corpus(emb, mean, cov_inv)
         for emb in embs
@@ -147,7 +147,7 @@ def test_threshold_for_fpr_rejects_out_of_range_fpr():
 def test_end_to_end_pipeline_detects_out_of_distribution_point():
     rng = np.random.default_rng(5)
     benign = rng.normal(loc=0.0, scale=1.0, size=(80, 16))
-    mean, cov_inv = scoring_signals.fit_benign_corpus(benign)
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(benign)
     distances = np.array([
         scoring_signals.mahal_anomaly_against_corpus(emb, mean, cov_inv)
         for emb in benign
@@ -163,8 +163,8 @@ def test_end_to_end_pipeline_detects_out_of_distribution_point():
 def test_end_to_end_pipeline_is_deterministic():
     rng = np.random.default_rng(6)
     benign = rng.normal(size=(60, 8))
-    a_mean, a_inv = scoring_signals.fit_benign_corpus(benign)
-    b_mean, b_inv = scoring_signals.fit_benign_corpus(benign)
+    a_mean, _a_cov, a_inv = scoring_signals.fit_benign_corpus(benign)
+    b_mean, _b_cov, b_inv = scoring_signals.fit_benign_corpus(benign)
     np.testing.assert_array_equal(a_mean, b_mean)
     np.testing.assert_array_equal(a_inv, b_inv)
     distances_a = np.array([
@@ -194,12 +194,10 @@ def test_loo_threshold_for_fpr_is_honester_than_in_sample():
     """LOO FPR is closer to the nominal 0.05 than in-sample at small n."""
     rng = np.random.default_rng(8)
     benign = rng.normal(scale=0.3, size=(5, 8))
+    mean, _cov, cov_inv = scoring_signals.fit_benign_corpus(benign)
     in_sample_thr = scoring_signals.threshold_for_fpr(
         np.array([
-            scoring_signals.mahal_anomaly_against_corpus(
-                e,
-                *scoring_signals.fit_benign_corpus(benign)
-            )
+            scoring_signals.mahal_anomaly_against_corpus(e, mean, cov_inv)
             for e in benign
         ]),
         fpr=0.05,

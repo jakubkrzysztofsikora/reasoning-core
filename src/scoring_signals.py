@@ -9,9 +9,10 @@ signal.
 
 We expose three primitives (all pure numpy, no sklearn, no torch):
 
-* ``fit_benign_corpus(embs)`` -- Ledoit-Wolf shrunk inverse covariance
-  over a benign-embedding corpus. Returns the centroid and the inverse
-  covariance.
+* ``fit_benign_corpus(embs)`` -- Ledoit-Wolf shrunk covariance over a
+  benign-embedding corpus. Returns ``(mean, cov, cov_inv)`` where ``cov``
+  is the symmetric shrunk covariance matrix (for condition-number checks)
+  and ``cov_inv`` is its inverse.
 * ``mahal_anomaly_against_corpus(emb, mean, cov_inv)`` -- squared
   Mahalanobis distance of a single embedding against the fitted
   corpus. Returns 0.0 at the centroid, grows with distance, and
@@ -64,7 +65,7 @@ __all__ = [
 
 def fit_benign_corpus(
     embs: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fit a Ledoit-Wolf shrunk covariance on benign embeddings.
 
     Parameters
@@ -76,6 +77,8 @@ def fit_benign_corpus(
     -------
     mean
         ``(d,)`` centroid.
+    cov
+        ``(d, d)`` shrunk covariance matrix (symmetric, positive-semidefinite).
     cov_inv
         ``(d, d)`` inverse covariance, regularized by Ledoit-Wolf
         shrinkage so it is always positive-definite.
@@ -107,7 +110,7 @@ def fit_benign_corpus(
         # Degenerate (e.g. all-zero input). Surface as zero inverse
         # so callers see ``inf`` from mahal_anomaly_against_corpus.
         cov_inv = np.zeros_like(cov_sym)
-    return mean, cov_inv
+    return mean, cov_sym, cov_inv
 
 
 def mahal_anomaly_against_corpus(
@@ -237,7 +240,7 @@ def loo_threshold_for_fpr(
             loo_dists[i] = 0.0
             continue
         try:
-            m, inv = fit_benign_corpus(train)
+            m, _cov, inv = fit_benign_corpus(train)
         except ValueError:
             loo_dists[i] = 0.0
             continue

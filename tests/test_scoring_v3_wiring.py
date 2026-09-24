@@ -69,7 +69,7 @@ def _seed_session(monkeypatch, session_id, benign_size=32, seed=42):
     """Seed _BASELINES[session_id] with a fresh benign corpus."""
     rng = np.random.default_rng(seed)
     benign = rng.normal(scale=0.3, size=(benign_size, 8)).astype(np.float32)
-    mean, cov_inv = fit_benign_corpus(benign)
+    mean, _cov, cov_inv = fit_benign_corpus(benign)
     distances = np.array([
         mahal_anomaly_against_corpus(e, mean, cov_inv) for e in benign
     ])
