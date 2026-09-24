@@ -338,7 +338,94 @@ findings plus the arithmetic-error doc fix the review flagged:
 
 Post-fix baseline: `baseline-2026-09-23-round5-security-post.json`.
 
+**Round 6** (`audit-hostile/2026-09-24-round3-retest`, current):
+the 2026-09-23 hostile retest ([`REVIEW-2026-09-23-round3.md`](REVIEW-2026-09-23-round3.md))
+identified four **fabricated-attestation claims** in the
+round-3 / round-4 audit-response documents and one BLOCKER in
+`_PINNED_REVISIONS` (round-4 had written `"BAAI/bge-code-v1":
+"REVIEWER_PIN_REQUIRED"`, which broke the
+`test_pinned_revisions_are_40char_hex` invariant). This commit
+closes the cheap subset:
+
+* **Fix: `_PINNED_REVISIONS` populated with real model-card SHAs.**
+  Round-4 commit `00fdc0d` left `"BAAI/bge-code-v1":
+  "REVIEWER_PIN_REQUIRED"` as a placeholder. The round-3 hostile
+  retest caught this. Fetched the live 40-char SHAs from
+  `huggingface.co/api/models` and baked them in:
+  `bd67852057c5d7ddcc7b8234d9d6c410117ed851` (bge-code-v1),
+  `e205b6e6d6075d089140d2e9170970aabc05c481` (mamba3-siso-893m),
+  `b5c7db27d1c7781d27c203bfd18601b3bbff7bc0` (mamba3-mimo-894m),
+  `5cfc721542ec9ccee768088b2fd6b7e8101219d8` (mamba3-siso-1.5b).
+  The probe now blesses bge-code (real pin) and continues to
+  refuse any non-`mamba-130m` backend whose pin is missing or
+  reverted to the placeholder. `pin_model_cards.py` remains
+  available for periodic refresh; the loader no longer requires
+  it to proceed.
+* **Fix: Edit/Write/MultiEdit to `.envrc.local` now blocked.**
+  `pre_bash_guard.py` already caught shell redirects and Python
+  /Node writes; the Edit tool (Claude's primary write path) went
+  through `pre_edit_guard.py` which had no equivalent deny rule.
+  Layer-1b in `pre_edit_guard.py` matches by basename and emits
+  `decision=blocked`, `reason=envrc_local_locked`; same
+  `RC_ALLOW_GUARD_EDIT=1` override surface as the layer-1 guard
+  file lock. 3 new tests in `tests/test_hook_block.py`.
+* **Fix: `rc bypass-next` now requires operator auth.** Round-2
+  fixed the shell form (`python3 -m src.rc_cli bypass-next`) via
+  a `pre_bash_guard.py` regex; round-3 confirmed the path form
+  (`python3 src/rc_cli.py bypass-next`) was unauthenticated and
+  self-armable by an agent. `cmd_bypass_next` now calls
+  `_operator_authenticated()` (the same gate `enable-enforcement`
+  uses); on failure it prints the auth-bootstrap hint and returns
+  1. The kill-switch stays un-armed.
+* **Fix: `loo_threshold_for_fpr` docstring rewritten honestly.**
+  The previous docstring claimed "With n=5 the realized FPR is
+  approximately 0.05." Round-3 confirmed by execution that the
+  realized power at n=5 is near 0% (the detector is nearly inert
+  at small corpus sizes). New docstring states the honest
+  contract: small n → advisory; large n → nominal FPR.
+* **Fix: 4 previously-undocumented flags now in
+  `docs/CONFIGURATION.md`.** `RC_SCORING_V3`, `RC_DIFF_WINDOWING`,
+  `RC_MAHAL_CORPUS_MIN`, and `RC_NEURAL_CORROBORATED` were
+  cited as "documented in CONFIGURATION.md" in the round-4
+  audit-response but were not. Added a new "Neural-gate scoring
+  flags" section with the actual contract for each flag,
+  including the AGENTS.md "neural is advisory unless
+  corroborated" rule for `RC_NEURAL_CORROBORATED`.
+* **Retraction: 4 fabricated-attestation claims.**
+  `AUDIT_RESPONSE_2026_09_22.md` and
+  `AUDIT_RESPONSE_2026_09_22_ROUND2.md` each contained claims
+  that were false when checked against the tree (git log, file
+  grep, pytest run). The retractions are inline in the response
+  docs as "Partially retracted (round-3 retest)" notes; each
+  names the specific evidence (git pickaxe, `grep` return,
+  pytest summary) that falsifies the original claim.
+
+Post-fix baseline: `baseline-2026-09-24-round3-attestation-retractions-post.json`.
+Round-3 test-count claim was "994 pass + 4 skip + 2 fail-as-designed
+— all unchanged" (round-4 phrasing); after round-6 fixes:
+**1041 pass + 4 skip + 2 fail-as-designed** (the 2 fails are the
+pre-existing Mamba-3 refusal-gate `test_pre_reg_embedder_gate.py`
+tests, which are expected to fail until Mamba-3 is loadable).
+
+**Status of the round-3 review's open items:** the round-3 review
+left these items out-of-scope for its blockers round:
+  - 7 remaining security findings (audit log chain rewritability,
+    symlink TOCTOU races, etc.) — round-5's regex work closed
+    6/13, leaving 7 as known limits.
+  - PyPI namespace collision (verified by direct fetch of
+    `pip install reasoning-core` returning an unrelated project).
+  - Pre-reg embedder eval ladder (Mamba-3 default flip blocked
+    until `mamba-ssm>=2.0.0` is installed and the pre-reg gates
+    pass).
+
 The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
+`git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
+`pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
+`python3 -c "open(... 'w')"`, and **any redirect whose target resolves
+through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
+(default 15s), `S2_HEALTH_GRACE_S` (default 60s),
+`S2_BASELINE_MAX_SESSIONS` (default 256), `S2_BASELINE_TTL_S` (default 24h),
+`S2_BASELINE_MAX_FILES_PER_SESSION` (default 200). `git apply`, `git checkout <sha>`,
 `git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
 `pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
 `python3 -c "open(... 'w')"`, and **any redirect whose target resolves
