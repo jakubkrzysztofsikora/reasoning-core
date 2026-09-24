@@ -239,7 +239,10 @@ GIT_ALLOWED_SUBCOMMANDS = frozenset({
 
 
 def _extract_git_subcommand(cmd: str) -> Optional[str]:
-    """Extract git subcommand, handling -C <path> and -c key=val prefixes.
+    """Extract git subcommand, handling -C <path> prefixes.
+    
+    Denies -c key=val overrides entirely — they can enable arbitrary code
+    execution (e.g., core.fsmonitor=<script>).
     
     For compound subcommands (e.g., "stash pop"), returns both tokens.
     
@@ -247,7 +250,7 @@ def _extract_git_subcommand(cmd: str) -> Optional[str]:
       'git status' → 'status'
       'git stash pop' → 'stash pop'
       'git -C /repo log -1' → 'log'
-      'git -c user.name=x commit' → 'commit'
+      'git -c user.name=x commit' → None (denied)
       'git --help' → '--help'
     """
     stripped = cmd.lstrip()
@@ -257,18 +260,20 @@ def _extract_git_subcommand(cmd: str) -> Optional[str]:
     # Remove 'git' prefix
     rest = stripped[3:].lstrip()
     
-    # Skip -C <path> and -c key=val prefixes
+    # Skip -C <path> prefixes but DENY -c key=val overrides
     while rest.startswith("-"):
-        if rest.startswith("-C ") or rest.startswith("-c "):
-            # Skip flag and its argument
+        if rest.startswith("-C "):
+            # Skip -C flag and its argument (safe: just changes working dir)
             parts = rest.split(None, 2)
             if len(parts) >= 3:
                 rest = parts[2].lstrip()
             elif len(parts) == 2:
-                # Flag without argument — malformed, but let it through to deny
-                return parts[1] if not parts[1].startswith("-") else None
+                return None  # Malformed
             else:
                 return None
+        elif rest.startswith("-c "):
+            # DENY: -c can set core.fsmonitor=<script> for arbitrary code exec
+            return None
         elif rest.startswith("--"):
             # Long option like --help, --version
             parts = rest.split(None, 1)
@@ -276,14 +281,11 @@ def _extract_git_subcommand(cmd: str) -> Optional[str]:
         else:
             # Short option like -p, -n
             parts = rest.split(None, 1)
-            opt = parts[0]
-            # If it's just flags without a subcommand, return None
             if len(parts) == 1:
                 return None
             rest = parts[1].lstrip()
             break
     else:
-        # No flags, first token is the subcommand
         pass
     
     if not rest:
@@ -292,11 +294,9 @@ def _extract_git_subcommand(cmd: str) -> Optional[str]:
     # Extract first two tokens for compound subcommands
     parts = rest.split(None, 2)
     if len(parts) >= 2:
-        # Check if first+second form a known compound subcommand
         compound = f"{parts[0]} {parts[1]}"
         if compound in GIT_ALLOWED_SUBCOMMANDS:
             return compound
-    # Otherwise return just the first token
     return parts[0]
 
 

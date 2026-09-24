@@ -572,14 +572,15 @@ def _operator_authenticated() -> bool:
     stored = _read_auth_token_from_keychain()
     if stored is not None and _constant_time_eq(token, stored):
         return True
-    # On non-darwin, accept env-only if it matches a pre-provisioned value
-    # stored in RC_AUTH_TOKEN_HASH env (set by CI)
-    expected_hash = os.environ.get("RC_AUTH_TOKEN_HASH")
-    if expected_hash:
-        import hashlib
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        if _constant_time_eq(token_hash, expected_hash):
-            return True
+    # On non-darwin only: accept env-only if it matches a pre-provisioned hash
+    # (set by CI). Darwin MUST use keychain — no env fallback.
+    if sys.platform != "darwin":
+        expected_hash = os.environ.get("RC_AUTH_TOKEN_HASH")
+        if expected_hash:
+            import hashlib
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            if _constant_time_eq(token_hash, expected_hash):
+                return True
     return False
 def _operator_present() -> bool:
     """Check if an operator is physically present.

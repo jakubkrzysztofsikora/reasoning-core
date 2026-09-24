@@ -391,31 +391,21 @@ def _maybe_promote_session_to_corpus(
         mahal_anomaly_against_corpus,
     )
     mean, cov, cov_inv = fit_benign_corpus(arr)
-    # RC-SCORE-01: Condition-number floor prevents hair-trigger detector.
-    # Compute eigenvalue ratio on the shrunk covariance (not inverse).
-    # A near-degenerate corpus has min eigenvalue << mean eigenvalue.
-    try:
-        eig = np.linalg.eigvalsh(cov)
-        eig_mean = eig.mean()
-        if eig_mean > 0:
-            floor_ratio = eig.min() / eig_mean
-        else:
-            floor_ratio = 0.0
-    except np.linalg.LinAlgError:
-        floor_ratio = 0.0
     
-    # Refuse to arm if condition number is too poor (near-degenerate).
-    # Tuned so MACRO near_degenerate sweep is inert across
-    # JIT ∈ {1e-12, 1e-9, 1e-3} while healthy corpus still arms.
-    # Measured floor_ratios: JIT=1e-9 → 0.56, JIT=1e-3 → 0.60, healthy → 0.80.
-    # Threshold 0.7 catches near-degenerate while allowing healthy.
-    COND_NUMBER_FLOOR = 0.7
-    poor_condition = floor_ratio < COND_NUMBER_FLOOR
-    
-    # Also check exact degeneracy (zero inverse matrix).
+    # RC-MAHAL-DEGEN-01 (round-2 hostile review Finding 2): when the
+    # Ledoit-Wolf covariance collapses to the shrinkage target (the
+    # corpus is all-same or near-same vectors, reachable via
+    # /baseline poisoning or a collapsed session), ``cov_inv`` is the
+    # zero matrix and every fresh edit scores ``+inf``. The LOO
+    # threshold in this regime is 0.0, so the fired condition always
+    # trips -- the wrong kind of "loud". We refuse to arm the
+    # threshold on a degenerate corpus: store ``+inf`` so
+    # ``mahal_anomaly > threshold`` is never true, and the signal
+    # stays inert until the session accumulates a non-degenerate
+    # corpus.
     degenerate = (cov_inv == 0).all()
     
-    if degenerate or poor_condition:
+    if degenerate:
         thr = float("inf")
     else:
         # Honest out-of-sample threshold via leave-one-out (LOO). The
@@ -424,18 +414,6 @@ def _maybe_promote_session_to_corpus(
         # the nominal 0.05); the LOO threshold matches the nominal FPR
         # within the binomial envelope and is what the production path
         # uses. See ``test_scoring_signals.py::test_loo_threshold_*``.
-        #
-        # RC-MAHAL-DEGEN-01 (round-2 hostile review Finding 2): when the
-        # Ledoit-Wolf covariance collapses to the shrinkage target (the
-        # corpus is all-same or near-same vectors, reachable via
-        # /baseline poisoning or a collapsed session), ``cov_inv`` is the
-        # zero matrix and every fresh edit scores ``+inf``. The LOO
-        # threshold in this regime is 0.0, so the fired condition always
-        # trips -- the wrong kind of "loud". We refuse to arm the
-        # threshold on a degenerate corpus: store ``+inf`` so
-        # ``mahal_anomaly > threshold`` is never true, and the signal
-        # stays inert until the session accumulates a non-degenerate
-        # corpus.
         thr = loo_threshold_for_fpr(arr, fpr=0.05)
     baselines["__corpus__"] = torch.from_numpy(arr.astype(np.float32))
     baselines["__mahal_mean__"] = torch.from_numpy(mean.astype(np.float32))
