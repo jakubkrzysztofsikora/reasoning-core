@@ -696,6 +696,19 @@ def _gather_warnings(content: str, project_dir: str) -> List[Dict[str, Any]]:
 def _exit(code: int, *, stderr_lines: Optional[List[str]] = None) -> None:
     if stderr_lines:
         sys.stderr.write("\n".join(stderr_lines) + "\n")
+    if code == 2:
+        try:
+            import audit_log  # type: ignore
+            last = audit_log.last_event()
+            decision_id = last.get("decision_id") if isinstance(last, dict) else None
+            if decision_id:
+                sys.stderr.write(
+                    f"\n[hybrid-reasoner] Decision ID: {decision_id}\n"
+                    f"  Inspect: rc explain {decision_id}\n"
+                    f"  Override: rc bypass-next\n"
+                )
+        except Exception:
+            pass  # Never let audit-log failure suppress the block message
     sys.exit(code)
 
 
