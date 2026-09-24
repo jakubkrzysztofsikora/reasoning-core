@@ -412,15 +412,14 @@ left these items out-of-scope for its blockers round:
   - Pre-reg embedder eval ladder (Mamba-3 default flip blocked
     until `mamba-ssm>=2.0.0` is installed and the pre-reg gates
     pass).
+  - **RC-SEC-04: `ln -s` symlink creation passes pre_bash_guard.** The guard
+    blocks writes *through* symlinks that resolve to guarded paths, but does
+    not block symlink creation itself. An agent can create a symlink alias to
+    `.envrc.local` and then edit the alias; the edit guard catches this via
+    realpath resolution (WO-5), but bare `ln -s` is not denied. Residual risk:
+    low (requires two-step attack, second step caught by edit guard).
 
 The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
-`git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
-`pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
-`python3 -c "open(... 'w')"`, and **any redirect whose target resolves
-through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
-(default 15s), `S2_HEALTH_GRACE_S` (default 60s),
-`S2_BASELINE_MAX_SESSIONS` (default 256), `S2_BASELINE_TTL_S` (default 24h),
-`S2_BASELINE_MAX_FILES_PER_SESSION` (default 200). `git apply`, `git checkout <sha>`,
 `git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
 `pathlib.Path().write_text(...)`, `base64 -d | bash|sh|zsh|eval`,
 `python3 -c "open(... 'w')"`, and **any redirect whose target resolves
