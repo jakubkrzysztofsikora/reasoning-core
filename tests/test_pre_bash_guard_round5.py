@@ -133,19 +133,38 @@ def test_regex_blocks_python_write_to_envrc_local():
     "git am mailbox",
     "git pull origin main",
 ])
-def test_regex_blocks_git_subcommand_rewrites(subcmd: str):
-    """git subcommands that rewrite guarded paths must be blocked.
+def test_git_allowlist_blocks_rewrite_subcommands(subcmd: str):
+    """RC-SEC-05: git subcommands that rewrite guarded paths must be blocked.
 
-    Round-2 Finding 5: ``git stash pop``, ``cherry-pick``, ``revert``,
-    ``am``, ``pull``, and ``fast-import`` all rewrite the working
-    tree (and therefore guarded hooks) but were not in the regex
-    set. The audit verified each slips as-is.
+    Replaced enumerated regex deny with explicit allowlist. These
+    subcommands are NOT in GIT_ALLOWED_SUBCOMMANDS and must be denied.
     """
-    patterns = _load_patterns()
-    cmd = subcmd
-    assert _matches_any(patterns, cmd), (
-        f"BLOCKER: ``{subcmd}`` slips the regex set; the working-tree "
-        f"rewrite path is unguarded."
+    from src.hooks.pre_bash_guard import screen_command
+    code, msg = screen_command(subcmd)
+    assert code == 2, (
+        f"BLOCKER: ``{subcmd}`` slipped the git allowlist; "
+        f"got rc={code}, msg={msg!r}"
+    )
+    assert "git_subcommand" in msg.lower() or "not allowed" in msg.lower(), (
+        f"Expected git-subcommand denial message, got: {msg!r}"
+    )
+
+
+@pytest.mark.parametrize("subcmd", [
+    "git status",
+    "git log -1",
+    "git diff --stat",
+    "git show HEAD",
+    "git branch -v",
+    "git rev-parse HEAD",
+])
+def test_git_allowlist_allows_inspection_subcommands(subcmd: str):
+    """RC-SEC-05: read-only git subcommands must be allowed."""
+    from src.hooks.pre_bash_guard import screen_command
+    code, msg = screen_command(subcmd)
+    assert code == 0, (
+        f"BLOCKER: ``{subcmd}`` was incorrectly blocked by git allowlist; "
+        f"got rc={code}, msg={msg!r}"
     )
 
 

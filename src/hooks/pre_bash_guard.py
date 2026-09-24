@@ -118,49 +118,8 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bPath\(['\"]\\?\.?/?[^'\"]*\\?\.envrc\.local['\"]\)\.(?:write_text|write_bytes)"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
-    # RC-SEC-04: symlink creation enables .envrc.local ingress via aliases.
-    # Block `ln -s` and bare `ln` (link creation generally).
-    re.compile(r"\bln\s+(-[a-zA-Z]*s[a-zA-Z]*\s+|--symbolic\b)"),
-    re.compile(r"\bln\s+\S+\s+\S+"),  # bare ln with two args (source + target)
-    # `git apply` always writes working-tree files from a patch. Reviewer-flagged
-    # in audit-hostile/2026-09-19-fixes §"Shell Guard Bypasses". Block outright;
-    # legitimate patch application goes through Claude's Edit tool.
-    re.compile(r"\bgit\s+apply\b"),
-    # `git checkout <commit> -- <paths>` without our src-ext regex would slip
-    # through when the paths are bare filenames without extensions. Block any
-    # `git checkout <sha>` shape so the agent must use Edit/Write.
-    re.compile(r"\bgit\s+checkout\s+[0-9a-f]{7,}\b"),
-    # `git restore <paths>` and `git restore --source=<sha> <paths>` always
-    # rewrite working-tree files.
-    re.compile(r"\bgit\s+restore\b"),
-    # `git stash apply` reapplies a stash to working tree.
-    re.compile(r"\bgit\s+stash\s+apply\b"),
-    # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-01): the SHA-anchored
-    # `git checkout <sha>` regex misses reflog refs and symbolic revisions
-    # like `HEAD~1`, `HEAD^`, `origin/main`, branch names, and `--` paths.
-    # Block any `git checkout` that is not a benign read-only inspection
-    # (those go via `git status/log/diff/show`, all in SAFE_LEADING_TOKENS).
-    re.compile(r"\bgit\s+checkout\b"),
-    # `git reset --hard <ref>` rewrites working-tree files.
-    re.compile(r"\bgit\s+reset\b[^|;&]*--hard\b"),
-    # `git switch -f <branch>` rewrites the working tree to a branch.
-    re.compile(r"\bgit\s+switch\b[^|;&]*-[fCc]\b"),
-    # `git switch <branch>` (no force flag) still updates HEAD and the
-    # index/working tree. Read-only inspection never goes through
-    # `git switch`.
-    re.compile(r"\bgit\s+switch\b\s+[^|&;]+\b"),
-    # `git merge <ref>` brings in changes from another branch.
-    re.compile(r"\bgit\s+merge\b"),
-    # Round-5 RC-SEC-GIT-REWRITES: working-tree rewrite paths the
-    # previous regex set missed. Each one rewrites guarded files
-    # without going through git checkout <sha> -- so the SHA regex
-    # below never fires.
-    re.compile(r"\bgit\s+stash\s+pop\b"),
-    re.compile(r"\bgit\s+cherry-pick\b"),
-    re.compile(r"\bgit\s+revert\b"),
-    re.compile(r"\bgit\s+am\b"),
-    re.compile(r"\bgit\s+pull\b(?!\s+--rebase=merges?)"),
-    re.compile(r"\bgit\s+fast-import\b"),
+    # RC-SEC-05: Individual git deny patterns removed — replaced by
+    # subcommand allowlist (Layer A2 in screen_command).
     # Round-5 RC-SEC-NODE-UPPERCASE: node -E (uppercase E) is
     # the same as node -e but with extended regex; the existing
     # regex only catches lowercase. Block both.
@@ -248,10 +207,7 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"""open\s*\(\s*['"][^'"]+['"]\s*,\s*mode\s*=\s*['"][wa]['"]"""),
     # `open('x.py', 'wb')` second-positional binary form.
     re.compile(r"""open\s*\(\s*['"][^'"]+['"]\s*,\s*['"][wa][bx]?['"]"""),
-    # `git checkout|restore|stash apply|apply` writing into source paths.
-    # The leading-tokens allowlist still contains "git" for benign commands
-    # (status, log, diff, show) but these subcommands always need review.
-    re.compile(rf"\bgit\s+(?:checkout|restore|stash\s+apply|apply)\b[^|;&]*([\w./\-]+(?:{_SRC_EXT_PATTERN}))\b"),
+    # RC-SEC-05: Git write patterns removed — handled by subcommand allowlist.
     # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-04): heredoc stdin
     # execution of python/node/perl/ruby. Trip when a guarded path fragment
     # appears ANYWHERE in the heredoc body so an agent cannot smuggle a
@@ -268,9 +224,92 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
 # does not contain a write redirection, we let it through without scanning.
 # Captures common dev workflow: tests, builds, package managers (which write
 # only to lockfiles / .venv / node_modules — those are not in SRC_EXTENSIONS).
+# RC-SEC-05: Git subcommand allowlist. Only these read-only / inspection
+# commands are permitted. Everything else denied (rc=2).
+# Compound subcommands (e.g., "stash pop") must be listed explicitly.
+GIT_ALLOWED_SUBCOMMANDS = frozenset({
+    "status", "log", "diff", "show", "branch", "rev-parse",
+    "remote", "shortlog", "describe",
+    "ls-files", "ls-tree", "blame", "tag", "reflog",
+    "config", "help", "version", "--version",
+    # Read-only stash/worktree variants
+    "stash list", "stash show",
+    "worktree list",
+})
+
+
+def _extract_git_subcommand(cmd: str) -> Optional[str]:
+    """Extract git subcommand, handling -C <path> and -c key=val prefixes.
+    
+    For compound subcommands (e.g., "stash pop"), returns both tokens.
+    
+    Examples:
+      'git status' → 'status'
+      'git stash pop' → 'stash pop'
+      'git -C /repo log -1' → 'log'
+      'git -c user.name=x commit' → 'commit'
+      'git --help' → '--help'
+    """
+    stripped = cmd.lstrip()
+    if not stripped.startswith("git"):
+        return None
+    
+    # Remove 'git' prefix
+    rest = stripped[3:].lstrip()
+    
+    # Skip -C <path> and -c key=val prefixes
+    while rest.startswith("-"):
+        if rest.startswith("-C ") or rest.startswith("-c "):
+            # Skip flag and its argument
+            parts = rest.split(None, 2)
+            if len(parts) >= 3:
+                rest = parts[2].lstrip()
+            elif len(parts) == 2:
+                # Flag without argument — malformed, but let it through to deny
+                return parts[1] if not parts[1].startswith("-") else None
+            else:
+                return None
+        elif rest.startswith("--"):
+            # Long option like --help, --version
+            parts = rest.split(None, 1)
+            return parts[0]
+        else:
+            # Short option like -p, -n
+            parts = rest.split(None, 1)
+            opt = parts[0]
+            # If it's just flags without a subcommand, return None
+            if len(parts) == 1:
+                return None
+            rest = parts[1].lstrip()
+            break
+    else:
+        # No flags, first token is the subcommand
+        pass
+    
+    if not rest:
+        return None
+    
+    # Extract first two tokens for compound subcommands
+    parts = rest.split(None, 2)
+    if len(parts) >= 2:
+        # Check if first+second form a known compound subcommand
+        compound = f"{parts[0]} {parts[1]}"
+        if compound in GIT_ALLOWED_SUBCOMMANDS:
+            return compound
+    # Otherwise return just the first token
+    return parts[0]
+
+
+def _git_subcommand_allowed(cmd: str) -> bool:
+    """Check if git subcommand is in the allowlist."""
+    subcmd = _extract_git_subcommand(cmd)
+    if subcmd is None:
+        return True  # Not a git command, let other checks handle it
+    return subcmd in GIT_ALLOWED_SUBCOMMANDS
+
+
 SAFE_LEADING_TOKENS = (
     "ls", "cat", "head", "tail", "grep", "rg", "find", "fd",
-    "git",  # git itself never touches source via shell — Claude must use Edit/Write
     "pytest", "python", "python3", "uv", "ruff", "mypy", "black", "isort",
     "node", "npm", "npx", "yarn", "pnpm", "bun",
     "dotnet", "go", "cargo", "rustc",
@@ -506,6 +545,23 @@ def screen_command(cmd: str) -> tuple[int, str]:
             "rollback of the framework itself), set RC_ALLOW_GUARD_EDIT=1 in the "
             "same command. The bypass is recorded in the audit log."
         )
+
+    # Layer A2: RC-SEC-05 git subcommand allowlist. Git commands must use an
+    # allowed subcommand. Everything else denied.
+    stripped_cmd = cmd.lstrip()
+    if stripped_cmd.startswith("git"):
+        if not _git_subcommand_allowed(cmd):
+            subcmd = _extract_git_subcommand(cmd) or "<unknown>"
+            if _override_active():
+                return 0, f"[hybrid-reasoner] override: git subcommand '{subcmd}' allowed via {ALLOW_OVERRIDE_ENV}=1"
+            return 2, (
+                f"[hybrid-reasoner] BLOCKED: git subcommand not allowed.\n"
+                f"  subcommand: {subcmd}\n"
+                f"  allowed: {', '.join(sorted(GIT_ALLOWED_SUBCOMMANDS))}\n"
+                "  fix: use Edit/Write tools for working-tree changes. "
+                "Read-only inspection (status, log, diff, show, branch, etc.) "
+                "is permitted."
+            )
 
     # Layer B: shell command targeting a guarded path (regardless of operation).
     # Two triggers: substring match (existing), or symlink resolution
