@@ -118,6 +118,14 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bPath\(['\"]\\?\.?/?[^'\"]*\\?\.envrc\.local['\"]\)\.(?:write_text|write_bytes)"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
+    # RC-SEC-05: Git wrapper bypasses — deny indirect git invocations that
+    # could execute arbitrary subcommands outside the allowlist.
+    re.compile(r"\benv\s+.*\bgit\b"),           # env git <subcmd>
+    re.compile(r"\btimeout\s+\d+\s+.*\bgit\b"), # timeout N git <subcmd>
+    re.compile(r"/usr/bin/git\b"),               # absolute path git
+    re.compile(r"\bsh\s+-c\s+.*\bgit\b"),       # sh -c "git ..."
+    re.compile(r"\bbash\s+-c\s+.*\bgit\b"),     # bash -c "git ..."
+    re.compile(r"\$\(.*\bgit\b"),                # $(git ...)
     # RC-SEC-05: Individual git deny patterns removed — replaced by
     # subcommand allowlist (Layer A2 in screen_command).
     # Round-5 RC-SEC-NODE-UPPERCASE: node -E (uppercase E) is
@@ -227,11 +235,12 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
 # RC-SEC-05: Git subcommand allowlist. Only these read-only / inspection
 # commands are permitted. Everything else denied (rc=2).
 # Compound subcommands (e.g., "stash pop") must be listed explicitly.
+# Dangerous subcommands removed: reflog (can destroy history), config (can
+# disable hooks via core.hooksPath), remote (can push to arbitrary remotes).
 GIT_ALLOWED_SUBCOMMANDS = frozenset({
     "status", "log", "diff", "show", "branch", "rev-parse",
-    "remote", "shortlog", "describe",
-    "ls-files", "ls-tree", "blame", "tag", "reflog",
-    "config", "help", "version", "--version",
+    "ls-files", "ls-tree", "blame", "describe",
+    "help", "version", "--version",
     # Read-only stash/worktree variants
     "stash list", "stash show",
     "worktree list",
