@@ -303,3 +303,22 @@ flags to children.
 | `RC_HOST` | _auto_ | Force host identity (`claude` / `gemini` / `copilot` / `vibe`); auto-detected from `<HOST>_PROJECT_DIR` env |
 | `RC_PROJECT_DIR` | _auto_ | Override project root (takes precedence over `<HOST>_PROJECT_DIR`) |
 | `RC_SESSION_ID` | _auto_ | Stable per-launch session id; synthesised if unset and re-exported for child processes |
+
+## Neural-gate scoring flags (round-3 documentation pass)
+
+These four env vars control the neural side of the gate. They were
+previously undocumented operator surface that converted the neural
+signal into a hard block under specific combinations (round-3
+fabricated-attestation finding: prior round's audit-response claimed
+these were "documented in `docs/CONFIGURATION.md`"; they were not).
+This section closes that gap.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RC_SCORING_V3` | `0` | Enables the Phase C scoring-v3 path (mahal_anomaly + drift_deny + neural_corroboration). When unset or `0`, the gate falls back to the Phase B scoring-v2 path (CD + AIS + novelty, with `ais < t["ais"]` as documented-but-redundant OR-branch in s2_core.py:1130). |
+| `RC_DIFF_WINDOWING` | `0` | Enables AST-scope diff windowing for embedding (`src/diff_windowing.py`). When unset, the embedder pools the full file; windowing is the round-2 fix for 512-token truncation blindness on large files. |
+| `RC_MAHAL_CORPUS_MIN` | `5` | Minimum number of benign embeddings in `__corpus__` before `mahal_anomaly` becomes a usable signal. Below this count the corpus is treated as degenerate and the LOO detector returns `+inf` (inert). Prevents the round-2 always-fire regression on small corpora. |
+| `RC_NEURAL_CORROBORATED` | `0` | When `1`, the neural scoring path (`regression_detected` from the sidecar) participates in the hard-block decision via the existing `S2_FAIL_CLOSED=1` mechanism. **Without this flag, neural regressions emit `decision=neural_warn` (advisory only); with it, they emit `decision=blocked`** under `S2_FAIL_CLOSED=1`. This is the AGENTS.md "neural is advisory unless corroborated" rule: `RC_NEURAL_CORROBORATED=1` is the operator opt-in to make the neural signal count as a corroborating deterministic signal. Default off preserves the adversarial-review contract. |
+
+Round-3 fix added documentation for these four flags. Round-4 prior
+claim that they were already documented is retracted.

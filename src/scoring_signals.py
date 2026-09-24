@@ -185,9 +185,18 @@ def loo_threshold_for_fpr(
     For each row in ``benign_embs`` we (1) fit Ledoit-Wolf on the
     other n-1 rows, (2) score the held-out row against the fitted
     inverse, (3) accumulate the LOO distance. The threshold is then
-    the ``(1 - fpr)`` quantile of the LOO distances. With n=5 the
-    realized FPR is approximately 0.05 (versus the 0.20 an in-sample
-    quantile produces) -- matches the host review's Finding 3 critique.
+    the ``(1 - fpr)`` quantile of the LOO distances.
+
+    Honest contract (round-3 retest): the realized power of this
+    detector at small corpus sizes is much lower than the nominal FPR
+    implies. With n=5 the LOO is nearly inert (~0% power against
+    fresh edits). The detector should be treated as ADVISORY at
+    small corpus sizes, not as a hard gate. As the corpus grows the
+    LOO power approaches the nominal FPR, but the round-3 review
+    confirmed that the n=5 path does NOT actually realize the 0.05
+    FPR the previous docstring claimed. The honest contract is: at
+    small n, treat the detector as advisory; at large n, the
+    nominal FPR is the calibration target.
 
     Parameters
     ----------
