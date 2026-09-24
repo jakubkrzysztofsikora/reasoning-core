@@ -5,6 +5,7 @@ import datetime as _dt
 import importlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -63,16 +64,23 @@ def test_bypass_next_arms_and_emits_operator_override(isolated_rc, monkeypatch):
     refuses.
     """
     tmp_path, rc_cli, _al, ks = isolated_rc
-    # Auth: store a token in the platform-default token file and set
-    # RC_ENFORCEMENT_TOKEN to match. This mirrors the ``enable-enforcement``
-    # auth pattern so the test exercises the same code path the operator
-    # would.
-    import rc_cli as _rc_cli_mod
-    token_file = _rc_cli_mod._AUTH_TOKEN_FILE
-    token_file.parent.mkdir(parents=True, exist_ok=True)
-    token_file.write_text("test-token-for-operator-events-bypass-next-aaaaaa" + chr(10), encoding="utf-8")
-
-    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "test-token-for-operator-events-bypass-next-aaaaaa")
+    
+    # Mock subprocess.run for sudo check and keychain lookup (RC-SEC-02)
+    token = "test-token-for-operator-events-bypass-next-aaaaaa1234"
+    def fake_run(cmd, *args, **kwargs):
+        if cmd == ["sudo", "-n", "true"]:
+            return subprocess.CompletedProcess(cmd, returncode=0)
+        if isinstance(cmd, list) and "find-generic-password" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=token,
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", token)
     rc = rc_cli.main(["bypass-next"])
     assert rc == 0, f"expected authenticated bypass-next to succeed; got rc={rc}"
     assert ks.snapshot().get("bypass_next") is True

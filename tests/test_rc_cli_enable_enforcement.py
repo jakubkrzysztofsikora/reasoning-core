@@ -43,19 +43,22 @@ def isolated_project(tmp_path, monkeypatch):
     return project_dir, rc_cli
 
 
-def _auth_env(monkeypatch, token: str = "operator-secret-token-12345678"):
+def _auth_env(monkeypatch, token: str = "operator-secret-token-1234567890ab"):
     """Simulate authenticated operator environment with keychain match."""
     monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", token)
-    # Mock the security command to return the same token
-    def fake_security(*args, **kwargs):
-        result = subprocess.CompletedProcess(
-            args=["security"],
-            returncode=0,
-            stdout=token,
-            stderr="",
-        )
-        return result
-    monkeypatch.setattr(subprocess, "run", fake_security)
+    # Mock subprocess.run to handle both sudo check and keychain lookup
+    def fake_run(cmd, *args, **kwargs):
+        if cmd == ["sudo", "-n", "true"]:
+            return subprocess.CompletedProcess(cmd, returncode=0)
+        if isinstance(cmd, list) and "find-generic-password" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=token,
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
 
 def test_enable_enforcement_requires_authentication(isolated_project, monkeypatch):
@@ -76,16 +79,20 @@ def test_enable_enforcement_requires_long_token(isolated_project, monkeypatch):
 
 def test_enable_enforcement_rejects_wrong_token(isolated_project, monkeypatch):
     project_dir, rc_cli = isolated_project
-    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "wrong-token-but-long-enough")
-    # Mock keychain to return a different token
-    def fake_security(*args, **kwargs):
-        return subprocess.CompletedProcess(
-            args=["security"],
-            returncode=0,
-            stdout="different-stored-secret",
-            stderr="",
-        )
-    monkeypatch.setattr(subprocess, "run", fake_security)
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "wrong-token-but-long-enough-1234567890")
+    # Mock subprocess.run to handle sudo check and return different keychain token
+    def fake_run(cmd, *args, **kwargs):
+        if cmd == ["sudo", "-n", "true"]:
+            return subprocess.CompletedProcess(cmd, returncode=0)
+        if isinstance(cmd, list) and "find-generic-password" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout="different-stored-secret",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
     rc = rc_cli.main(["enable-enforcement"])
     assert rc == 1
 
