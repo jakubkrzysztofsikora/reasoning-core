@@ -242,6 +242,31 @@ token-cost proxy, a false-positive proxy, and an override-survival ratio. Use
 | `RC_ALLOW_GUARD_EDIT` | _unset_ | Allow edits to guarded paths (captured at session boot) |
 | `RC_ALLOW_SUBAGENT_GUARD_EDIT` | _unset_ | Allow Task prompts naming guarded paths |
 
+## Operator authentication
+
+RC-SEC-01/RC-SEC-02: enforcement changes require operator authentication to
+prevent self-service by runaway agents. The kill-switch state file is protected
+by an HMAC-SHA256 sidecar; tamper resets to safe defaults and records an audit
+event.
+
+**Setup (macOS):** Run `rc auth-bootstrap` interactively (requires recent sudo
+timestamp). This provisions two keychain entries:
+- `reasoning-core-enforcement`: enforcement token for `RC_ENFORCEMENT_TOKEN` env var
+- `reasoning-core-hmac`: 256-bit key for kill-switch integrity
+
+**Setup (CI):** Pre-provision these environment variables:
+- `RC_ENFORCEMENT_TOKEN`: ≥32 char token matching the stored value
+- `RC_HMAC_KEY`: hex-encoded 256-bit key for kill-switch HMAC
+
+**Kill-switch integrity:** State file `~/.local/state/reasoning-core/kill_switches.json`
+is protected by sidecar `kill_switches.json.mac`. Direct file edits without
+updating the MAC are treated as tamper: state resets to all-false, audit event
+recorded. Both files are chmod 0600 and covered by `rc guard-hash`.
+
+**skip_files one-shot:** Entries in `skip_files` are consumed (read + cleared)
+on first use by either pre_edit_guard or pre_bash_guard. Under HMAC regime,
+hand-edited skip_files entries are tamper (reset).
+
 ## Audit log & state
 
 | Env var | Default | Purpose |
