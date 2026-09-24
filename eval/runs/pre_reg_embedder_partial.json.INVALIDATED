@@ -1,0 +1,16 @@
+{
+  "status": "invalidated",
+  "reason": "random-control novelty bit-identical to real embedders; n_pairs_test=1; observed:null on all gates",
+  "superseded_by": null,
+  "date": "2026-09-24",
+  "details": {
+    "original_file": "pre_reg_embedder_partial.json",
+    "issues": [
+      "n_pairs_test=1 (insufficient sample size)",
+      "observed:null on all five gates (no actual measurement)",
+      "random-weight control novelty bit-identical to three real embedders (contaminated control)",
+      "cited by failing tests as 'full measurement record' despite being incomplete"
+    ],
+    "impact": "Tests test_pre_reg_embedder_manifest_fresh_enough and test_pre_reg_embedder_manifest_records_required_backends fail because they reference this poisoned file. These should be reclassified as evidence-missing failures, not refusal-gate failures."
+  }
+}

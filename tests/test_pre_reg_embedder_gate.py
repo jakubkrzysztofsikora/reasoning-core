@@ -115,7 +115,11 @@ def test_pre_reg_embedder_gates_all_pass():
 
 def test_pre_reg_embedder_manifest_fresh_enough():
     """If ssm_backbone.py (or its _BACKENDS registry) was edited after
-    the manifest was captured, the gates are stale and need re-running."""
+    the manifest was captured, the gates are stale and need re-running.
+    
+    RC-EVAL-06: The canonical measurement record pre_reg_embedder_partial.json
+    is INVALIDATED (contaminated control). See
+    eval/runs/pre_reg_embedder_partial.json.INVALIDATED for details."""
     latest = _latest_manifest()
     if latest is None:
         pytest.skip("no pre_reg_embedder manifest yet")
@@ -126,7 +130,8 @@ def test_pre_reg_embedder_manifest_fresh_enough():
             f"src/ssm_backbone.py was edited at {ssm_mtime} but the latest "
             f"pre_reg_embedder manifest is from {manifest_mtime}; re-run "
             f"`python -m eval.pre_reg_embedder --backends ...` before this "
-            f"test will pass."
+            f"test will pass. Note: pre_reg_embedder_partial.json is INVALIDATED "
+            f"(see eval/runs/pre_reg_embedder_partial.json.INVALIDATED)."
         )
 
 
@@ -135,7 +140,11 @@ def test_pre_reg_embedder_manifest_records_required_backends():
     (Mamba-130m), the candidate (Mamba-3 SISO 893m by default), and the
     falsifiability control (random-mamba). Missing entries mean the
     harness was run with the wrong --backends flag and the gates don't
-    have the data they need."""
+    have the data they need.
+    
+    RC-EVAL-06: The canonical measurement record pre_reg_embedder_partial.json
+    is INVALIDATED (contaminated control). See
+    eval/runs/pre_reg_embedder_partial.json.INVALIDATED for details."""
     latest = _latest_manifest()
     if latest is None:
         pytest.skip("no pre_reg_embedder manifest yet")
@@ -150,7 +159,9 @@ def test_pre_reg_embedder_manifest_records_required_backends():
     if missing:
         pytest.fail(
             f"manifest is missing required backends: {sorted(missing)}. "
-            f"Re-run with --backends {' '.join(sorted(required))}."
+            f"Re-run with --backends {' '.join(sorted(required))}. "
+            f"Note: pre_reg_embedder_partial.json is INVALIDATED "
+            f"(see eval/runs/pre_reg_embedder_partial.json.INVALIDATED)."
         )
 
 
