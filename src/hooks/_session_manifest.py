@@ -44,6 +44,10 @@ _LANG_FAMILY = {
     ".gd": "gdscript", ".tscn": "gdscript", ".tres": "gdscript",
     ".gdshader": "gdscript", ".gdshaderinc": "gdscript",
     ".godot": "gdscript", ".gdextension": "gdscript", ".shader": "gdscript",
+    # C/C++ family
+    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".c++": "cpp", ".C": "cpp",
+    ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp", ".h++": "cpp", ".H": "cpp",
+    ".c": "c", ".h": "c",
 }
 
 _FRAMEWORK_HINTS = {
