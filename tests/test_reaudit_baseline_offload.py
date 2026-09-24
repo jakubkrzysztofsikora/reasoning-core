@@ -30,6 +30,12 @@ def _clear_baselines():
     s2_core._clear_session_baselines()
 
 
+@pytest.fixture(autouse=True)
+def _set_auth_token(monkeypatch):
+    """Set RC_ENFORCEMENT_TOKEN so /baseline auth passes in tests."""
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "test-token-for-baseline-offload-test-minimum-32-chars!!")
+
+
 # ---------------------------------------------------------------------------
 # RC-SYS-02: /baseline offload
 # ---------------------------------------------------------------------------
@@ -77,7 +83,7 @@ async def test_health_responds_while_baseline_in_flight(app=None):
             r = client.post("/baseline", json={
                 "session_id": "rc-sys-02",
                 "files": ["a.py", "b.py", "c.py"],
-            })
+            }, headers={"Authorization": "Bearer test-token-for-baseline-offload-test-minimum-32-chars!!"})
             result["code"] = r.status_code
         t = threading.Thread(target=call_baseline)
         t.start()
