@@ -427,6 +427,20 @@ def cmd_explain(args: argparse.Namespace) -> int:
     sys.stderr.write(f"decision_id {target} not found under {root}\n")
     return 1
 def cmd_bypass_next(_args: argparse.Namespace) -> int:
+    # Round-3 RC-SEC-BYPASS-NEXT-AUTH: ``bypass-next`` arms a kill switch
+    # that lets the NEXT PreToolUse hook exit 0 unconditionally. An
+    # unauthenticated agent can therefore rewrite a guarded file in a
+    # single round-trip. Require the same operator authentication as
+    # ``enable-enforcement`` / ``disable-enforcement`` so a runaway
+    # agent cannot self-arm the bypass.
+    if not _operator_authenticated():
+        sys.stderr.write(
+            "rc bypass-next: operator authentication required.\n"
+            "Run `rc auth-bootstrap` then re-run with RC_ENFORCEMENT_TOKEN set,\n"
+            "or authenticate via the macOS keychain service "
+            "'reasoning-core-enforcement'.\n"
+        )
+        return 1
     ks.set_bypass_next(True)
     audit_log.record_operator_override(reason="bypass_next_armed")
     sys.stdout.write("bypass_next armed (consumed on next PreToolUse hook call)\n")

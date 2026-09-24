@@ -51,10 +51,30 @@ def _read_latest_event(audit_dir: Path):
     return lines[-1] if lines else None
 
 
-def test_bypass_next_arms_and_emits_operator_override(isolated_rc):
+def test_bypass_next_arms_and_emits_operator_override(isolated_rc, monkeypatch):
+    """Round-3 fix: ``bypass-next`` requires operator authentication.
+
+    The original round-2 test called ``bypass-next`` without auth,
+    which round-3 identified as a BLOCKER (the agent could self-arm
+    the bypass and rewrite a guarded file in a single round-trip).
+    This test now exercises the operator-authenticated path, mirrors
+    the ``_auth_env`` fixture in ``test_rc_cli_enable_enforcement``,
+    and asserts that an unauthenticated call (the new test below)
+    refuses.
+    """
     tmp_path, rc_cli, _al, ks = isolated_rc
+    # Auth: store a token in the platform-default token file and set
+    # RC_ENFORCEMENT_TOKEN to match. This mirrors the ``enable-enforcement``
+    # auth pattern so the test exercises the same code path the operator
+    # would.
+    import rc_cli as _rc_cli_mod
+    token_file = _rc_cli_mod._AUTH_TOKEN_FILE
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text("test-token-for-operator-events-bypass-next-aaaaaa" + chr(10), encoding="utf-8")
+
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "test-token-for-operator-events-bypass-next-aaaaaa")
     rc = rc_cli.main(["bypass-next"])
-    assert rc == 0
+    assert rc == 0, f"expected authenticated bypass-next to succeed; got rc={rc}"
     assert ks.snapshot().get("bypass_next") is True
     ev = _read_latest_event(tmp_path / "events")
     assert ev is not None
@@ -63,6 +83,32 @@ def test_bypass_next_arms_and_emits_operator_override(isolated_rc):
     assert ev["reason"] == "bypass_next_armed"
     assert ev["session_id"] == "rc-cli-test"
     assert "decision_id" in ev
+
+
+def test_bypass_next_refuses_without_operator_auth(isolated_rc):
+    """Round-3 BLOCKER: unauthenticated ``bypass-next`` must refuse.
+
+    Without operator auth, ``bypass-next`` must return 1 and the
+    kill-switch state must remain un-armed. This closes the
+    round-2 Finding 6 vector where an agent could arm the bypass
+    via ``python3 src/rc_cli.py bypass-next``.
+    """
+    tmp_path, rc_cli, _al, ks = isolated_rc
+    monkeypatch_delenv = __import__("os").environ.copy()
+    for k in ("RC_ENFORCEMENT_TOKEN",):
+        monkeypatch_delenv.pop(k, None)
+    rc = rc_cli.main(["bypass-next"])
+    assert rc == 1, (
+        f"BLOCKER: unauthenticated bypass-next must fail; got rc={rc}"
+    )
+    # ``ks`` was loaded before monkeypatch delenv above; reload to read
+    # the post-call state from disk.
+    import importlib
+    import _kill_switches as ks_mod
+    importlib.reload(ks_mod)
+    assert ks_mod.snapshot().get("bypass_next", False) is False, (
+        "BLOCKER: bypass-next armed the kill switch without auth."
+    )
 
 
 def test_confirm_next_emits_operator_confirmed(isolated_rc):

@@ -159,3 +159,48 @@ def test_enable_enforcement_hard_flag(isolated_project, monkeypatch):
     assert rc == 0
     local_body = (project_dir / ".envrc.local").read_text(encoding="utf-8")
     assert "RC_PLAN_GROUNDING=2" in local_body
+
+# ---------------------------------------------------------------------------
+# Round-3 Finding: ``rc bypass-next`` is unauthenticated.
+#
+# An agent running ``python3 src/rc_cli.py bypass-next`` can arm the
+# bypass without operator authentication. The next PreToolUse hook
+# then exits 0 unconditionally, letting the agent write through the
+# guard. The bash guard already blocks the shell form
+# (``pre_bash_guard.py`` regex catches ``python3 ... rc_cli bypass-next``)
+# but the path-form (``python3 src/rc_cli.py bypass-next``) is
+# unrestricted in ``cmd_bypass_next`` itself. This test guards the fix:
+# ``rc bypass-next`` must require the same operator authentication as
+# ``rc enable-enforcement``.
+# ---------------------------------------------------------------------------
+
+
+def test_bypass_next_requires_operator_authentication(isolated_project, monkeypatch):
+    """Agent invoking ``rc bypass-next`` must fail without auth."""
+    project_dir, rc_cli = isolated_project
+    # Ensure no auth env is set
+    monkeypatch.delenv("RC_ENFORCEMENT_TOKEN", raising=False)
+    rc = rc_cli.main(["bypass-next"])
+    assert rc == 1, (
+        f"BLOCKER: rc bypass-next succeeded without operator auth; "
+        f"the next PreToolUse hook will exit 0 unconditionally."
+    )
+    # The kill-switch state must remain un-armed.
+    import _kill_switches as ks
+    importlib.reload(ks)
+    assert ks.consume_bypass_next() is False, (
+        "BLOCKER: rc bypass-next armed the kill switch without auth."
+    )
+
+
+def test_bypass_next_succeeds_with_operator_authentication(isolated_project, monkeypatch):
+    """Operator with valid auth token can arm bypass-next."""
+    project_dir, rc_cli = isolated_project
+    _auth_env(monkeypatch)
+    rc = rc_cli.main(["bypass-next"])
+    assert rc == 0, f"expected success with auth, got rc={rc}"
+    import _kill_switches as ks
+    importlib.reload(ks)
+    assert ks.consume_bypass_next() is True, (
+        "rc bypass-next with valid auth must arm the kill switch."
+    )
