@@ -1738,8 +1738,52 @@ def create_app():
     async def metrics():
         return JSONResponse(status_code=200, content=_metrics_snapshot())
 
+    # RC-SEC-07: Rate limiter for /baseline (1 req / 60s / session_id)
+    _baseline_rate_limits: dict[str, float] = {}  # session_id -> last_timestamp
+
+    def _check_baseline_rate_limit(session_id: str) -> bool:
+        """Return True if request is within rate limit."""
+        now = time.time()
+        last = _baseline_rate_limits.get(session_id, 0.0)
+        if now - last < 60.0:
+            return False
+        _baseline_rate_limits[session_id] = now
+        return True
+
+    def _get_operator_token() -> Optional[str]:
+        """Retrieve operator enforcement token from keychain (darwin) or env."""
+        import subprocess as _subprocess
+        import sys as _sys
+        # Darwin: keychain
+        if _sys.platform == "darwin":
+            try:
+                r = _subprocess.run(
+                    ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip()
+            except (FileNotFoundError, Exception):
+                pass
+        # Fallback: env var (CI pre-provisioned)
+        return os.environ.get("RC_ENFORCEMENT_TOKEN")
+
     @app.post("/baseline")
     async def baseline(request: Request):
+        # RC-SEC-07: Bearer token authentication
+        auth_header = request.headers.get("authorization", "")
+        expected_token = _get_operator_token()
+        if not expected_token:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "auth_unavailable", "detail": "operator token not provisioned"},
+            )
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != expected_token:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "detail": "valid bearer token required"},
+            )
+
         try:
             raw = await request.body()
             payload = json.loads(raw.decode("utf-8")) if raw else {}
@@ -1759,6 +1803,12 @@ def create_app():
             return JSONResponse(
                 status_code=400,
                 content={"error": "bad_request", "detail": "missing or invalid 'session_id'"},
+            )
+        # RC-SEC-07: Rate limit check
+        if not _check_baseline_rate_limit(session_id):
+            return JSONResponse(
+                status_code=429,
+                content={"error": "rate_limited", "detail": "1 request per 60s per session_id"},
             )
         if not isinstance(files, list) or not files:
             return JSONResponse(
