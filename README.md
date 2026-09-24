@@ -401,11 +401,6 @@ closes the cheap subset:
   pytest summary) that falsifies the original claim.
 
 Post-fix baseline: `baseline-2026-09-24-round3-attestation-retractions-post.json`.
-Round-3 test-count claim was "994 pass + 4 skip + 2 fail-as-designed
-— all unchanged" (round-4 phrasing); after round-6 fixes:
-**1041 pass + 4 skip + 2 fail-as-designed** (the 2 fails are the
-pre-existing Mamba-3 refusal-gate `test_pre_reg_embedder_gate.py`
-tests, which are expected to fail until Mamba-3 is loadable).
 
 **Status of the round-3 review's open items:** the round-3 review
 left these items out-of-scope for its blockers round:
