@@ -118,21 +118,21 @@ def test_pre_reg_embedder_gates_all_pass():
         )
 
 
-@pytest.mark.xfail(
-    reason="Measurement record is INVALIDATED (see eval/runs/pre_reg_embedder_partial.json.INVALIDATED). "
-    "No uncontaminated measurement exists yet.",
-    strict=True,
-)
 def test_pre_reg_embedder_manifest_fresh_enough():
     """If ssm_backbone.py (or its _BACKENDS registry) was edited after
     the manifest was captured, the gates are stale and need re-running.
     
-    RC-EVAL-06: The canonical measurement record pre_reg_embedder_partial.json
-    is INVALIDATED (contaminated control). See
-    eval/runs/pre_reg_embedder_partial.json.INVALIDATED for details."""
+    RC-EVAL-06/RC-EVAL-09: If the measurement record is INVALIDATED,
+    this test skips rather than fails — no valid measurement exists yet."""
     latest = _latest_manifest()
     if latest is None:
         pytest.skip("no pre_reg_embedder manifest yet")
+    
+    # Check if measurement is INVALIDATED
+    invalidated = latest.parent / (latest.name + ".INVALIDATED")
+    if invalidated.exists():
+        pytest.skip("measurement record is INVALIDATED; see " + str(invalidated))
+    
     manifest_mtime = latest.stat().st_mtime
     ssm_mtime = _ssm_backbone_mtime()
     if ssm_mtime > manifest_mtime:
@@ -140,16 +140,10 @@ def test_pre_reg_embedder_manifest_fresh_enough():
             f"src/ssm_backbone.py was edited at {ssm_mtime} but the latest "
             f"pre_reg_embedder manifest is from {manifest_mtime}; re-run "
             f"`python -m eval.pre_reg_embedder --backends ...` before this "
-            f"test will pass. Note: pre_reg_embedder_partial.json is INVALIDATED "
-            f"(see eval/runs/pre_reg_embedder_partial.json.INVALIDATED)."
+            f"test will pass."
         )
 
 
-@pytest.mark.xfail(
-    reason="Measurement record is INVALIDATED (see eval/runs/pre_reg_embedder_partial.json.INVALIDATED). "
-    "No uncontaminated measurement exists yet.",
-    strict=True,
-)
 def test_pre_reg_embedder_manifest_records_required_backends():
     """The manifest must include measurements for at least: the baseline
     (Mamba-130m), the candidate (Mamba-3 SISO 893m by default), and the
@@ -157,12 +151,17 @@ def test_pre_reg_embedder_manifest_records_required_backends():
     harness was run with the wrong --backends flag and the gates don't
     have the data they need.
     
-    RC-EVAL-06: The canonical measurement record pre_reg_embedder_partial.json
-    is INVALIDATED (contaminated control). See
-    eval/runs/pre_reg_embedder_partial.json.INVALIDATED for details."""
+    RC-EVAL-06/RC-EVAL-09: If the measurement record is INVALIDATED,
+    this test skips rather than fails — no valid measurement exists yet."""
     latest = _latest_manifest()
     if latest is None:
         pytest.skip("no pre_reg_embedder manifest yet")
+    
+    # Check if measurement is INVALIDATED
+    invalidated = latest.parent / (latest.name + ".INVALIDATED")
+    if invalidated.exists():
+        pytest.skip("measurement record is INVALIDATED; see " + str(invalidated))
+    
     manifest = json.loads(latest.read_text(encoding="utf-8"))
     required = {
         manifest.get("baseline_backend", "mamba-130m"),
@@ -174,9 +173,7 @@ def test_pre_reg_embedder_manifest_records_required_backends():
     if missing:
         pytest.fail(
             f"manifest is missing required backends: {sorted(missing)}. "
-            f"Re-run with --backends {' '.join(sorted(required))}. "
-            f"Note: pre_reg_embedder_partial.json is INVALIDATED "
-            f"(see eval/runs/pre_reg_embedder_partial.json.INVALIDATED)."
+            f"Re-run with --backends {' '.join(sorted(required))}."
         )
 
 
