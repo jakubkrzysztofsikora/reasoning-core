@@ -157,13 +157,18 @@ def _save(state: dict) -> None:
 def _audit_tamper(reason: str) -> None:
     """Record tamper event in audit log."""
     try:
-        from .audit_log import append_audit_row
+        # Try relative import first (package context), then absolute
+        try:
+            from .audit_log import append_audit_row
+        except ImportError:
+            from audit_log import append_audit_row  # type: ignore
         append_audit_row(
             decision="tamper_detected",
             reason=f"kill_switch_state_tamper: {reason}",
             extra={"action": "reset_to_defaults"},
         )
     except Exception:
+        # Audit logging failed — still reset state but don't crash
         pass
     # Reset state file to safe defaults
     _STATE_DIR.mkdir(parents=True, exist_ok=True)
