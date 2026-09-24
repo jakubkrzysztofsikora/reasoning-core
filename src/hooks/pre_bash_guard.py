@@ -118,6 +118,10 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bPath\(['\"]\\?\.?/?[^'\"]*\\?\.envrc\.local['\"]\)\.(?:write_text|write_bytes)"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
+    # RC-SEC-04: symlink creation enables .envrc.local ingress via aliases.
+    # Block `ln -s` and bare `ln` (link creation generally).
+    re.compile(r"\bln\s+(-[a-zA-Z]*s[a-zA-Z]*\s+|--symbolic\b)"),
+    re.compile(r"\bln\s+\S+\s+\S+"),  # bare ln with two args (source + target)
     # `git apply` always writes working-tree files from a patch. Reviewer-flagged
     # in audit-hostile/2026-09-19-fixes §"Shell Guard Bypasses". Block outright;
     # legitimate patch application goes through Claude's Edit tool.

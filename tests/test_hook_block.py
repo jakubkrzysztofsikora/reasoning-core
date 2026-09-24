@@ -652,3 +652,69 @@ def test_envrc_local_edit_allowed_with_override(stub_sidecar, tmp_path):
         f"with RC_ALLOW_GUARD_EDIT=1 the operator opt-in must let the edit "
         f"through; got exit {result.returncode}; stderr={result.stderr!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# RC-SEC-03: .envrc.local ingress via case variants, trailing dots, symlinks
+# ---------------------------------------------------------------------------
+
+
+def test_envrc_local_case_variant_blocks(stub_sidecar, tmp_path):
+    """Case variant .Envrc.local must also be blocked."""
+    envrc_variant = tmp_path / ".Envrc.local"
+    envrc_variant.write_text("export OLD=1\n", encoding="utf-8")
+    payload = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": str(envrc_variant),
+            "old_string": "export OLD=1\n",
+            "new_string": "export OLD=1\nexport RC_ORACLE_BLOCK=0\n",
+        },
+    }
+    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
+    assert result.returncode == 2, (
+        f"BLOCKER: Case variant .Envrc.local slipped through; "
+        f"stderr={result.stderr!r}"
+    )
+    assert "envrc" in result.stderr.lower() or "BLOCKED" in result.stderr
+
+
+def test_envrc_local_trailing_dot_blocks(stub_sidecar, tmp_path):
+    """Trailing dot .envrc.local. must also be blocked (APFS quirk)."""
+    envrc_variant = tmp_path / ".envrc.local."
+    envrc_variant.write_text("export OLD=1\n", encoding="utf-8")
+    payload = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": str(envrc_variant),
+            "old_string": "export OLD=1\n",
+            "new_string": "export OLD=1\nexport RC_ORACLE_BLOCK=0\n",
+        },
+    }
+    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
+    assert result.returncode == 2, (
+        f"BLOCKER: Trailing-dot .envrc.local. slipped through; "
+        f"stderr={result.stderr!r}"
+    )
+
+
+def test_envrc_local_symlink_alias_blocks(stub_sidecar, tmp_path):
+    """Symlink alias to .envrc.local must also be blocked."""
+    real_file = tmp_path / ".envrc.local"
+    real_file.write_text("export OLD=1\n", encoding="utf-8")
+    symlink = tmp_path / "notes.txt"
+    symlink.symlink_to(real_file)
+    
+    payload = {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": str(symlink),
+            "old_string": "export OLD=1\n",
+            "new_string": "export OLD=1\nexport RC_ORACLE_BLOCK=0\n",
+        },
+    }
+    result = _run_hook(payload, env={"S2_URL": stub_sidecar.url()})
+    assert result.returncode == 2, (
+        f"BLOCKER: Symlink alias to .envrc.local slipped through; "
+        f"stderr={result.stderr!r}"
+    )

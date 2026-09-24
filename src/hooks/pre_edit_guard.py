@@ -669,15 +669,24 @@ def main() -> None:
     # so a single append (``export RC_ORACLE_BLOCK=0``) permanently
     # downgrades future sessions to warn-only. ``pre_bash_guard.py``
     # already blocks the shell/python writes; this layer closes the
-    # Edit/Write/MultiEdit gap (Claude\'s primary write path). Match
-    # by basename so any path component is caught (incl. ``/tmp/foo/../``).
+    # Edit/Write/MultiEdit gap (Claude's primary write path).
+    # RC-SEC-03: Use resolved realpath + casefold to catch:
+    #   - Case variants (.Envrc.local, .ENVRC.LOCAL)
+    #   - Trailing dots (.envrc.local.)
+    #   - Symlink aliases
+    #   - Double-slash paths (.envrc//.local)
+    # On resolve failure, block conservatively (treat as match).
     # Same override as layer-1: ``RC_ALLOW_GUARD_EDIT=1``.
     try:
-        _envrc_local_name = os.path.basename(file_path or "")
-    except (TypeError, ValueError):
-        _envrc_local_name = ""
+        from pathlib import Path as _Path
+        _resolved_name = _Path(file_path or "").resolve().name.casefold()
+        # Strip trailing dots (APFS/APFS-like filesystems allow them)
+        _resolved_name = _resolved_name.rstrip(".")
+    except (TypeError, ValueError, OSError):
+        # Resolve can fail on weird paths — block conservatively
+        _resolved_name = ".envrc.local"
     if (
-        _envrc_local_name == ".envrc.local"
+        _resolved_name == ".envrc.local"
         and not _guard_paths.is_override_active()
     ):
         audit_log.record_block(file_path)

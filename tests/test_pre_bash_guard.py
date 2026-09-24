@@ -57,6 +57,9 @@ def _run_hook(cmd: str, env_extra: dict[str, str] | None = None) -> tuple[int, s
         "chmod -x src/hooks/pre_edit_guard.py",
         "unset S2_FAIL_CLOSED",
         "unset RC_ALLOW_GUARD_EDIT",
+        # RC-SEC-04: symlink creation denied
+        "ln -s target link",
+        "ln --symbolic target link",
     ],
 )
 def test_hard_deny_blocks(cmd: str) -> None:
