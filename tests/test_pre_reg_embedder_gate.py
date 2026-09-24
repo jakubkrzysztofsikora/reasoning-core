@@ -93,6 +93,11 @@ def test_pre_reg_embedder_manifest_exists():
         )
 
 
+@pytest.mark.xfail(
+    reason="mamba3 unloadable on this stack; see PRE_REG_STATUS_2026_09_21. "
+    "Measurement record is INVALIDATED (see eval/runs/pre_reg_embedder_partial.json.INVALIDATED).",
+    strict=True,
+)
 def test_pre_reg_embedder_gates_all_pass():
     """The five pre-reg gates must all pass. If any gate fails, the
     candidate does NOT become the default embedder."""
@@ -113,6 +118,11 @@ def test_pre_reg_embedder_gates_all_pass():
         )
 
 
+@pytest.mark.xfail(
+    reason="Measurement record is INVALIDATED (see eval/runs/pre_reg_embedder_partial.json.INVALIDATED). "
+    "No uncontaminated measurement exists yet.",
+    strict=True,
+)
 def test_pre_reg_embedder_manifest_fresh_enough():
     """If ssm_backbone.py (or its _BACKENDS registry) was edited after
     the manifest was captured, the gates are stale and need re-running.
@@ -135,6 +145,11 @@ def test_pre_reg_embedder_manifest_fresh_enough():
         )
 
 
+@pytest.mark.xfail(
+    reason="Measurement record is INVALIDATED (see eval/runs/pre_reg_embedder_partial.json.INVALIDATED). "
+    "No uncontaminated measurement exists yet.",
+    strict=True,
+)
 def test_pre_reg_embedder_manifest_records_required_backends():
     """The manifest must include measurements for at least: the baseline
     (Mamba-130m), the candidate (Mamba-3 SISO 893m by default), and the
