@@ -420,16 +420,27 @@ _PINNED_REVISIONS: dict[str, str] = {
     "sshleifer/tiny-gpt2":        "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
     "mistralai/Mamba-Codestral-7B-v0.1": "4f086c08c1e0f07bdc50ca25125dbbf7475d21da",
     "microsoft/unixcoder-base": "5604afdc964f6c53782a6813140ade5216b99006",
-    # bge-code pin (RC-LOAD-PROBE-01 / round-2 Finding 3): fetched
-    # from the live HF model card by pin_model_cards.py. Until
-    # pin_model_cards.py runs on this host we accept the operator
-    # override via ``RC_BAAI_BGE_CODE_V1_REVISION``.
+    # bge-code pin (RC-LOAD-PROBE-01 / round-2 Finding 3, round-3 retest):
+    # fetched from the live HF model card 2026-09-23
+    # (https://huggingface.co/api/models/BAAI/bge-code-v1). Operators may
+    # still override via RC_BAAI_BGE_CODE_V1_REVISION.
     "BAAI/bge-code-v1": os.environ.get(
         "RC_BAAI_BGE_CODE_V1_REVISION", ""
-    ) or "REVIEWER_PIN_REQUIRED",
-    # Mamba-3 candidates: no SHA pinned yet. pin_model_cards.py fills
-    # these in from the live HF model cards; until then operators can
-    # override per-checkpoint via RC_<REPO_SLUG>_REVISION.
+    ) or "bd67852057c5d7ddcc7b8234d9d6c410117ed851",
+    # Mamba-3 candidate pins (round-3 retest): fetched from the live HF
+    # model cards 2026-09-23. Operators may override per checkpoint via
+    # RC_<REPO_SLUG>_REVISION. pin_model_cards.py remains available for
+    # refreshing these on a cadence but is no longer required for the
+    # loader to proceed under _resolve_revision_for_backend.
+    "state-spaces/mamba3-siso-893m": os.environ.get(
+        "RC_STATE_SPACES_MAMBA3_SISO_893M_REVISION", ""
+    ) or "e205b6e6d6075d089140d2e9170970aabc05c481",
+    "state-spaces/mamba3-mimo-894m": os.environ.get(
+        "RC_STATE_SPACES_MAMBA3_MIMO_894M_REVISION", ""
+    ) or "b5c7db27d1c7781d27c203bfd18601b3bbff7bc0",
+    "state-spaces/mamba3-siso-1.5b": os.environ.get(
+        "RC_STATE_SPACES_MAMBA3_SISO_1_5B_REVISION", ""
+    ) or "5cfc721542ec9ccee768088b2fd6b7e8101219d8",
 }
 
 

@@ -343,12 +343,40 @@ def test_decide_writes_no_op_when_all_unloadable(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_probe_refuses_unpinned_bge_code(monkeypatch):
+def test_probe_blesses_pinned_bge_code(monkeypatch):
+    """Round-3 retest: bge-code now has a real 40-char SHA pin
+    in ``_PINNED_REVISIONS`` (round-3 ``bd678520...ed851``), so the
+    probe must bless it. This is the inverse of the round-2 test
+    of the same name which guarded against the unpinned-placeholder
+    vector; that vector is now closed by the real pin."""
     from src import ssm_backbone
-    assert ssm_backbone.backend_loadability_probe("bge-code") is False, (
-        "BLOCKER #3: probe blesses bge-code without a SHA pin; the "
-        "loader will fail-closed on the unpinned revision."
+    assert ssm_backbone.backend_loadability_probe("bge-code") is True, (
+        "bge-code carries a real 40-char SHA in _PINNED_REVISIONS; "
+        "probe must bless it."
     )
+
+
+def test_probe_refuses_bge_code_when_pin_is_placeholder(monkeypatch):
+    """The original round-2 Finding 3 contract: if the bge-code pin
+    is removed or set back to the ``REVIEWER_PIN_REQUIRED`` placeholder,
+    the probe must refuse it so the loader does not fail-closed on
+    every score."""
+    from src import ssm_backbone
+    saved_pin = ssm_backbone._PINNED_REVISIONS.get("BAAI/bge-code-v1")
+    monkeypatch.setitem(
+        ssm_backbone._PINNED_REVISIONS,
+        "BAAI/bge-code-v1",
+        "REVIEWER_PIN_REQUIRED",
+    )
+    try:
+        assert ssm_backbone.backend_loadability_probe("bge-code") is False
+    finally:
+        if saved_pin is not None:
+            monkeypatch.setitem(
+                ssm_backbone._PINNED_REVISIONS,
+                "BAAI/bge-code-v1",
+                saved_pin,
+            )
 
 
 def test_probe_refuses_unpinned_unixcoder_when_pin_removed(monkeypatch):
