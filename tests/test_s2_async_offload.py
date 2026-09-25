@@ -9,13 +9,9 @@ inside asyncio.to_thread, so /health stays responsive during a /score call.
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 
 import pytest
-
-# Set enforcement token before importing s2_core so _get_operator_token returns it.
-os.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
 
 from src import s2_core
 

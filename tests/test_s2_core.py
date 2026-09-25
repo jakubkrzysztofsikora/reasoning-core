@@ -10,10 +10,6 @@ once via a session-scoped fixture.
 """
 from __future__ import annotations
 
-# RC-SEC-07: Set auth token early so _get_operator_token() sees it.
-import os as _os_ci
-_os_ci.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
-
 import importlib
 import json
 import os

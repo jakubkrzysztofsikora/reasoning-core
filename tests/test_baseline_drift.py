@@ -8,17 +8,13 @@ RC-SEC-07: /score and /baseline require bearer token auth.
 """
 from __future__ import annotations
 
-# MUST set env var early so _get_operator_token() sees it at call time.
-import os as _os
-_os.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
-
 import sys
 
 import pytest
 
 pytestmark = pytest.mark.slow
 
-REPO_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
