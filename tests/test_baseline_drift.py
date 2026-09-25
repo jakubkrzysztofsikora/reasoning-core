@@ -8,6 +8,7 @@ RC-SEC-07: /score and /baseline require bearer token auth.
 """
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
