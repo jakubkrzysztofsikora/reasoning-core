@@ -3,6 +3,9 @@
 Heavy deps (torch, transformers, tree_sitter) are gated with importorskip.
 The SSM backbone is loaded once via the session-scoped ``loaded_backbone``
 fixture pattern (mirrors test_s2_core.py) to keep the test suite cheap.
+
+RC-SEC-07: /score and /baseline require bearer token auth. CI workflow sets
+RC_ENFORCEMENT_TOKEN as a step-level env var. Local runs must set it manually.
 """
 
 from __future__ import annotations
@@ -11,9 +14,6 @@ import os
 import sys
 
 import pytest
-
-# RC-SEC-07: /score and /baseline now require bearer token auth.
-os.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
 
 pytestmark = pytest.mark.slow
 
