@@ -12,6 +12,9 @@ import sys
 
 import pytest
 
+# RC-SEC-07: /score and /baseline now require bearer token auth.
+os.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
+
 pytestmark = pytest.mark.slow
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

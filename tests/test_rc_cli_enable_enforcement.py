@@ -45,7 +45,11 @@ def isolated_project(tmp_path, monkeypatch):
 
 def _auth_env(monkeypatch, token: str = "operator-secret-token-1234567890ab"):
     """Simulate authenticated operator environment with keychain match."""
+    import hashlib
     monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", token)
+    # On non-darwin (CI), auth requires RC_AUTH_TOKEN_HASH matching the token
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    monkeypatch.setenv("RC_AUTH_TOKEN_HASH", token_hash)
     # Mock subprocess.run to handle both sudo check and keychain lookup
     def fake_run(cmd, *args, **kwargs):
         if cmd == ["sudo", "-n", "true"]:
