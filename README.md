@@ -139,6 +139,14 @@ session-baseline path is rarely hit in practice — so the 8-dim vector is what
 production edits get. All dimensions are scored in [0, 1] with a chord-distance
 `coherence_delta` on [0, 2].
 
+**Latency cap and symbolic fallback** — The neural path has a hard cap of
+1500 ms (`S2_HARD_CAP_MS`). When exceeded (common on CPU with `mamba-130m` for
+large files), the gate falls back to symbolic oracles (`py_compile`, `ruff`,
+`ast.parse`, rules.yaml) with a stderr notice:
+`[hybrid-reasoner] sidecar hard cap exceeded (1500ms); symbolic fallback engaged.`
+The fallback is not silent — it is logged and audited as `reason="symbolic_fallback"`.
+Under `S2_FAIL_CLOSED=1`, a budget-exceeded result blocks rather than allows.
+
 **Decision-ID footer on every block** — `exit-2` blocks always end with
 `Decision ID: <hex>` and an `rc explain` / `rc bypass-next` follow-up so the
 audit log and operator action stay linked by the same ID.

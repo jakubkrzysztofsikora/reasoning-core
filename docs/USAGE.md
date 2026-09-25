@@ -360,9 +360,14 @@ refused — urllib doesn't strip the `Authorization` header on redirect, so a
 malicious upstream could otherwise capture the key.
 
 **Q: Will it slow me down?**
-A: p95 ~5s per Edit on CPU with `mamba-130m`. Latency is dominated by the
-embedder forward pass; CUDA / MLX kernels would cut it to ~50ms. Tracked in
-the roadmap.
+A: The neural scoring path has a hard cap of 1500 ms (`S2_HARD_CAP_MS`). When
+the cap is exceeded (common on CPU with `mamba-130m` for large files), the gate
+falls back to symbolic oracles (`py_compile`, `ruff`, `ast.parse`) with a stderr
+notice: `[hybrid-reasoner] sidecar hard cap exceeded (1500ms); symbolic fallback engaged.`
+The median neural-path latency on CPU is unknown from published data; the
+historical p95 ~5s figure in BENCHMARKS.md refers to pre-cap measurements and
+does not reflect current behavior. CUDA / MLX kernels would keep the full neural
+path under the cap (~50ms). Tracked in the roadmap.
 
 **Q: It blocked a legitimate refactor. How do I override?**
 A: Either revise to address the top-3 risk contributors (recommended), set

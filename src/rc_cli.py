@@ -1229,7 +1229,9 @@ def cmd_label(args: argparse.Namespace) -> int:
     sys.stdout.write("=" * 60 + "\n")
     sys.stdout.write(f"decision_id: {decision_id}\n")
     sys.stdout.write(f"file:        {file_path}\n")
-    sys.stdout.write(f"decision:    {audit_row.get('decision', '?')}\n")
+    # NOTE: tool's own decision is intentionally hidden to prevent labeler bias.
+    # The two-blind-labeler protocol (EVAL_PROTOCOL.md) requires labels be
+    # assigned without seeing the gate's verdict.
     sys.stdout.write(f"signal:      {audit_row.get('signal_source', '?')}\n")
     sys.stdout.write("=" * 60 + "\n")
     before_src = (audit_row.get("before_src") or "")[:500]

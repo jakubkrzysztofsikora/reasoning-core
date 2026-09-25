@@ -1488,11 +1488,11 @@ def score_change(
     public_lang = PUBLIC_LANGUAGE.get(lang_id, lang_id)
     summary = _summarize(ais, coherence_delta, risk_vector, regression, public_lang)
 
-    # Auto-persist baseline on first encounter so cumulative_drift fires
-    # on subsequent edits within the same session.
-    if session_id:
-        _persist_session_baseline_for_path(session_id, path, emb_after)
-
+    # NOTE: Auto-persist of baselines removed (RC-SEC-07). Baseline registration
+    # is now exclusively via the authenticated POST /baseline endpoint. This
+    # prevents unauthenticated callers from rewriting a victim session's drift
+    # corpus through /score.
+    
     return ImpactReport(
         architectural_impact_score=float(ais),
         coherence_delta=float(coherence_delta),
@@ -1643,15 +1643,43 @@ def create_app():
     @app.post("/score")
     async def score(request: Request):
         t0 = time.monotonic()
+        
+        # RC-SEC-07: Bearer token authentication for /score
+        auth_header = request.headers.get("authorization", "")
+        expected_token = _get_operator_token()
+        if not expected_token:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=503,
+                content={"error": "auth_unavailable", "detail": "operator token not provisioned"},
+            )
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != expected_token:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "detail": "valid bearer token required"},
+            )
+        
+        # Body-size cap: reject payloads > 10 MB to prevent memory exhaustion
+        body = await request.body()
+        if len(body) > 10 * 1024 * 1024:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=413,
+                content={"error": "payload_too_large", "detail": "max 10 MB"},
+            )
+        
         try:
-            raw = await request.body()
-            payload = json.loads(raw.decode("utf-8")) if raw else {}
-        except Exception as exc:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
             _record_latency((time.monotonic() - t0) * 1000.0, error=True)
             return JSONResponse(
                 status_code=400,
-                content={"error": "bad_request", "detail": f"invalid JSON: {exc}"},
+                content={"error": "bad_request", "detail": "invalid JSON"},
             )
+        # Body already parsed in auth section above as `data`
+        payload = data
+        
         if not isinstance(payload, dict):
             _record_latency((time.monotonic() - t0) * 1000.0, error=True)
             return JSONResponse(

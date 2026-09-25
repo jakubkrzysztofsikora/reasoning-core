@@ -195,8 +195,9 @@ n≥3 evidence before any directional claim can be made.
   (B spent $21.58 vs A's $8.71) inflates B's mean tokens; without P0, B's
   mean cost drops to ~$5.34 (−40% vs A).
 - **Wall clock**: Setup B finishes ~23% faster on average. The gate is not
-  free (p95 ~5 s/Edit on CPU Mamba); the speedup comes from B avoiding
-  regression-rework loops.
+  free (neural path capped at 1500 ms; symbolic fallback engaged when exceeded).
+  The speedup comes from B avoiding regression-rework loops, not from raw
+  latency reduction.
 - **Quality**: implementation-quality means are flat. B wins by **decision
   rule** (gates → impl_q → plan_q → cost), not by raw rubric points.
 - **Failures (informative)**:
