@@ -22,8 +22,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 # RC-SEC-07: Bearer token for /score and /baseline auth.
-# CI workflow sets RC_ENFORCEMENT_TOKEN; local runs must set it manually.
-_AUTH_TOKEN = os.environ.get("RC_ENFORCEMENT_TOKEN", "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!")
+# Must match the token set in .github/workflows/lint-and-test.yml pytest step.
+_AUTH_TOKEN = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
 _AUTH_HEADER = {"Authorization": f"Bearer {_AUTH_TOKEN}"}
 
 
@@ -56,9 +56,15 @@ def loaded_backbone():
 def http_client(s2_core_module, loaded_backbone):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
-    app = s2_core_module.create_app()
-    with TestClient(app) as client:
-        yield client
+    # RC-SEC-07: Mock _get_operator_token to return our test token
+    original_get_token = s2_core_module._get_operator_token
+    s2_core_module._get_operator_token = lambda: _AUTH_TOKEN
+    try:
+        app = s2_core_module.create_app()
+        with TestClient(app) as client:
+            yield client
+    finally:
+        s2_core_module._get_operator_token = original_get_token
 
 
 # --- ImpactReport schema ---------------------------------------------------
