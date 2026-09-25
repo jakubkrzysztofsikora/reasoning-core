@@ -55,6 +55,9 @@ def loaded_backbone():
 def http_client(s2_core_module, loaded_backbone):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
+    # RC-SEC-07: Ensure s2_core's os.environ sees our token
+    import os as _real_os
+    _real_os.environ["RC_ENFORCEMENT_TOKEN"] = _AUTH_TOKEN
     app = s2_core_module.create_app()
     with TestClient(app) as client:
         yield client
