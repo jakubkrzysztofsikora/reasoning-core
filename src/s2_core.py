@@ -1488,11 +1488,13 @@ def score_change(
     public_lang = PUBLIC_LANGUAGE.get(lang_id, lang_id)
     summary = _summarize(ais, coherence_delta, risk_vector, regression, public_lang)
 
-    # NOTE: Auto-persist of baselines removed (RC-SEC-07). Baseline registration
-    # is now exclusively via the authenticated POST /baseline endpoint. This
-    # prevents unauthenticated callers from rewriting a victim session's drift
-    # corpus through /score.
-    
+    # Auto-persist baseline on first encounter so cumulative_drift fires
+    # on subsequent edits within the same session. Safe because POST /score
+    # now requires bearer token authentication (RC-SEC-07); only authorized
+    # operators can trigger baseline persistence.
+    if session_id:
+        _persist_session_baseline_for_path(session_id, path, emb_after)
+
     return ImpactReport(
         architectural_impact_score=float(ais),
         coherence_delta=float(coherence_delta),
