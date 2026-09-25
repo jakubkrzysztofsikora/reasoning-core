@@ -21,6 +21,11 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+# RC-SEC-07: Bearer token for /score and /baseline auth.
+# CI workflow sets RC_ENFORCEMENT_TOKEN; local runs must set it manually.
+_AUTH_TOKEN = os.environ.get("RC_ENFORCEMENT_TOKEN", "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!")
+_AUTH_HEADER = {"Authorization": f"Bearer {_AUTH_TOKEN}"}
+
 
 @pytest.fixture(scope="module")
 def s2_core_module():
@@ -102,6 +107,7 @@ def test_metrics_records_score_call(http_client, s2_core_module):
     resp = http_client.post(
         "/score",
         json={"path": "/tmp/m.py", "before_src": PY, "after_src": PY},
+        headers=_AUTH_HEADER,
     )
     assert resp.status_code == 200
     metrics = http_client.get("/metrics").json()
@@ -129,7 +135,7 @@ def test_baseline_post_happy_path(http_client, s2_core_module):
             {"path": "b.py", "src": "def b():\n    return 2\n"},
         ],
     }
-    resp = http_client.post("/baseline", json=body)
+    resp = http_client.post("/baseline", json=body, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["status"] == "ok"
@@ -140,10 +146,10 @@ def test_baseline_post_happy_path(http_client, s2_core_module):
 
 def test_baseline_post_rejects_bad_body(http_client):
     # Missing session_id.
-    r = http_client.post("/baseline", json={"files": [{"path": "x.py", "src": "x = 1"}]})
+    r = http_client.post("/baseline", json={"files": [{"path": "x.py", "src": "x = 1"}]}, headers=_AUTH_HEADER)
     assert r.status_code == 400
     # Missing files.
-    r = http_client.post("/baseline", json={"session_id": "x"})
+    r = http_client.post("/baseline", json={"session_id": "x"}, headers=_AUTH_HEADER)
     assert r.status_code == 400
 
 
@@ -157,14 +163,14 @@ def test_score_with_session_id_returns_cumulative_drift(http_client, s2_core_mod
             {"path": "a.py", "src": base_src},
             {"path": "b.py", "src": base_src},
         ],
-    })
+    }, headers=_AUTH_HEADER)
     # Now score against the same session.
     resp = http_client.post("/score", json={
         "path": "/tmp/c.py",
         "before_src": base_src,
         "after_src": base_src,
         "session_id": "sess-B",
-    })
+    }, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     assert "cumulative_drift" in body
@@ -177,7 +183,7 @@ def test_score_without_session_id_omits_cumulative_drift(http_client, s2_core_mo
         "path": "/tmp/d.py",
         "before_src": PY,
         "after_src": PY,
-    })
+    }, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     # Field is omitted when no baseline is set.
@@ -192,7 +198,7 @@ def test_score_with_unknown_session_omits_cumulative_drift(http_client, s2_core_
         "before_src": PY,
         "after_src": PY,
         "session_id": "no-baseline-session",
-    })
+    }, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     assert "cumulative_drift" not in body
