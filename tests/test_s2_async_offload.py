@@ -56,7 +56,7 @@ async def test_health_responds_while_score_in_flight(app):
                         "after_src": "print('b')\n",
                         "session_id": "test",
                     },
-                    headers={"Authorization": "Bearer test-token-for-baseline-offload-test-minimum-32-chars!!!"},
+                    headers=_AUTH_HEADER,
                 )
             finally:
                 score_thread_done.set()
