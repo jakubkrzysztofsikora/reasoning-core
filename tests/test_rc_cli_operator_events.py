@@ -80,7 +80,10 @@ def test_bypass_next_arms_and_emits_operator_override(isolated_rc, monkeypatch):
         return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
     monkeypatch.setattr(subprocess, "run", fake_run)
     
+    import hashlib
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", token)
+    monkeypatch.setenv("RC_AUTH_TOKEN_HASH", token_hash)
     rc = rc_cli.main(["bypass-next"])
     assert rc == 0, f"expected authenticated bypass-next to succeed; got rc={rc}"
     assert ks.snapshot().get("bypass_next") is True
