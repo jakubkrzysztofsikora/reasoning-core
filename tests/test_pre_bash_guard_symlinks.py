@@ -97,7 +97,9 @@ def test_resolve_symlink_to_guarded_no_match_for_missing(tmp_path):
 
 def test_symlink_overwrite_through_tmp_blocks(tmp_path, monkeypatch):
     """The full hostile chain: ln -s src/hooks/pre_bash_guard.py payload.tmp,
-    then `echo x > payload.tmp` must be blocked with exit 2."""
+    then `echo x > payload.tmp` must be blocked with exit 2.
+    
+    RC-SEC-04: ln -s itself is now hard-denied against guarded paths."""
     repo = tmp_path / "repo"
     repo.mkdir()
     hooks_dir = repo / "src" / "hooks"
@@ -105,27 +107,13 @@ def test_symlink_overwrite_through_tmp_blocks(tmp_path, monkeypatch):
     guarded = hooks_dir / "pre_bash_guard.py"
     guarded.write_text("# original\n")
 
-    # Run the link command first -- the link creation itself doesn't touch a
-    # guarded file, so it should pass.
+    # Run the link command -- ln -s targeting a guarded path is now denied.
     link = repo / "payload.tmp"
-    code, _ = _run_hook(f"ln -s {guarded} {link}")
-    assert code == 0, f"link creation unexpectedly blocked (exit {code})"
+    code, stderr = _run_hook(f"ln -s {guarded} {link}")
+    assert code == 2, f"expected ln -s to guarded path to be blocked (exit 2), got {code}"
+    assert "BLOCKED" in stderr or "hard-deny" in stderr.lower()
 
-    # Now create the actual symlink (the hook only inspects intent, not
-    # filesystem state; we materialize it so _resolve_symlink_to_guarded
-    # has a realpath to resolve).
-    os.symlink(str(guarded), str(link))
-
-    # Run the attack through the hook binary. We point cwd at the repo by
-    # chdir-ing the subprocess via env CURRENT_DIR isn't honored, so use the
-    # absolute path of the link in the cmd.
-    code, stderr = _run_hook(f"echo evil > {link}")
-    assert code == 2, (
-        f"expected symlink overwrite to be blocked (exit 2), got {code}; "
-        f"stderr={stderr!r}"
-    )
-    assert "BLOCKED" in stderr
-    # And the guarded file on disk must be untouched.
+    # The guarded file on disk must be untouched.
     assert guarded.read_text() == "# original\n"
 
 
