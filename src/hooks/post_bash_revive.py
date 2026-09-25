@@ -53,12 +53,43 @@ def _sidecar_alive() -> bool:
         return False
 
 
+def _is_valid_repo_root(path: str) -> bool:
+    """Check that path looks like a real git repo root, not an attacker-planted directory."""
+    try:
+        import subprocess as sp
+        result = sp.run(
+            ["git", "-C", path, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return False
+        resolved = os.path.realpath(result.stdout.strip())
+        requested = os.path.realpath(path)
+        return resolved == requested
+    except Exception:
+        return False
+
+
 def _start_sidecar() -> None:
-    """Best-effort relaunch via scripts/start-sidecar.sh, fully detached."""
+    """Best-effort relaunch via scripts/start-sidecar.sh, fully detached.
+    
+    Validates CLAUDE_PROJECT_DIR is a real git repo root before executing
+    the revive script — prevents hostile repos from planting scripts that
+    get executed as the user on sidecar death.
+    """
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or _guess_project_dir()
     if not project_dir:
         sys.stderr.write("[hybrid-reasoner] revive: cannot locate CLAUDE_PROJECT_DIR\n")
         return
+    
+    # Validate this is a real git repo root, not an attacker-planted directory
+    if not _is_valid_repo_root(project_dir):
+        sys.stderr.write(
+            f"[hybrid-reasoner] revive: {project_dir} is not a valid git repo root; "
+            f"refusing to execute start-sidecar.sh (possible hostile repo)\n"
+        )
+        return
+    
     script = os.path.join(project_dir, "scripts", "start-sidecar.sh")
     if not os.path.isfile(script):
         sys.stderr.write(f"[hybrid-reasoner] revive: script missing at {script}\n")

@@ -51,15 +51,14 @@ Source of truth: [`PLAN.md`](PLAN.md) +
   (`c452cb4`/`c0118a4`/`4997ec7`/`dcd3598`/`1738b57`/`1bc2718`).
 - **Unified `install.sh` / `uninstall.sh`** — one command to enable all
   supported CLIs in a target repo; one to revert.
-- **v0.2.0 wheel bootstrap** — `pip install reasoning-core[full]` +
+- **Git-based bootstrap** — `pip install "git+https://...@main#egg=reasoning-core[full]"` +
   `rc init` replaces the 8-step clone/venv/launchd dance. Templates ship
   as package data (`src/data/templates/`), the `rc` console_script
-  resolves into the installed wheel, and `rc init` writes per-CLI hook
+  resolves into the installed package, and `rc init` writes per-CLI hook
   files, downloads mamba-130m, and boots the sidecar supervisor
   (launchd on macOS, systemd --user on Linux). `install.sh` remains for
   the editable / maintainer flow; deprecation banner added in v0.2,
-  removal in v0.4. Wheel signed with sigstore/cosign and published via
-  PyPI Trusted Publisher.
+  removal in v0.4. PyPI publication pending namespace resolution.
 - **Architectural rule engine** (`.reasoning-core/rules.yaml` +
   `_rule_engine.py`) — `forbid_import` / `forbid_pattern` rules co-emitted
   with the neural risk vector through the same exit-2 pipe; fail-closed by

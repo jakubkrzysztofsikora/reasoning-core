@@ -146,7 +146,23 @@ def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> 
         for w in warnings:
             sys.stderr.write(f"  warning: {w}\n")
         return (2, warnings)
-    store.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+    
+    # Write canonical JSON + HMAC-SHA256 sidecar
+    records_json = json.dumps(records, indent=2) + "\n"
+    store.write_text(records_json, encoding="utf-8")
+    
+    # Compute and write MAC sidecar
+    from rc_verify_guard import _hmac_key, _compute_mac, MAC_SUFFIX
+    key = _hmac_key()
+    if key is None:
+        warnings.append("HMAC key unavailable; guard_hashes.json written without MAC sidecar")
+    else:
+        mac_path = store.parent / (store.name + MAC_SUFFIX)
+        mac_value = _compute_mac(records_json, key)
+        mac_path.write_text(mac_value + "\n", encoding="utf-8")
+        os.chmod(str(store), 0o600)
+        os.chmod(str(mac_path), 0o600)
+    
     return (0, warnings)
 def _verify_guard_hash(file_path: str, store_path: str | None = None) -> tuple[bool, str]:
     """Verify a guard file against a stored SHA-256 hash.
@@ -1311,7 +1327,13 @@ def cmd_audit_history(args: argparse.Namespace) -> int:
     """Mine recent git history and print per-commit quality labels.
     Labels commits as positive/negative based on whether they were followed
     within 48 hours by a fix/revert/hotfix/patch touching the same files.
-    This is the feedback loop input for Phase-4 calibration.
+    
+    NOTE: This command prints labels for operator review. It does NOT
+    recalibrate thresholds or feed Phase-4 calibration directly. The
+    in-tree recalibration pipeline (_supervisor_recalibrate.py) runs on
+    a different miner (eval/calibration_corpus.py) and only triggers on
+    a CUSUM signal. This output is feedback-loop input for Phase-4, not
+    an active calibration mechanism.
     """
     project_dir = Path(args.project_dir) if args.project_dir else _project_dir()
     if not project_dir.is_dir():

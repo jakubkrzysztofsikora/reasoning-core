@@ -61,18 +61,15 @@ outcomes.
 
 ## Quick start
 
-Two commands. No git clone, no venv, no launchd dance, no `pip install -r
-requirements.txt`. `pip install reasoning-core[full]` puts the framework
-and every Python dep (torch, transformers, tree-sitter, fastapi, mcp,
-ruff, …) on PATH and installs an `rc` console script. `rc init` wires
-hooks into the current repo, downloads the default embedder, and brings
-up the sidecar supervisor as a per-user daemon.
+**⚠️  PyPI namespace collision:** `pip install reasoning-core` installs an
+unrelated Inria-affiliated package (`reasoning-core` by `sileod`, v0.4.0).
+This project has not yet published to PyPI. Use the git-based install below.
 
 ```bash
-# 1. Install the framework (one-shot, ~5 min on broadband — pulls ~500 MB
+# 1. Install from source (one-shot, ~5 min on broadband — pulls ~500 MB
 #    of Python deps and the 250 MB mamba-130m checkpoint up front so the
 #    gate is complete by the time you reach step 3).
-pip install reasoning-core[full]
+pip install "git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@main#egg=reasoning-core[full]"
 
 # 2. Wire it into the repo you want gated
 cd /path/to/your-repo
@@ -83,16 +80,23 @@ rc init                         # adds .envrc, .claude/, .codex/, .gemini/,
 claude                           # or: codex / gemini / copilot / kimi / vibe / pi
 ```
 
-If `pip install reasoning-core[full]` fails on your platform, the
-fallback flow is `pip install reasoning-core && pip install -r
-requirements.txt` (still no git clone). See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md)
-for moving off the old clone-and-install flow.
+If the git install fails on your platform, clone manually:
+
+```bash
+git clone https://github.com/jakubkrzysztofsikora/reasoning-core.git
+cd reasoning-core
+pip install -e ".[full]"
+rc init
+```
+
+See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md) for moving off the old
+clone-and-install flow.
 
 To move between framework versions without re-doing the install:
 
 ```bash
 rc upgrade                  # pip install --upgrade + rc init --check (idempotent)
-rc upgrade --ref v0.3.0     # pin a specific tag/branch
+rc upgrade --ref main       # pin a specific branch (no tags published yet)
 rc upgrade --dry-run         # see the plan before it runs
 ```
 

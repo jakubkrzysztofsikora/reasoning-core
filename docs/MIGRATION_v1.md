@@ -1,20 +1,23 @@
-# Migrating from the v0.1 quickstart to the v0.2 wheel flow
+# Migrating from the v0.1 quickstart to the git-based flow
 
-v0.2.0 ships the new bootstrap. The old `git clone` + venv + `pip install
--r requirements.txt` + `huggingface-cli download` + `install.sh` dance
-still works (the files are unchanged), but the recommended path is now
-two commands:
+**⚠️  PyPI namespace collision:** `pip install reasoning-core` installs an
+unrelated Inria-affiliated package. This project has not yet published to
+PyPI. Use the git-based install below.
+
+The old `git clone` + venv + `pip install -r requirements.txt` +
+`huggingface-cli download` + `install.sh` dance still works (the files are
+unchanged), but the recommended path is now:
 
 ```bash
-pip install reasoning-core[full]
+pip install "git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@main#egg=reasoning-core[full]"
 cd /path/to/your-repo && rc init
 ```
 
 ## Walkthrough
 
-1. **Install the wheel.**
+1. **Install from source.**
    ```bash
-   pip install --upgrade reasoning-core[full]
+   pip install "git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@main#egg=reasoning-core[full]"
    ```
    This pulls every runtime dep the framework needs (~500 MB across
    torch, transformers, tree-sitter, fastapi, mcp, ruff, …). The

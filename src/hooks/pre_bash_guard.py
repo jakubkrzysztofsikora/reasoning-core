@@ -42,6 +42,8 @@ ALLOW_OVERRIDE_ENV = "RC_ALLOW_GUARD_EDIT"
 
 # Filename / path fragments that, when targeted by a write op, are denied.
 GUARDED_PATH_FRAGMENTS = (
+    ".envrc",
+    ".envrc.local",
     ".claude/settings.json",
     ".claude/settings.local.json",
     "src/hooks/pre_edit_guard.py",
@@ -116,6 +118,12 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:echo|cat|printf|sed)\b[^|;&]*>\s*[^|;&]*\.envrc\.local\b"),
     re.compile(r"\b(?:writeFileSync|writeFile|write_text|fwrite)\b[^|;&]*\.envrc\.local\b"),
     re.compile(r"\bPath\(['\"]\\?\.?/?[^'\"]*\\?\.envrc\.local['\"]\)\.(?:write_text|write_bytes)"),
+    # RC-SEC-04: Copy-tool family — deny dd, ln, rsync against guarded paths.
+    # These bypass the source-extension / guarded-fragment matching in the
+    # copy pattern because they accept arbitrary destinations.
+    re.compile(r"\bdd\b[^|;&]*\bof\s*=\s*[^|;&]*(?:\.envrc(?:\.local)?|\.claude/settings|src/hooks/|kill_switches)"),
+    re.compile(r"\bln\s+(?:-sf?|--symbolic)\b[^|;&]*(?:\.envrc(?:\.local)?|\.claude/settings|src/hooks/|kill_switches)"),
+    re.compile(r"\brsync\b[^|;&]*(?:\.envrc(?:\.local)?|\.claude/settings|src/hooks/|kill_switches)"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
     # RC-SEC-05: Git wrapper bypasses — deny indirect git invocations that
