@@ -421,6 +421,8 @@ left these items out-of-scope for its blockers round:
     6/13, leaving 7 as known limits.
   - PyPI namespace collision (verified by direct fetch of
     `pip install reasoning-core` returning an unrelated project).
+    **Fixed 2026-09-25:** README quick start now uses git-based install;
+    warning banner added. No PyPI release yet.
   - Pre-reg embedder eval ladder (Mamba-3 default flip blocked
     until `mamba-ssm>=2.0.0` is installed and the pre-reg gates
     pass).
@@ -430,6 +432,20 @@ left these items out-of-scope for its blockers round:
     `.envrc.local` and then edit the alias; the edit guard catches this via
     realpath resolution (WO-5), but bare `ln -s` is not denied. Residual risk:
     low (requires two-step attack, second step caught by edit guard).
+    **Partially fixed 2026-09-25:** `ln -s` targeting guarded paths now
+    hard-denied (RC-SEC-04); residual gap: ln -s to non-guarded paths still
+    allowed.
+
+**Round 6 remediation (2026-09-25):** 26/27 findings addressed.
+Suite: 992 passed, 4 skipped, 1 xfailed, 0 failed. Key fixes:
+  - Front door: PyPI collision warning + git-based install flow
+  - Security: .envrc.local guarded, dd/ln/rsync denied, revive hook validated,
+    HMAC guard store, llama loopback bind, /score bearer token auth + 10MB cap
+  - Docs: audit-history print-only clarified, Decision ID all guards emit,
+    latency story reconciled (1500ms cap + symbolic fallback documented)
+  - Eval circularity: tool decision hidden from labeling view, record_override
+    NameError fixed
+  - C++ support: manifest + sidecar grammar loaders for .cpp/.h/.c files
 
 The shell-guard regex set now blocks `git apply`, `git checkout <sha>`,
 `git restore`, `git stash apply`, `mv/cp/install/rsync` to source extensions,
