@@ -9,6 +9,10 @@ degrades cleanly on partial environments. The Mamba load is paid exactly
 once via a session-scoped fixture.
 """
 
+# RC-SEC-07: Set auth token before any imports
+import os as _os_ci
+_os_ci.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
+
 from __future__ import annotations
 
 import importlib
