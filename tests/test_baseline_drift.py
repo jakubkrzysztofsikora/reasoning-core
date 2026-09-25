@@ -6,12 +6,11 @@ fixture pattern (mirrors test_s2_core.py) to keep the test suite cheap.
 
 RC-SEC-07: /score and /baseline require bearer token auth.
 """
+from __future__ import annotations
 
-# MUST set env var BEFORE any imports so _get_operator_token() sees it.
+# MUST set env var early so _get_operator_token() sees it at call time.
 import os as _os
 _os.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
-
-from __future__ import annotations
 
 import sys
 
