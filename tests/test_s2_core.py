@@ -410,8 +410,8 @@ def test_http_score_malformed_json(http_client):
     resp = http_client.post(
         "/score",
         content=b"{not valid json",
-        headers={"Content-Type": "application/json"},
-    , headers=_AUTH_HEADER)
+        headers={"Content-Type": "application/json", **_AUTH_HEADER},
+    )
     assert resp.status_code == 400
 
 
