@@ -9,9 +9,13 @@ inside asyncio.to_thread, so /health stays responsive during a /score call.
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 
 import pytest
+
+# Set enforcement token before importing s2_core so _get_operator_token returns it.
+os.environ["RC_ENFORCEMENT_TOKEN"] = "test-token-for-baseline-offload-test-minimum-32-chars!!!"
 
 from src import s2_core
 
@@ -53,6 +57,7 @@ async def test_health_responds_while_score_in_flight(app):
                         "after_src": "print('b')\n",
                         "session_id": "test",
                     },
+                    headers={"Authorization": "Bearer test-token-for-baseline-offload-test-minimum-32-chars!!!"},
                 )
             finally:
                 score_thread_done.set()
