@@ -4,25 +4,25 @@ Heavy deps (torch, transformers, tree_sitter) are gated with importorskip.
 The SSM backbone is loaded once via the session-scoped ``loaded_backbone``
 fixture pattern (mirrors test_s2_core.py) to keep the test suite cheap.
 
-RC-SEC-07: /score and /baseline require bearer token auth. CI workflow sets
-RC_ENFORCEMENT_TOKEN as a step-level env var. Local runs must set it manually.
+RC-SEC-07: /score and /baseline require bearer token auth.
 """
+
+# MUST set env var BEFORE any imports so _get_operator_token() sees it.
+import os as _os
+_os.environ["RC_ENFORCEMENT_TOKEN"] = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
 
 from __future__ import annotations
 
-import os
 import sys
 
 import pytest
 
 pytestmark = pytest.mark.slow
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-# RC-SEC-07: Bearer token for /score and /baseline auth.
-# Must match the token set in .github/workflows/lint-and-test.yml pytest step.
 _AUTH_TOKEN = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
 _AUTH_HEADER = {"Authorization": f"Bearer {_AUTH_TOKEN}"}
 
@@ -56,15 +56,9 @@ def loaded_backbone():
 def http_client(s2_core_module, loaded_backbone):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
-    # RC-SEC-07: Mock _get_operator_token to return our test token
-    original_get_token = s2_core_module._get_operator_token
-    s2_core_module._get_operator_token = lambda: _AUTH_TOKEN
-    try:
-        app = s2_core_module.create_app()
-        with TestClient(app) as client:
-            yield client
-    finally:
-        s2_core_module._get_operator_token = original_get_token
+    app = s2_core_module.create_app()
+    with TestClient(app) as client:
+        yield client
 
 
 # --- ImpactReport schema ---------------------------------------------------
