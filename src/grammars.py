@@ -67,6 +67,8 @@ SUPPORTED_LANGUAGES: tuple[str, ...] = (
     "scss",
     "html",
     "dockerfile",
+    "c",
+    "cpp",
 )
 
 # Languages where build_call_graph returns {} by design (structured data /
@@ -117,6 +119,10 @@ EXTENSION_MAP: dict[str, str] = {
     # for Py 3.13; HTML is a structural superset of SFC root layout).
     ".vue": "html",
     ".dockerfile": "dockerfile",
+    # C/C++ family
+    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".c++": "cpp", ".C": "cpp",
+    ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp", ".h++": "cpp", ".H": "cpp",
+    ".c": "c", ".h": "c",
 }
 
 # Public-facing language label for a given internal id (collapses tsx ->
@@ -135,6 +141,8 @@ PUBLIC_LANGUAGE: dict[str, str] = {
     "scss": "scss",
     "html": "html",
     "dockerfile": "dockerfile",
+    "c": "c",
+    "cpp": "cpp",
 }
 
 
@@ -177,6 +185,8 @@ def _load_via_aggregate(lang_id: str) -> Optional[Any]:
         "scss": "scss",
         "html": "html",
         "dockerfile": "dockerfile",
+        "c": "c",
+        "cpp": "cpp",
     }.get(lang_id)
     if aggregate_name is None:
         return None
@@ -288,9 +298,20 @@ def _load_via_per_lang(lang_id: str) -> Optional[Any]:
             except ImportError:
                 return None
             return Language(ts_docker.language())
+        if lang_id == "c":
+            try:
+                import tree_sitter_c as ts_c  # type: ignore
+            except ImportError:
+                return None
+            return Language(ts_c.language())
+        if lang_id == "cpp":
+            try:
+                import tree_sitter_cpp as ts_cpp  # type: ignore
+            except ImportError:
+                return None
+            return Language(ts_cpp.language())
     except Exception as exc:
-        logger.debug("per-language wheel miss for %s: %s", lang_id, exc)
-        return None
+        logger.debug("per-lang grammar miss for %s: %s", lang_id, exc)
     return None
 
 

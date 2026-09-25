@@ -42,6 +42,8 @@ ALLOW_OVERRIDE_ENV = "RC_ALLOW_GUARD_EDIT"
 
 # Filename / path fragments that, when targeted by a write op, are denied.
 GUARDED_PATH_FRAGMENTS = (
+    ".envrc",
+    ".envrc.local",
     ".claude/settings.json",
     ".claude/settings.local.json",
     "src/hooks/pre_edit_guard.py",
@@ -61,6 +63,29 @@ GUARDED_PROCESS_TOKENS = (
 )
 
 # Commands that we always reject as obvious bypass attempts.
+#
+# Round-5 known limits (NOT in scope for the regex set; documented
+# for honest disclosure):
+#
+# * APFS case-folding (macOS): ``.ENVRC.local`` and ``.EnvRc.LOCAL``
+#   are the same file on APFS (case-insensitive, case-preserving).
+#   The regex set is case-sensitive; APFS bypass is a known limit.
+#   Mitigation: enforce case in the filesystem, or use a HFS+/ext4
+#   mount for the guard-protected paths.
+# * Audit log chain: the audit log is append-only at the file level
+#   but the file itself is rewritable by anyone with write access
+#   to its parent directory. Out of scope for the regex set.
+# * Symlink races: the symlink-resolver uses ``os.path.realpath``
+#   at evaluation time; a TOCTOU between resolve and the actual
+#   write is a known limit. The string-level guard catches the
+#   common case (redirect into a symlink whose target resolves to
+#   a guarded path); atomic races are not closed by this layer.
+#
+# The regex set closes the high-frequency bypass vectors identified
+# in the 2026-09-22 hostile re-review (round-2 Finding 5 + the
+# round-5 follow-up). The known-limit list is the residual surface
+# that requires filesystem-level or OS-level mitigations.
+
 HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # pkill / kill / killall against our sidecar / mcp processes
     re.compile(r"\b(?:p?kill(?:all)?|launchctl\s+(?:unload|kill))\b.*\b(?:s2_core|mcp_reasoner|start-sidecar)\b"),
@@ -79,38 +104,48 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     # shim and the underlying python invocation.
     re.compile(r"\brc\s+bypass-next\b"),
     re.compile(r"\bsrc\.rc_cli\b.*bypass-next\b"),
-    re.compile(r"kill_switches\.json"),
+    # Round-5 RC-SEC-PATH-FORM: the path-form ``python3 src/rc_cli.py
+    # bypass-next`` and ``python src/rc_cli.py bypass-next`` slip the
+    # above regex set. Match any python invocation that points at
+    # src/rc_cli.py followed by bypass-next on the same argv.
+    re.compile(r"\bpython\w*\s+[^|;&]*src/rc_cli\.py[^|;&]*\bbypass-next\b"),
+    re.compile(r"\bkill_switches\.json\b"),
+    # Round-5 RC-SEC-ENVRC-LOCAL: .envrc.local is the per-project
+    # downgrade channel (read by stop_reconcile.py). One append
+    # permanently downgrades the next session to warn-only. Block
+    # shell redirects and Python/Node writes to .envrc.local.
+    re.compile(r"(?:>|>>|tee\b)\s*[^|;&]*\.envrc\.local\b"),
+    re.compile(r"\b(?:echo|cat|printf|sed)\b[^|;&]*>\s*[^|;&]*\.envrc\.local\b"),
+    re.compile(r"\b(?:writeFileSync|writeFile|write_text|fwrite)\b[^|;&]*\.envrc\.local\b"),
+    re.compile(r"\bPath\(['\"]\\?\.?/?[^'\"]*\\?\.envrc\.local['\"]\)\.(?:write_text|write_bytes)"),
+    # RC-SEC-04: Copy-tool family — deny dd, ln, rsync against guarded paths.
+    # These bypass the source-extension / guarded-fragment matching in the
+    # copy pattern because they accept arbitrary destinations.
+    re.compile(r"\bdd\b[^|;&]*\bof\s*=\s*[^|;&]*(?:\.envrc(?:\.local)?|\.claude/settings|src/hooks/|kill_switches)"),
+    re.compile(r"\bln\s+(?:-sf?|--symbolic)\b[^|;&]*(?:\.envrc(?:\.local)?|\.claude/settings|src/hooks/|kill_switches)"),
+    re.compile(r"\brsync\b[^|;&]*(?:\.envrc(?:\.local)?|\.claude/settings|src/hooks/|kill_switches)"),
     # RC_BYPASS_NEXT=1 set on the same command line counts too.
     re.compile(r"\bRC_BYPASS_NEXT\s*=\s*1\b"),
-    # `git apply` always writes working-tree files from a patch. Reviewer-flagged
-    # in audit-hostile/2026-09-19-fixes §"Shell Guard Bypasses". Block outright;
-    # legitimate patch application goes through Claude's Edit tool.
-    re.compile(r"\bgit\s+apply\b"),
-    # `git checkout <commit> -- <paths>` without our src-ext regex would slip
-    # through when the paths are bare filenames without extensions. Block any
-    # `git checkout <sha>` shape so the agent must use Edit/Write.
-    re.compile(r"\bgit\s+checkout\s+[0-9a-f]{7,}\b"),
-    # `git restore <paths>` and `git restore --source=<sha> <paths>` always
-    # rewrite working-tree files.
-    re.compile(r"\bgit\s+restore\b"),
-    # `git stash apply` reapplies a stash to working tree.
-    re.compile(r"\bgit\s+stash\s+apply\b"),
-    # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-01): the SHA-anchored
-    # `git checkout <sha>` regex misses reflog refs and symbolic revisions
-    # like `HEAD~1`, `HEAD^`, `origin/main`, branch names, and `--` paths.
-    # Block any `git checkout` that is not a benign read-only inspection
-    # (those go via `git status/log/diff/show`, all in SAFE_LEADING_TOKENS).
-    re.compile(r"\bgit\s+checkout\b"),
-    # `git reset --hard <ref>` rewrites working-tree files.
-    re.compile(r"\bgit\s+reset\b[^|;&]*--hard\b"),
-    # `git switch -f <branch>` rewrites the working tree to a branch.
-    re.compile(r"\bgit\s+switch\b[^|;&]*-[fCc]\b"),
-    # `git switch <branch>` (no force flag) still updates HEAD and the
-    # index/working tree. Read-only inspection never goes through
-    # `git switch`.
-    re.compile(r"\bgit\s+switch\b\s+[^|&;]+\b"),
-    # `git merge <ref>` brings in changes from another branch.
-    re.compile(r"\bgit\s+merge\b"),
+    # RC-SEC-05: Git wrapper bypasses — deny indirect git invocations that
+    # could execute arbitrary subcommands outside the allowlist.
+    re.compile(r"\benv\s+.*\bgit\b"),           # env git <subcmd>
+    re.compile(r"\btimeout\s+\d+\s+.*\bgit\b"), # timeout N git <subcmd>
+    re.compile(r"/usr/bin/git\b"),               # absolute path git
+    re.compile(r"\bsh\s+-c\s+.*\bgit\b"),       # sh -c "git ..."
+    re.compile(r"\bbash\s+-c\s+.*\bgit\b"),     # bash -c "git ..."
+    re.compile(r"\$\(.*\bgit\b"),                # $(git ...)
+    # RC-SEC-05: Individual git deny patterns removed — replaced by
+    # subcommand allowlist (Layer A2 in screen_command).
+    # Round-5 RC-SEC-NODE-UPPERCASE: node -E (uppercase E) is
+    # the same as node -e but with extended regex; the existing
+    # regex only catches lowercase. Block both.
+    re.compile(r"\bnode\s+-E\b"),
+    # Round-5 RC-SEC-PKILL-FREEZE: pkill -STOP -f <process> is
+    # not a kill -- it's a freeze. The sidecar continues to exist
+    # (so S2_FAIL_CLOSED never trips) but no longer processes
+    # requests. Block any pkill/kill against the sidecar's process
+    # title regardless of signal.
+    re.compile(r"\b(?:p?kill(?:all)?|kill\s+-STOP)\b[^|;&]*\b(?:reasoning-core-sidecar|s2_core|mcp_reasoner|start-sidecar)\b"),
     # Reviewer-flagged (3-reviewer convergent on commit c2cc135):
     # bare `\bRC_*\s*=\s*\S` over-blocks heredoc bodies, doc generators,
     # and comments containing the literal string. Anchored on COMMAND
@@ -176,7 +211,7 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     # without a file extension) so `cp /tmp/x.py src/hooks/` trips the base
     # guard regardless of RC_LANG_LOCK or dest filename.
     re.compile(rf"\b(?:cp|mv|install|rsync)\b[^|;&]+\s([^|;&\s]+(?:{_SRC_EXT_PATTERN}))\b"),
-    re.compile(rf"\b(?:cp|mv|install|rsync)\b[^|;&]+\s([^|;&\s]+(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json))"),
+    re.compile(r"""\b(?:cp|mv|install|rsync)\b\s+\S+\s+(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json)"""),
     # `pathlib.Path("x.py").write_text(...)` — modern idiom,
     # not covered by the open() regex above.
     re.compile(r"""pathlib\.Path\s*\([^)]+\)\.(?:write_text|write_bytes)\s*\("""),
@@ -188,16 +223,13 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"""open\s*\(\s*['"][^'"]+['"]\s*,\s*mode\s*=\s*['"][wa]['"]"""),
     # `open('x.py', 'wb')` second-positional binary form.
     re.compile(r"""open\s*\(\s*['"][^'"]+['"]\s*,\s*['"][wa][bx]?['"]"""),
-    # `git checkout|restore|stash apply|apply` writing into source paths.
-    # The leading-tokens allowlist still contains "git" for benign commands
-    # (status, log, diff, show) but these subcommands always need review.
-    re.compile(rf"\bgit\s+(?:checkout|restore|stash\s+apply|apply)\b[^|;&]*([\w./\-]+(?:{_SRC_EXT_PATTERN}))\b"),
+    # RC-SEC-05: Git write patterns removed — handled by subcommand allowlist.
     # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SEC-04): heredoc stdin
     # execution of python/node/perl/ruby. Trip when a guarded path fragment
     # appears ANYWHERE in the heredoc body so an agent cannot smuggle a
     # `open(...)` or `Path(...).write_text(...)` past the regex by piping
     # via stdin. The fragment match alone is the trip signal.
-    re.compile(r"(?:python|python3|node|perl|ruby)\s*<<\s*['"]?\w+['"]?[\s\S]*?(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json)"),
+    re.compile(r"""(?:python|python3|node|perl|ruby)\s*<<\s*['"]?\w+['"]?[\s\S]*?(?:src/hooks|src/s2_core|src/grammars|src/ssm_backbone|src/mcp_reasoner|scripts/start-sidecar|\.claude/settings(?:\.local)?\.json)"""),
     # `base64 -d | bash|sh|zsh|eval` payload obfuscation pattern.
     re.compile(r"""base64\b[^|;&]*-d\b[^|;&]*\|\s*(?:bash|sh|zsh|eval)\b"""),
     # `$(echo ... | base64 -d)` alternate obfuscation form.
@@ -208,9 +240,93 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
 # does not contain a write redirection, we let it through without scanning.
 # Captures common dev workflow: tests, builds, package managers (which write
 # only to lockfiles / .venv / node_modules — those are not in SRC_EXTENSIONS).
+# RC-SEC-05: Git subcommand allowlist. Only these read-only / inspection
+# commands are permitted. Everything else denied (rc=2).
+# Compound subcommands (e.g., "stash pop") must be listed explicitly.
+# Dangerous subcommands removed: reflog (can destroy history), config (can
+# disable hooks via core.hooksPath), remote (can push to arbitrary remotes).
+GIT_ALLOWED_SUBCOMMANDS = frozenset({
+    "status", "log", "diff", "show", "branch", "rev-parse",
+    "ls-files", "ls-tree", "blame", "describe",
+    "help", "version", "--version",
+    # Read-only stash/worktree variants
+    "stash list", "stash show",
+    "worktree list",
+})
+
+
+def _extract_git_subcommand(cmd: str) -> Optional[str]:
+    """Extract git subcommand, handling -C <path> prefixes.
+    
+    Denies -c key=val overrides entirely — they can enable arbitrary code
+    execution (e.g., core.fsmonitor=<script>).
+    
+    For compound subcommands (e.g., "stash pop"), returns both tokens.
+    
+    Examples:
+      'git status' → 'status'
+      'git stash pop' → 'stash pop'
+      'git -C /repo log -1' → 'log'
+      'git -c user.name=x commit' → None (denied)
+      'git --help' → '--help'
+    """
+    stripped = cmd.lstrip()
+    if not stripped.startswith("git"):
+        return None
+    
+    # Remove 'git' prefix
+    rest = stripped[3:].lstrip()
+    
+    # Skip -C <path> prefixes but DENY -c key=val overrides
+    while rest.startswith("-"):
+        if rest.startswith("-C "):
+            # Skip -C flag and its argument (safe: just changes working dir)
+            parts = rest.split(None, 2)
+            if len(parts) >= 3:
+                rest = parts[2].lstrip()
+            elif len(parts) == 2:
+                return None  # Malformed
+            else:
+                return None
+        elif rest.startswith("-c "):
+            # DENY: -c can set core.fsmonitor=<script> for arbitrary code exec
+            return None
+        elif rest.startswith("--"):
+            # Long option like --help, --version
+            parts = rest.split(None, 1)
+            return parts[0]
+        else:
+            # Short option like -p, -n
+            parts = rest.split(None, 1)
+            if len(parts) == 1:
+                return None
+            rest = parts[1].lstrip()
+            break
+    else:
+        pass
+    
+    if not rest:
+        return None
+    
+    # Extract first two tokens for compound subcommands
+    parts = rest.split(None, 2)
+    if len(parts) >= 2:
+        compound = f"{parts[0]} {parts[1]}"
+        if compound in GIT_ALLOWED_SUBCOMMANDS:
+            return compound
+    return parts[0]
+
+
+def _git_subcommand_allowed(cmd: str) -> bool:
+    """Check if git subcommand is in the allowlist."""
+    subcmd = _extract_git_subcommand(cmd)
+    if subcmd is None:
+        return True  # Not a git command, let other checks handle it
+    return subcmd in GIT_ALLOWED_SUBCOMMANDS
+
+
 SAFE_LEADING_TOKENS = (
     "ls", "cat", "head", "tail", "grep", "rg", "find", "fd",
-    "git",  # git itself never touches source via shell — Claude must use Edit/Write
     "pytest", "python", "python3", "uv", "ruff", "mypy", "black", "isort",
     "node", "npm", "npx", "yarn", "pnpm", "bun",
     "dotnet", "go", "cargo", "rustc",
@@ -252,6 +368,19 @@ def _exit(code: int, *messages: str) -> None:
     for msg in messages:
         if msg:
             sys.stderr.write(msg.rstrip("\n") + "\n")
+    if code == 2:
+        try:
+            import audit_log  # type: ignore
+            last = audit_log.last_event()
+            decision_id = last.get("decision_id") if isinstance(last, dict) else None
+            if decision_id:
+                sys.stderr.write(
+                    f"\n[hybrid-reasoner] Decision ID: {decision_id}\n"
+                    f"  Inspect: rc explain {decision_id}\n"
+                    f"  Override: rc bypass-next\n"
+                )
+        except Exception:
+            pass  # Never let audit-log failure suppress the block message
     sys.exit(code)
 
 
@@ -286,6 +415,58 @@ def _guarded_path_match(cmd: str) -> Optional[str]:
     for frag in GUARDED_PATH_FRAGMENTS:
         if frag in cmd:
             return frag
+    return None
+
+
+# Patterns that pull a candidate redirect target out of a shell command. Each
+# captures the path (without surrounding quotes) into group 1.
+_REDIRECT_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # `> path`, `>> path`, `1> path`, `&> path`, `2> path`, `1>> path`
+    re.compile(r"""(?:>|>>|1>|2>|1>>|2>>|&>)\s*['"]?([^'"|;&\s]+)"""),
+    # `tee path`, `tee -a path`
+    re.compile(r"""\btee\b[^|;&]*\s+['"]?([^'"|;&\s]+)"""),
+    # `sed -i ... path`
+    re.compile(r"""\bsed\b[^|;&]*-i\b[^|;&]*['"]?([^'"|;&\s]+?)(?:['"]|$)"""),
+    # `python -c "...open('path', 'w')..."`
+    re.compile(r"""open\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"][wa]['"]"""),
+    # `pathlib.Path('path').write_text/write_bytes(...)`
+    re.compile(r"""[Pp]ath\s*\(\s*['"]([^'"]+)['"]\s*\)\.(?:write_text|write_bytes|write_lines)"""),
+    # `cp|mv|install|rsync <src> <dest>` — second arg is the target.
+    re.compile(r"""\b(?:cp|mv|install|rsync)\b\s+\S+\s+['"]?([^'"|;&\s]+)"""),
+)
+
+
+def _resolve_symlink_to_guarded(cmd: str) -> Optional[str]:
+    """RC-SEC-05: if a redirect target resolves through a symlink to a
+    guarded file, return the guarded fragment; else None.
+
+    Only returns a hit when:
+      - the candidate path exists on disk AND
+      - os.path.realpath() resolves to an absolute path that contains one
+        of the GUARDED_PATH_FRAGMENTS as a substring.
+    Failure modes (permission errors, missing files, weird filesystems)
+    return None so the regex layer still catches the obvious cases.
+    """
+    import os
+    for pat in _REDIRECT_TARGET_PATTERNS:
+        for m in pat.finditer(cmd):
+            target = m.group(1).strip()
+            if not target or target.startswith(("/", "~")) is False and "/" not in target:
+                # Skip bare filenames without slashes; not a symlink-overwrite
+                # vector (would be in cwd which we trust by default).
+                continue
+            try:
+                # Expand ~ if present.
+                expanded = os.path.expanduser(target)
+                if not os.path.exists(expanded):
+                    continue
+                real = os.path.realpath(expanded)
+                for frag in GUARDED_PATH_FRAGMENTS:
+                    if frag in real:
+                        return frag
+            except OSError:
+                # Permission denied, symlink loop, etc. — don't false-positive.
+                continue
     return None
 
 
@@ -372,9 +553,12 @@ def screen_command(cmd: str) -> tuple[int, str]:
     bad_ext_path = _manifest_disallowed_extension(cmd)
     if bad_ext_path:
         return 2, (
-            "[hybrid-reasoner] BLOCKED: shell write to a path outside "
-            "the session's declared language family.\n"
-            f"  path: {bad_ext_path}"
+            "[hybrid-reasoner] BLOCKED: shell write to a path outside this "
+            "session's declared language family.\n"
+            f"  path: {bad_ext_path}\n"
+            "  fix: this repo was initialised for a different language. "
+            "Either run `rc init --check` to refresh the manifest, or use the "
+            "Edit / Write / MultiEdit tools so the SSM guard can score the change."
         )
 
     # Layer A: hard-deny patterns trump everything except the explicit override.
@@ -383,25 +567,75 @@ def screen_command(cmd: str) -> tuple[int, str]:
         if _override_active():
             return 0, f"[hybrid-reasoner] override: hard-deny pattern allowed via {ALLOW_OVERRIDE_ENV}=1 ({deny_reason})"
         return 2, (
-            "[hybrid-reasoner] BLOCKED: shell command targets the guard or sidecar.\n"
+            "[hybrid-reasoner] BLOCKED: this command targets the guard, hook, "
+            "or sidecar process and would disable the gate.\n"
             f"  matched: {deny_reason}\n"
-            f"  command: {cmd[:300]}\n"
-            f"  command: {cmd[:300]}"
+            "  fix: there is no compliant way to do this from a shell command. "
+            "If you genuinely need to bypass the guard (e.g. operator-initiated "
+            "rollback of the framework itself), set RC_ALLOW_GUARD_EDIT=1 in the "
+            "same command. The bypass is recorded in the audit log."
         )
 
+    # Layer A2: RC-SEC-05 git subcommand allowlist. Git commands must use an
+    # allowed subcommand. Everything else denied.
+    stripped_cmd = cmd.lstrip()
+    if stripped_cmd.startswith("git"):
+        if not _git_subcommand_allowed(cmd):
+            subcmd = _extract_git_subcommand(cmd) or "<unknown>"
+            if _override_active():
+                return 0, f"[hybrid-reasoner] override: git subcommand '{subcmd}' allowed via {ALLOW_OVERRIDE_ENV}=1"
+            return 2, (
+                f"[hybrid-reasoner] BLOCKED: git subcommand not allowed.\n"
+                f"  subcommand: {subcmd}\n"
+                f"  allowed: {', '.join(sorted(GIT_ALLOWED_SUBCOMMANDS))}\n"
+                "  fix: use Edit/Write tools for working-tree changes. "
+                "Read-only inspection (status, log, diff, show, branch, etc.) "
+                "is permitted."
+            )
+
     # Layer B: shell command targeting a guarded path (regardless of operation).
+    # Two triggers: substring match (existing), or symlink resolution
+    # (RC-SEC-05 re-audit) so `ln -s src/hooks/pre_bash_guard.py /tmp/x;
+    # echo > /tmp/x` trips.
     guarded = _guarded_path_match(cmd)
+    symlink_resolved = False
+    if guarded is None:
+        guarded = _resolve_symlink_to_guarded(cmd)
+        if guarded is not None:
+            symlink_resolved = True
     if guarded:
         # Allow read-only ops on guarded paths so Claude can `cat .claude/settings.json`.
-        # Only block if the command also looks like a write or kill.
+        # Only block if the command also looks like a write or kill. The
+        # symlink-resolved path is the exception: it ALREADY proves the
+        # command intends to write to a guarded file via a non-source-
+        # extension target (the entire attack the resolver was added to
+        # stop), so any redirect into the symlink is by definition a write
+        # and must be blocked even if the bare target filename has no
+        # source extension. RC-SEC-05 closure.
+        if symlink_resolved:
+            if _override_active():
+                return 0, f"[hybrid-reasoner] override: symlink-resolved guarded-path write allowed via {ALLOW_OVERRIDE_ENV}=1 ({guarded})"
+            return 2, (
+                "[hybrid-reasoner] BLOCKED: symlink overwrite of a guarded file.\n"
+                f"  guarded path (realpath): {guarded}\n"
+                "  fix: do not write through symlinks that resolve into "
+                "src/hooks/, src/mcp/, the sidecar binary, the kill-switch "
+                "state, or the agent settings. Use the Edit / Write / "
+                "MultiEdit tool on the actual target file. Symlinks whose "
+                "realpath lands on a guarded path are treated as writes "
+                "regardless of the symlink's own filename or extension."
+            )
         if _src_write_match(cmd) or any(p.search(cmd) for p in HARD_DENY_PATTERNS):
             if _override_active():
                 return 0, f"[hybrid-reasoner] override: guarded-path write allowed via {ALLOW_OVERRIDE_ENV}=1 ({guarded})"
             return 2, (
-                "[hybrid-reasoner] BLOCKED: shell write to guard file.\n"
+                "[hybrid-reasoner] BLOCKED: shell write to a guarded file.\n"
                 f"  guarded path: {guarded}\n"
-                f"  command: {cmd[:300]}\n"
-                f"  command: {cmd[:300]}"
+                "  fix: use the Edit / Write / MultiEdit tool on the file "
+                "directly. Shell redirects, `tee`, `cp`, `mv`, `install`, "
+                "`rsync`, `git checkout`, `git restore`, `git apply`, and any "
+                "heredoc that writes to a guarded path are blocked. Symlink "
+                "overwrites are also caught via realpath resolution."
             )
 
     # Layer C: kill/pkill against sidecar process names.
@@ -410,10 +644,13 @@ def screen_command(cmd: str) -> tuple[int, str]:
             if _override_active():
                 return 0, f"[hybrid-reasoner] override: process kill allowed via {ALLOW_OVERRIDE_ENV}=1 ({token})"
             return 2, (
-                "[hybrid-reasoner] BLOCKED: shell kill targets sidecar process.\n"
+                "[hybrid-reasoner] BLOCKED: shell kill targets the sidecar "
+                "process.\n"
                 f"  process token: {token}\n"
-                f"  command: {cmd[:300]}\n"
-                f"  command: {cmd[:300]}"
+                "  fix: the sidecar (s2_core, mcp_reasoner, start-sidecar) must "
+                "stay running for the gate to score edits. To restart it "
+                "deliberately, ask the operator to run `rc restart` or "
+                "`launchctl kickstart -k gui/$UID/...`."
             )
 
     # Layer D: shell-level source rewrite. The write-pattern check runs BEFORE
@@ -429,8 +666,18 @@ def screen_command(cmd: str) -> tuple[int, str]:
             "[hybrid-reasoner] BLOCKED: shell-level source write detected.\n"
             f"  pattern: {src_pat}\n"
             f"  command: {cmd[:300]}\n"
-            "  reason: use the Edit / Write / MultiEdit tools so the SSM guard can score the change.\n"
-            f"  command: {cmd[:300]}"
+            "  fix: use the Edit / Write / MultiEdit tools on the file directly. "
+            "Those tools pipe through the SSM guard which scores the change. "
+            "Shell-level writes (>, >>, tee, sed -i, python -c open(), "
+            "pathlib.Path().write_text, cp / mv / install / rsync, "
+            "git checkout / restore / stash apply, base64 -d | bash, openssl / xxd "
+            "decoders piped to bash, python -c | python heredoc, or any "
+            "redirect via stdin) are blocked regardless of whether the file is "
+            "in src/ or /tmp.\n"
+            "  escape hatch: if you genuinely need to write via shell and you "
+            "are not trying to bypass the gate (e.g. generating a build "
+            "artifact outside src/), use a path that does not match any "
+            "SRC_EXTENSIONS entry and does not touch GUARDED_PATH_FRAGMENTS."
         )
 
     # No write pattern, no guard hit — let it through (with or without an

@@ -664,6 +664,52 @@ def main() -> None:
         )
         return  # pragma: no cover
 
+    # Layer 1b: ``.envrc.local`` is the per-project downgrade channel
+    # (round-3 RC-SEC-ENVRC-LOCAL-EDIT). It is sourced BEFORE ``.envrc``
+    # so a single append (``export RC_ORACLE_BLOCK=0``) permanently
+    # downgrades future sessions to warn-only. ``pre_bash_guard.py``
+    # already blocks the shell/python writes; this layer closes the
+    # Edit/Write/MultiEdit gap (Claude's primary write path).
+    # RC-SEC-03: Use resolved realpath + casefold to catch:
+    #   - Case variants (.Envrc.local, .ENVRC.LOCAL)
+    #   - Trailing dots (.envrc.local.)
+    #   - Symlink aliases
+    #   - Double-slash paths (.envrc//.local)
+    # On resolve failure, block conservatively (treat as match).
+    # Same override as layer-1: ``RC_ALLOW_GUARD_EDIT=1``.
+    try:
+        from pathlib import Path as _Path
+        _resolved_name = _Path(file_path or "").resolve().name.casefold()
+        # Strip trailing dots (APFS/APFS-like filesystems allow them)
+        _resolved_name = _resolved_name.rstrip(".")
+    except (TypeError, ValueError, OSError):
+        # Resolve can fail on weird paths — block conservatively
+        _resolved_name = ".envrc.local"
+    if (
+        _resolved_name == ".envrc.local"
+        and not _guard_paths.is_override_active()
+    ):
+        audit_log.record_block(file_path)
+        _emit_audit(
+            tool_name=tool_name,
+            decision="blocked",
+            file_path=file_path,
+            started=started,
+            reason="envrc_local_locked",
+            retry_after_block=is_retry,
+        )
+        _exit(
+            2,
+            "[hybrid-reasoner] BLOCKED: .envrc.local edits denied.\n"
+            "  reason: .envrc.local is the per-project downgrade channel\n"
+            "          (sourced before .envrc); one append permanently\n"
+            "          downgrades future sessions to warn-only.\n"
+            f"  file: {file_path}\n"
+            "  override: set RC_ALLOW_GUARD_EDIT=1 in the shell that\n"
+            "            started this Claude session to opt in once.",
+        )
+        return  # pragma: no cover
+
     # Layer 2: day-zero override check. Magic comments and kill switches let
     # the operator bypass scoring without restarting Claude. Read at hook call
     # time. Allow path emits decision=allowed_via_override so the override is

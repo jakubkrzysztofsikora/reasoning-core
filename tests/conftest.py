@@ -8,6 +8,10 @@ from contextlib import closing
 
 import pytest
 
+# RC-SEC-07: Set auth token before any test module imports s2_core.
+# This ensures _get_operator_token() sees the token in all tests.
+os.environ.setdefault("RC_ENFORCEMENT_TOKEN", "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!")
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

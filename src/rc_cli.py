@@ -146,7 +146,23 @@ def _init_guard_hashes(file_paths: list[str], store_path: str | None = None) -> 
         for w in warnings:
             sys.stderr.write(f"  warning: {w}\n")
         return (2, warnings)
-    store.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+    
+    # Write canonical JSON + HMAC-SHA256 sidecar
+    records_json = json.dumps(records, indent=2) + "\n"
+    store.write_text(records_json, encoding="utf-8")
+    
+    # Compute and write MAC sidecar
+    from rc_verify_guard import _hmac_key, _compute_mac, MAC_SUFFIX
+    key = _hmac_key()
+    if key is None:
+        warnings.append("HMAC key unavailable; guard_hashes.json written without MAC sidecar")
+    else:
+        mac_path = store.parent / (store.name + MAC_SUFFIX)
+        mac_value = _compute_mac(records_json, key)
+        mac_path.write_text(mac_value + "\n", encoding="utf-8")
+        os.chmod(str(store), 0o600)
+        os.chmod(str(mac_path), 0o600)
+    
     return (0, warnings)
 def _verify_guard_hash(file_path: str, store_path: str | None = None) -> tuple[bool, str]:
     """Verify a guard file against a stored SHA-256 hash.
@@ -184,7 +200,16 @@ def cmd_guard_hash(args: argparse.Namespace) -> int:
     ]
     envrc_local = project_dir / ".envrc.local"
     plan_md = project_dir / "PLAN.md"
+    # RC-SEC-01: include kill-switch state files in guard-hash coverage
+    from pathlib import Path as _Path
+    state_dir = _Path(os.environ.get("RC_STATE_DIR", os.path.expanduser("~/.local/state/reasoning-core")))
+    ks_state = state_dir / "kill_switches.json"
+    ks_mac = state_dir / "kill_switches.json.mac"
     all_files = [str(g) for g in guard_files] + [str(envrc_local), str(plan_md)]
+    if ks_state.exists():
+        all_files.append(str(ks_state))
+    if ks_mac.exists():
+        all_files.append(str(ks_mac))
     if getattr(args, "init", False):
         if not _operator_authenticated():
             sys.stderr.write("rc guard-hash --init: operator authentication required.\n")
@@ -427,6 +452,19 @@ def cmd_explain(args: argparse.Namespace) -> int:
     sys.stderr.write(f"decision_id {target} not found under {root}\n")
     return 1
 def cmd_bypass_next(_args: argparse.Namespace) -> int:
+    # Round-3 RC-SEC-BYPASS-NEXT-AUTH: ``bypass-next`` arms a kill switch
+    # that lets the NEXT PreToolUse hook exit 0 unconditionally. An
+    # unauthenticated agent can therefore rewrite a guarded file in a
+    # single round-trip. Require the same operator authentication as
+    # ``enable-enforcement`` / ``disable-enforcement`` so a runaway
+    # agent cannot self-arm the bypass.
+    if not _operator_authenticated():
+        sys.stderr.write(
+            "rc bypass-next: operator authentication required.\n"
+            "Operator setup is required before this command can be used.\n"
+            "See docs/CONFIGURATION.md section 'Operator authentication'.\n"
+        )
+        return 1
     ks.set_bypass_next(True)
     audit_log.record_operator_override(reason="bypass_next_armed")
     sys.stdout.write("bypass_next armed (consumed on next PreToolUse hook call)\n")
@@ -506,18 +544,16 @@ def _enforcement_block(hard: bool = False) -> str:
     )
 _ENFORCEMENT_BLOCK_STAGE1 = _enforcement_block(hard=False)
 _ENFORCEMENT_BLOCK_STAGE2 = _enforcement_block(hard=True)
-_AUTH_MIN_TOKEN_LEN = 16
-_AUTH_TOKEN_FILE = Path(os.environ.get(
-    "RC_AUTH_TOKEN_FILE",
-    os.path.expanduser("~/.local/state/reasoning-core/auth_token"),
-))
-def _read_auth_token_from_file() -> str | None:
-    """Read stored auth token from the platform-appropriate secret store.
-    Order:
-      1. macOS keychain via `security find-generic-password`.
-      2. Token file at `RC_AUTH_TOKEN_FILE` (Linux/CI fallback).
-    Returns the stored token, or None if no backend is available or read failed.
+_AUTH_MIN_TOKEN_LEN = 32  # RC-SEC-02: lengthened from 16 to prevent brute-force
+def _read_auth_token_from_keychain() -> str | None:
+    """Read stored auth token from macOS keychain service 'reasoning-core-enforcement'.
+    
+    On darwin this is the ONLY accepted source — no file fallback.
+    On other platforms, returns None (CI must pre-provision via env).
+    Returns the stored token, or None if unavailable.
     """
+    if sys.platform != "darwin":
+        return None
     try:
         r = subprocess.run(
             ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
@@ -526,47 +562,85 @@ def _read_auth_token_from_file() -> str | None:
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
     except FileNotFoundError:
-        pass  # macOS-only binary absent on Linux/Windows
+        pass
     except Exception:
         pass
-    if _AUTH_TOKEN_FILE.is_file():
-        try:
-            return _AUTH_TOKEN_FILE.read_text(encoding="utf-8").strip()
-        except OSError:
-            pass
     return None
 def _operator_authenticated() -> bool:
     """Return True if the operator has authenticated for enforcement changes.
-    Authentication requires one of:
+    
+    Authentication requires:
       1. `RC_ENFORCEMENT_TOKEN` env var matches the stored token
-         (compared in constant time). This is the cross-platform escape hatch
-         for headless / CI usage. The env var must be ≥16 chars.
-      2. macOS keychain contains a stored reasoning-core enforcement token.
-      3. Linux/Windows fallback: token file at `RC_AUTH_TOKEN_FILE` (default
-         `~/.local/state/reasoning-core/auth_token`).
+         (compared in constant time). The env var must be ≥32 chars.
+      2. On darwin: token MUST come from macOS keychain (no file fallback).
+      3. On other platforms: CI must pre-provision RC_ENFORCEMENT_TOKEN.
+    
     TTY presence is NOT sufficient — the agent can allocate a pty.
     Just having `RC_ENFORCEMENT_TOKEN` set to any non-empty string is NOT
     sufficient — an agent can set env vars in its own shell. The token must
     match the stored secret.
-    Run `rc auth-bootstrap` to seed the token file on Linux/Windows.
+    Run `rc auth-bootstrap` to provision the keychain (darwin) or set the
+    env var (CI).
     """
     token = os.environ.get("RC_ENFORCEMENT_TOKEN", "")
-    if len(token) >= _AUTH_MIN_TOKEN_LEN:
-        stored = _read_auth_token_from_file()
-        if stored is not None and _constant_time_eq(token, stored):
-            return True
+    if len(token) < _AUTH_MIN_TOKEN_LEN:
+        return False
+    stored = _read_auth_token_from_keychain()
+    if stored is not None and _constant_time_eq(token, stored):
+        return True
+    # On non-darwin only: accept env-only if it matches a pre-provisioned hash
+    # (set by CI). Darwin MUST use keychain — no env fallback.
+    if sys.platform != "darwin":
+        expected_hash = os.environ.get("RC_AUTH_TOKEN_HASH")
+        if expected_hash:
+            import hashlib
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            if _constant_time_eq(token_hash, expected_hash):
+                return True
     return False
+def _operator_present() -> bool:
+    """Check if an operator is physically present.
+    
+    On darwin: sudo -n true succeeds only if operator recently authenticated.
+    On other platforms: check for TTY + recent input (heuristic).
+    """
+    if sys.platform == "darwin":
+        try:
+            r = subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=2)
+            return r.returncode == 0
+        except Exception:
+            pass
+    # Fallback: check if stdin is a TTY (weak signal, but better than nothing)
+    return sys.stdin.isatty()
+
+
 def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
     """Generate and store a fresh enforcement token.
-    Writes the token to the platform-appropriate secret store and prints
-    it once on stdout. The operator must copy it into `RC_ENFORCEMENT_TOKEN`
-    or use it in a CI secret.
-    macOS: stores in keychain via `security add-generic-password`.
-    Linux/Windows: writes to `RC_AUTH_TOKEN_FILE` with 0600 permissions.
+    
+    RC-SEC-02: gated behind operator-presence proof to prevent self-service
+    ceremony by runaway agents.
+    
+    macOS: requires sudo timestamp (operator recently authenticated) before
+    writing to keychain. Stores HMAC key for kill-switch integrity.
+    Other platforms: CI must pre-provision tokens; this command refuses.
     """
     import secrets
+    
+    # Gate: require operator presence
+    if not _operator_present():
+        sys.stderr.write(
+            "rc auth-bootstrap: operator presence required.\n"
+            "This command must be run interactively by a human operator.\n"
+            "On macOS, ensure you have a recent sudo timestamp.\n"
+            "For CI, pre-provision RC_ENFORCEMENT_TOKEN and RC_HMAC_KEY env vars.\n"
+        )
+        return 1
+    
     token = secrets.token_urlsafe(32)
+    hmac_key = secrets.token_hex(32)  # 256-bit key for HMAC-SHA256
+    
     if sys.platform == "darwin":
+        # Store enforcement token in keychain
         try:
             r = subprocess.run(
                 ["security", "add-generic-password",
@@ -576,24 +650,43 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
                  "-U"],
                 capture_output=True, text=True, timeout=5,
             )
-            if r.returncode == 0:
-                sys.stdout.write(f"token stored in keychain for user {os.environ.get('USER','')}\n")
-                sys.stdout.write(f"token (copy now, won't be shown again): {token}\n")
-                return 0
-            sys.stderr.write(f"keychain add failed: {r.stderr}\n")
+            if r.returncode != 0:
+                sys.stderr.write(f"keychain add failed: {r.stderr}\n")
+                return 1
         except Exception as exc:
             sys.stderr.write(f"keychain add failed: {exc}\n")
-    # Linux/Windows fallback
-    try:
-        _AUTH_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_text(_AUTH_TOKEN_FILE, token + "\n")
-        os.chmod(_AUTH_TOKEN_FILE, 0o600)
-        sys.stdout.write(f"token stored in {_AUTH_TOKEN_FILE} (mode 0600)\n")
-        sys.stdout.write(f"token (copy now, won't be shown again): {token}\n")
+            return 1
+        
+        # Store HMAC key in separate keychain entry
+        try:
+            r = subprocess.run(
+                ["security", "add-generic-password",
+                 "-s", "reasoning-core-hmac",
+                 "-a", os.environ.get("USER", ""),
+                 "-w", hmac_key,
+                 "-U"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if r.returncode != 0:
+                sys.stderr.write(f"HMAC keychain add failed: {r.stderr}\n")
+                return 1
+        except Exception as exc:
+            sys.stderr.write(f"HMAC keychain add failed: {exc}\n")
+            return 1
+        
+        sys.stdout.write(f"enforcement token stored in keychain for user {os.environ.get('USER','')}\n")
+        sys.stdout.write(f"HMAC key stored in keychain for kill-switch integrity\n")
+        sys.stdout.write(f"enforcement token (copy now, won't be shown again): {token}\n")
+        sys.stdout.write(f"HMAC key (copy now, won't be shown again): {hmac_key}\n")
         return 0
-    except OSError as exc:
-        sys.stderr.write(f"failed to write token file: {exc}\n")
-        return 1
+    
+    # Non-darwin: refuse self-service, require CI pre-provisioning
+    sys.stderr.write(
+        "rc auth-bootstrap: self-service disabled on non-macOS platforms.\n"
+        "CI environments must pre-provision RC_ENFORCEMENT_TOKEN and RC_HMAC_KEY.\n"
+        "See docs/CONFIGURATION.md section 'Operator authentication'.\n"
+    )
+    return 1
 def _constant_time_eq(a: str, b: str) -> bool:
     """Constant-time string comparison to prevent timing attacks."""
     import hmac
@@ -1136,7 +1229,9 @@ def cmd_label(args: argparse.Namespace) -> int:
     sys.stdout.write("=" * 60 + "\n")
     sys.stdout.write(f"decision_id: {decision_id}\n")
     sys.stdout.write(f"file:        {file_path}\n")
-    sys.stdout.write(f"decision:    {audit_row.get('decision', '?')}\n")
+    # NOTE: tool's own decision is intentionally hidden to prevent labeler bias.
+    # The two-blind-labeler protocol (EVAL_PROTOCOL.md) requires labels be
+    # assigned without seeing the gate's verdict.
     sys.stdout.write(f"signal:      {audit_row.get('signal_source', '?')}\n")
     sys.stdout.write("=" * 60 + "\n")
     before_src = (audit_row.get("before_src") or "")[:500]
@@ -1234,7 +1329,13 @@ def cmd_audit_history(args: argparse.Namespace) -> int:
     """Mine recent git history and print per-commit quality labels.
     Labels commits as positive/negative based on whether they were followed
     within 48 hours by a fix/revert/hotfix/patch touching the same files.
-    This is the feedback loop input for Phase-4 calibration.
+    
+    NOTE: This command prints labels for operator review. It does NOT
+    recalibrate thresholds or feed Phase-4 calibration directly. The
+    in-tree recalibration pipeline (_supervisor_recalibrate.py) runs on
+    a different miner (eval/calibration_corpus.py) and only triggers on
+    a CUSUM signal. This output is feedback-loop input for Phase-4, not
+    an active calibration mechanism.
     """
     project_dir = Path(args.project_dir) if args.project_dir else _project_dir()
     if not project_dir.is_dir():

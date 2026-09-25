@@ -23,6 +23,13 @@ import json
 import logging
 import math
 import os
+
+import numpy as np  # used by Phase C (scoring-v3 mahal_anomaly)
+
+try:
+    import torch  # used by Phase A (diff-windowing wiring) for tensor coercion
+except ImportError:  # pragma: no cover
+    torch = None  # type: ignore[assignment]
 import sys
 import time
 from collections import deque
@@ -96,6 +103,23 @@ class ImpactReport:
     fired_conditions: list[str] = field(default_factory=list)
     fired_dims: list[str] = field(default_factory=list)
     fired_margins: dict[str, float] = field(default_factory=dict)
+    # Phase C (audit-deferred scoring-v3): Mahalanobis anomaly score
+    # against the session's benign-embedding corpus. NOT a scalar
+    # transform of cosine similarity, which is what makes it an
+    # independent signal alongside coherence_delta / AIS / novelty.
+    # ``None`` when RC_SCORING_V3=0 or no corpus is fitted for the
+    # session. Threshold is reported separately so operators can audit
+    # the operating point without recomputing.
+    mahal_anomaly: Optional[float] = None
+    mahal_anomaly_threshold: Optional[float] = None
+    # Phase A (audit-deferred windowing): True iff this score_change
+    # call used the chunked embedder (src.diff_windowing.embed_windowed)
+    # instead of the legacy ``embed(before_tokens)/embed(after_tokens)``
+    # path. ``None`` means the operator has not opted in; ``False``
+    # means the flag was set but the chunked path fell back to the
+    # legacy path (e.g. chunker raised on an unsupported grammar);
+    # ``True`` means the windowed embeddings drove the scoring.
+    windowed_embed_active: Optional[bool] = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -119,6 +143,12 @@ class ImpactReport:
             out["file_kind"] = str(self.file_kind)
         if self.cd_threshold is not None:
             out["cd_threshold"] = float(self.cd_threshold)
+        if self.mahal_anomaly is not None:
+            out["mahal_anomaly"] = float(self.mahal_anomaly)
+        if self.mahal_anomaly_threshold is not None:
+            out["mahal_anomaly_threshold"] = float(self.mahal_anomaly_threshold)
+        if self.windowed_embed_active is not None:
+            out["windowed_embed_active"] = bool(self.windowed_embed_active)
         return out
 
 
@@ -274,8 +304,17 @@ def _persist_session_baseline_for_path(session_id: str, path: str, emb: Any) -> 
             # Touch for LRU and refresh TTL anchor.
             _BASELINES.move_to_end(session_id)
             baselines["__ts__"] = time.time()
-        if path not in baselines and "__corpus__" not in baselines:
-            # Only auto-persist when no explicit /baseline was called
+        # RC-MAHAL-CORPUS-01 (round-2 hostile review Finding 2):
+        # Auto-persist new path baselines even when a session-level
+        # corpus already exists. The previous guard ``and "__corpus__"
+        # not in baselines`` permanently skipped persistence after the
+        # corpus was built, which froze the session: new paths never
+        # appeared, the re-fit amortisation key was dead, and
+        # cumulative-drift for new files was computed against a 2-D
+        # corpus tensor instead of a vector. Only guard against
+        # overwriting reserved keys (``__ts__``, ``__corpus__``, etc.)
+        # with a per-path embedding.
+        if path not in baselines and not path.startswith("__"):
             baselines[path] = emb
         # Cap: drop oldest entries until under the configured maximum.
         while len(_BASELINES) > _BASELINE_MAX_SESSIONS:
@@ -297,6 +336,90 @@ def _persist_session_baseline_for_path(session_id: str, path: str, emb: Any) -> 
                     continue
                 del baselines[k]
                 break
+        # Phase C (BLOCKER #1 fix): when the per-session file cap is
+        # accumulated, fold the per-path baselines into a session-level
+        # benign corpus and run Ledoit-Wolf shrinkage + FPR=0.05
+        # threshold. The previous Phase C landing shipped a
+        # mahal_anomaly field that no production path could populate:
+        # the /baseline route writes per-file __corpus__ at the path
+        # level (not session), and the score_change path never built a
+        # session-level corpus. This is the production-side fix.
+        try:
+            _maybe_promote_session_to_corpus(session_id, baselines)
+        except Exception as exc:  # noqa: BLE001 -- never let mahal block scoring
+            logger.debug(
+                "session corpus promotion failed (non-fatal): %s", exc,
+            )
+
+
+def _maybe_promote_session_to_corpus(
+    session_id: str, baselines: dict[str, Any]
+) -> None:
+    """Fold per-path baselines into a session-level corpus + threshold.
+
+    Called from ``_persist_session_baseline_for_path`` under the
+    ``_BASELINES_LOCK``. The promotion is idempotent: if
+    ``__corpus__`` already exists, we only re-fit when the path
+    count has grown by a configurable delta (default 5) since the
+    last fit, to amortise the O(n*d^2) Ledoit-Wolf cost.
+    """
+    min_paths = int(os.environ.get("RC_MAHAL_CORPUS_MIN", "5"))
+    # Count non-reserved entries (per-path embeddings).
+    path_keys = [k for k in baselines if not k.startswith("__")]
+    if len(path_keys) < min_paths:
+        return
+    # If we already have a corpus, only re-fit when the count has
+    # grown by at least ``min_paths`` since the last fit (cheap
+    # amortisation; avoids re-fitting on every edit).
+    last_fit_n = baselines.get("__mahal_last_fit_n__", 0)
+    if "__corpus__" in baselines and len(path_keys) - last_fit_n < min_paths:
+        return
+    # Stack all per-path embeddings into a (n, d) matrix.
+    embs = []
+    for k in path_keys:
+        v = baselines[k]
+        if hasattr(v, "detach"):
+            embs.append(v.detach().cpu().numpy())
+        else:
+            embs.append(np.asarray(v, dtype=np.float64))
+    if not embs:
+        return
+    arr = np.stack(embs).astype(np.float64)
+    from src.scoring_signals import (
+        fit_benign_corpus,
+        loo_threshold_for_fpr,
+        mahal_anomaly_against_corpus,
+    )
+    mean, cov, cov_inv = fit_benign_corpus(arr)
+    
+    # RC-MAHAL-DEGEN-01 (round-2 hostile review Finding 2): when the
+    # Ledoit-Wolf covariance collapses to the shrinkage target (the
+    # corpus is all-same or near-same vectors, reachable via
+    # /baseline poisoning or a collapsed session), ``cov_inv`` is the
+    # zero matrix and every fresh edit scores ``+inf``. The LOO
+    # threshold in this regime is 0.0, so the fired condition always
+    # trips -- the wrong kind of "loud". We refuse to arm the
+    # threshold on a degenerate corpus: store ``+inf`` so
+    # ``mahal_anomaly > threshold`` is never true, and the signal
+    # stays inert until the session accumulates a non-degenerate
+    # corpus.
+    degenerate = (cov_inv == 0).all()
+    
+    if degenerate:
+        thr = float("inf")
+    else:
+        # Honest out-of-sample threshold via leave-one-out (LOO). The
+        # 2026-09-22 hostile review Finding 3 noted that the in-sample
+        # ``threshold_for_fpr`` over-fits at n=5 (realized FPR 0.20 vs
+        # the nominal 0.05); the LOO threshold matches the nominal FPR
+        # within the binomial envelope and is what the production path
+        # uses. See ``test_scoring_signals.py::test_loo_threshold_*``.
+        thr = loo_threshold_for_fpr(arr, fpr=0.05)
+    baselines["__corpus__"] = torch.from_numpy(arr.astype(np.float32))
+    baselines["__mahal_mean__"] = torch.from_numpy(mean.astype(np.float32))
+    baselines["__mahal_inv__"] = torch.from_numpy(cov_inv.astype(np.float32))
+    baselines["__mahal_threshold__"] = float(thr)
+    baselines["__mahal_last_fit_n__"] = len(path_keys)
 
 
 # ---------------------------------------------------------------------------
@@ -1074,19 +1197,54 @@ def score_change(
     before_tokens = ast_to_tokens(parse_before.tree, before_src or "")
     after_tokens = ast_to_tokens(parse_after.tree, after_src or "")
 
-    # Forward pass through the real Mamba backbone.
-    try:
-        emb_before = embed(before_tokens)
-        emb_after = embed(after_tokens)
-        cos = _cosine_similarity(emb_before, emb_after)
-        raw_l2 = _l2_distance(emb_before, emb_after)
-    except BackboneUnavailableError:
-        # We propagate this -- the sidecar should fail loudly rather than
-        # silently degrade scoring quality.
-        raise
-    except Exception as exc:
-        logger.exception("Backbone forward pass failed: %s", exc)
-        raise BackboneUnavailableError(f"forward pass failed: {exc}") from exc
+    # Forward pass through the real Mamba backbone. Phase A wiring:
+    # when RC_DIFF_WINDOWING=1 we use ``embed_windowed`` (chunked +
+    # diff-weighted pooling) instead of the legacy whole-file embed +
+    # 512-token truncation path. On any failure the legacy path is
+    # preserved (fail-loud but graceful).
+    windowed_active: Optional[bool] = None
+    if os.environ.get("RC_DIFF_WINDOWING") == "1":
+        try:
+            from .diff_windowing import embed_windowed as _embed_windowed
+            emb_before_np, emb_after_np = _embed_windowed(
+                before_src or "",
+                after_src or "",
+                lang=parse_before.language,
+                tree_before=parse_before.tree,
+                tree_after=parse_after.tree,
+            )
+            emb_before = torch.as_tensor(emb_before_np)
+            emb_after = torch.as_tensor(emb_after_np)
+            cos = _cosine_similarity(emb_before, emb_after)
+            raw_l2 = _l2_distance(emb_before, emb_after)
+            windowed_active = True
+        except Exception as exc:
+            logger.debug(
+                "Phase A embed_windowed failed; falling back to embed(): %s",
+                exc,
+            )
+            windowed_active = False
+            emb_before = None  # type: ignore[assignment]
+            emb_after = None  # type: ignore[assignment]
+    # Legacy path: either the operator has not opted in to windowing,
+    # or the windowed embedder raised and we need to fail-loud but
+    # gracefully degrade. In both cases we re-enter the original
+    # ``embed(before_tokens)/embed(after_tokens)`` flow.
+    if windowed_active is None or windowed_active is False:
+        try:
+            emb_before = embed(before_tokens)
+            emb_after = embed(after_tokens)
+            cos = _cosine_similarity(emb_before, emb_after)
+            raw_l2 = _l2_distance(emb_before, emb_after)
+        except BackboneUnavailableError:
+            # We propagate this -- the sidecar should fail loudly rather
+            # than silently degrade scoring quality.
+            raise
+        except Exception as exc:
+            logger.exception("Backbone forward pass failed: %s", exc)
+            raise BackboneUnavailableError(
+                f"forward pass failed: {exc}"
+            ) from exc
 
     # AIS in [0, 1]: 1.0 == identical embeddings. Map cos in [-1,1] -> [0,1].
     ais = max(0.0, min(1.0, (cos + 1.0) / 2.0))
@@ -1107,6 +1265,80 @@ def score_change(
 
     # novelty in [0, 1]: 1 - max(cos, 0).
     novelty = max(0.0, min(1.0, 1.0 - max(cos, 0.0)))
+
+    # ---- Phase C: mahal_anomaly (audit-deferred scoring-v3) -----------------
+    # Independent of cosine similarity by construction. Computed against the
+    # session's persisted benign-embedding corpus (``__corpus__``) under the
+    # Ledoit-Wolf shrunk inverse covariance. Default-off so existing
+    # deployments are unaffected; opt in with ``RC_SCORING_V3=1``.
+    mahal_anomaly_value: Optional[float] = None
+    mahal_anomaly_threshold_value: Optional[float] = None
+    if os.environ.get("RC_SCORING_V3") == "1":
+        try:
+            from src.scoring_signals import (
+                fit_benign_corpus,
+                mahal_anomaly_against_corpus,
+            )
+            corpus_blob: Optional[torch.Tensor] = None
+            mean_blob: Optional[torch.Tensor] = None
+            inv_blob: Optional[torch.Tensor] = None
+            thr_blob: Optional[float] = None
+            if session_id:
+                baseline = _BASELINES.get(session_id)
+                if isinstance(baseline, dict):
+                    corpus_blob = baseline.get("__corpus__")  # type: ignore[assignment]
+                    mean_blob = baseline.get("__mahal_mean__")  # type: ignore[assignment]
+                    inv_blob = baseline.get("__mahal_inv__")  # type: ignore[assignment]
+                    thr_blob = baseline.get("__mahal_threshold__")  # type: ignore[assignment]
+            # Fallback: if the session has a corpus tensor but no fitted mean
+            # / inverse yet, fit them on the fly. This keeps the on-disk
+            # baseline manifest compatible with installs that pre-date the
+            # v3 scoring rollout.
+            if (
+                corpus_blob is not None
+                and mean_blob is None
+                and inv_blob is None
+            ):
+                arr = (
+                    corpus_blob.detach().cpu().numpy()
+                    if hasattr(corpus_blob, "detach")
+                    else np.asarray(corpus_blob, dtype=np.float64)
+                )
+                m, _cov, inv = fit_benign_corpus(arr)
+                mean_blob = torch.from_numpy(m.astype(np.float32))
+                inv_blob = torch.from_numpy(inv.astype(np.float32))
+                if session_id:
+                    _BASELINES.setdefault(session_id, {})
+                    _BASELINES[session_id]["__mahal_mean__"] = mean_blob
+                    _BASELINES[session_id]["__mahal_inv__"] = inv_blob
+            if (
+                corpus_blob is not None
+                and mean_blob is not None
+                and inv_blob is not None
+            ):
+                mean_np = (
+                    mean_blob.detach().cpu().numpy()
+                    if hasattr(mean_blob, "detach")
+                    else np.asarray(mean_blob, dtype=np.float64)
+                )
+                inv_np = (
+                    inv_blob.detach().cpu().numpy()
+                    if hasattr(inv_blob, "detach")
+                    else np.asarray(inv_blob, dtype=np.float64)
+                )
+                mahal_anomaly_value = mahal_anomaly_against_corpus(
+                    emb_after.detach().cpu().numpy()
+                    if hasattr(emb_after, "detach")
+                    else np.asarray(emb_after, dtype=np.float64),
+                    mean_np,
+                    inv_np,
+                )
+                if thr_blob is not None:
+                    mahal_anomaly_threshold_value = float(thr_blob)
+        except Exception as exc:
+            logger.debug("Phase C mahal_anomaly failed (non-fatal): %s", exc)
+            mahal_anomaly_value = None
+            mahal_anomaly_threshold_value = None
 
     risk_vector_8 = _compute_risk_vector(
         parse_before,
@@ -1198,6 +1430,25 @@ def score_change(
     fired_dims: list[str] = []
     fired_margins: dict[str, float] = {}
 
+    # NOTE (re-audit-hostile/2026-09-19-reaudit-fixes, RC-ML-04): in the
+    # current scoring regime, AIS = (cos+1)/2 and CD = sqrt(2-2cos) are
+    # scalar transforms of the same cosine similarity, so the
+    # `ais_below_threshold` check is mathematically subsumed by the
+    # `coherence_delta_above_threshold` check that follows. Default
+    # thresholds are ais < 0.4 (cos < -0.2) vs cd > 0.09 (cos < 0.996),
+    # so whenever `ais < t["ais"]` would fire, `coherence_delta > t["cd"]`
+    # has already fired.
+    #
+    # We keep both checks because:
+    #   - `ais_below_threshold` is part of the public ImpactReport.fired_
+    #     conditions contract that downstream hooks (pre_edit_guard) and
+    #     audit dashboards key on; removing it is a breaking API change.
+    #   - Phase C of the audit-deferred rollup plan (memos + plan at
+    #     thoughts/shared/research/2026-09-19-audit-deferred-scoring-v3.md
+    #     and .../plans/2026-09-19-audit-deferred-rollup.md) repurposes
+    #     AIS as the canonical 0..1 readout alongside a NEW independent
+    #     signal (mahal_anomaly) that is NOT a scalar transform of cos.
+    #     The check then carries distinct information again.
     if ais < t["ais"]:
         fired_conditions.append("ais_below_threshold")
         fired_margins["ais_below_threshold"] = float(t["ais"] - ais)
@@ -1205,6 +1456,21 @@ def score_change(
     if coherence_delta > t["cd"]:
         fired_conditions.append("coherence_delta_above_threshold")
         fired_margins["coherence_delta_above_threshold"] = float(coherence_delta - t["cd"])
+
+    # Phase C fired condition (RC-SCORING-V3-01): mahal_anomaly is an
+    # INDEPENDENT signal, not a scalar transform of cos. We trip when the
+    # squared Mahalanobis distance exceeds the per-session benign threshold
+    # at FPR=0.05. Degenerate calibrations (cov_inv is zero) yield +inf
+    # which always exceeds the threshold -- a deliberate fail-loud.
+    if (
+        mahal_anomaly_value is not None
+        and mahal_anomaly_threshold_value is not None
+        and mahal_anomaly_value > mahal_anomaly_threshold_value
+    ):
+        fired_conditions.append("mahal_anomaly_above_threshold")
+        fired_margins["mahal_anomaly_above_threshold"] = float(
+            mahal_anomaly_value - mahal_anomaly_threshold_value
+        )
 
     dim_breaches = [
         (RISK_LABELS[i], float(dim - dim_ceiling))
@@ -1223,7 +1489,9 @@ def score_change(
     summary = _summarize(ais, coherence_delta, risk_vector, regression, public_lang)
 
     # Auto-persist baseline on first encounter so cumulative_drift fires
-    # on subsequent edits within the same session.
+    # on subsequent edits within the same session. Safe because POST /score
+    # now requires bearer token authentication (RC-SEC-07); only authorized
+    # operators can trigger baseline persistence.
     if session_id:
         _persist_session_baseline_for_path(session_id, path, emb_after)
 
@@ -1243,6 +1511,9 @@ def score_change(
         fired_conditions=fired_conditions,
         fired_dims=fired_dims,
         fired_margins=fired_margins,
+        mahal_anomaly=mahal_anomaly_value,
+        mahal_anomaly_threshold=mahal_anomaly_threshold_value,
+        windowed_embed_active=windowed_active,
     )
 
 
@@ -1374,15 +1645,43 @@ def create_app():
     @app.post("/score")
     async def score(request: Request):
         t0 = time.monotonic()
+        
+        # RC-SEC-07: Bearer token authentication for /score
+        auth_header = request.headers.get("authorization", "")
+        expected_token = _get_operator_token()
+        if not expected_token:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=503,
+                content={"error": "auth_unavailable", "detail": "operator token not provisioned"},
+            )
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != expected_token:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "detail": "valid bearer token required"},
+            )
+        
+        # Body-size cap: reject payloads > 10 MB to prevent memory exhaustion
+        body = await request.body()
+        if len(body) > 10 * 1024 * 1024:
+            _record_latency((time.monotonic() - t0) * 1000.0, error=True)
+            return JSONResponse(
+                status_code=413,
+                content={"error": "payload_too_large", "detail": "max 10 MB"},
+            )
+        
         try:
-            raw = await request.body()
-            payload = json.loads(raw.decode("utf-8")) if raw else {}
-        except Exception as exc:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
             _record_latency((time.monotonic() - t0) * 1000.0, error=True)
             return JSONResponse(
                 status_code=400,
-                content={"error": "bad_request", "detail": f"invalid JSON: {exc}"},
+                content={"error": "bad_request", "detail": "invalid JSON"},
             )
+        # Body already parsed in auth section above as `data`
+        payload = data
+        
         if not isinstance(payload, dict):
             _record_latency((time.monotonic() - t0) * 1000.0, error=True)
             return JSONResponse(
@@ -1447,8 +1746,52 @@ def create_app():
     async def metrics():
         return JSONResponse(status_code=200, content=_metrics_snapshot())
 
+    # RC-SEC-07: Rate limiter for /baseline (1 req / 60s / session_id)
+    _baseline_rate_limits: dict[str, float] = {}  # session_id -> last_timestamp
+
+    def _check_baseline_rate_limit(session_id: str) -> bool:
+        """Return True if request is within rate limit."""
+        now = time.time()
+        last = _baseline_rate_limits.get(session_id, 0.0)
+        if now - last < 60.0:
+            return False
+        _baseline_rate_limits[session_id] = now
+        return True
+
+    def _get_operator_token() -> Optional[str]:
+        """Retrieve operator enforcement token from keychain (darwin) or env."""
+        import subprocess as _subprocess
+        import sys as _sys
+        # Darwin: keychain
+        if _sys.platform == "darwin":
+            try:
+                r = _subprocess.run(
+                    ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip()
+            except (FileNotFoundError, Exception):
+                pass
+        # Fallback: env var (CI pre-provisioned)
+        return os.environ.get("RC_ENFORCEMENT_TOKEN")
+
     @app.post("/baseline")
     async def baseline(request: Request):
+        # RC-SEC-07: Bearer token authentication
+        auth_header = request.headers.get("authorization", "")
+        expected_token = _get_operator_token()
+        if not expected_token:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "auth_unavailable", "detail": "operator token not provisioned"},
+            )
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != expected_token:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "detail": "valid bearer token required"},
+            )
+
         try:
             raw = await request.body()
             payload = json.loads(raw.decode("utf-8")) if raw else {}
@@ -1468,6 +1811,12 @@ def create_app():
             return JSONResponse(
                 status_code=400,
                 content={"error": "bad_request", "detail": "missing or invalid 'session_id'"},
+            )
+        # RC-SEC-07: Rate limit check
+        if not _check_baseline_rate_limit(session_id):
+            return JSONResponse(
+                status_code=429,
+                content={"error": "rate_limited", "detail": "1 request per 60s per session_id"},
             )
         if not isinstance(files, list) or not files:
             return JSONResponse(
@@ -1499,6 +1848,8 @@ def create_app():
                 content={"error": "internal_error", "detail": str(exc)},
             )
         _set_session_baseline(session_id, file_baselines)
+        corpus = file_baselines.get("__corpus__")
+        drift_p95_val = file_baselines.get("__drift_p95__", 0.0)
         return JSONResponse(
             status_code=200,
             content={
@@ -1506,7 +1857,7 @@ def create_app():
                 "session_id": session_id,
                 "n_files": n_files,
                 "hidden_size": int(corpus.shape[0]) if hasattr(corpus, "shape") else 0,
-                "drift_p95": float(drift_p95),
+                "drift_p95": float(drift_p95_val),
             },
         )
 

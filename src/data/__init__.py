@@ -38,7 +38,10 @@ def read_text(relative_path: str) -> str:
     tree but not listed in ``pyproject.toml`` ``package-data``).
     """
     parts = relative_path.split("/")
-    resource = resources.files("src.data.templates").joinpath(*parts)
+    base = resources.files("src.data.templates")
+    for part in parts:
+        base = base.joinpath(part)
+    resource = base
     if not resource.exists():
         raise FileNotFoundError(
             f"reasoning-core template not found in wheel data: {relative_path!r}. "
@@ -51,7 +54,10 @@ def read_text(relative_path: str) -> str:
 def exists(relative_path: str) -> bool:
     """Return True if the bundled template exists."""
     parts = relative_path.split("/")
-    return resources.files("src.data.templates").joinpath(*parts).exists()
+    base = resources.files("src.data.templates")
+    for part in parts:
+        base = base.joinpath(part)
+    return base.exists()
 
 
 __all__ = ["package_root", "read_text", "exists"]

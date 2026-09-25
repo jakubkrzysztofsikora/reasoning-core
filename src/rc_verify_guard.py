@@ -14,6 +14,7 @@ Run with the same Python and project layout as `rc_cli.py`.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -21,6 +22,32 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_STORE = Path(os.path.expanduser("~/.local/state/reasoning-core/guard_hashes.json"))
+MAC_SUFFIX = ".mac"
+
+
+def _hmac_key() -> bytes | None:
+    """Get HMAC key from macOS keychain service 'reasoning-core-enforcement'.
+    Returns None if keychain unavailable or key not found."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-w"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip().encode("utf-8")
+    except Exception:
+        pass
+    # Fallback: env var for CI / non-macOS
+    key_env = os.environ.get("RC_HMAC_KEY")
+    if key_env:
+        return key_env.encode("utf-8")
+    return None
+
+
+def _compute_mac(records_json: str, key: bytes) -> str:
+    """Compute HMAC-SHA256 over the canonical JSON representation."""
+    return hmac.new(key, records_json.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _store_path() -> Path:
@@ -35,24 +62,41 @@ def _verify(file_path: str, store_path: Path | None = None) -> tuple[bool, str]:
       - "store_corrupt" when store unreadable
       - "not_registered" when file not in store
       - "mismatch" when hash differs
+      - "tampered_store" when MAC is missing/invalid
     """
     path = Path(file_path).resolve()
     if not path.is_file():
         return (False, "missing_file")
     store = store_path or _store_path()
+    mac_path = store.parent / (store.name + MAC_SUFFIX)
+    
     if not store.is_file():
         return (False, "store_missing")
+    if not mac_path.is_file():
+        return (False, "tampered_store")
+    
     try:
-        records = json.loads(store.read_text(encoding="utf-8"))
+        records_text = store.read_text(encoding="utf-8")
+        records = json.loads(records_text)
+        stored_mac = mac_path.read_text(encoding="utf-8").strip()
     except (OSError, ValueError):
         return (False, "store_corrupt")
     if not isinstance(records, dict):
         return (False, "store_corrupt")
-    key = str(path)
-    if key not in records:
+    
+    # Verify MAC before trusting contents
+    key = _hmac_key()
+    if key is None:
+        return (False, "hmac_key_unavailable")
+    expected_mac = _compute_mac(records_text, key)
+    if not hmac.compare_digest(stored_mac, expected_mac):
+        return (False, "tampered_store")
+    
+    resolved_key = str(path)
+    if resolved_key not in records:
         return (False, "not_registered")
     current = hashlib.sha256(path.read_bytes()).hexdigest()
-    if records[key] != current:
+    if records[resolved_key] != current:
         return (False, "mismatch")
     return (True, "match")
 

@@ -247,6 +247,41 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
         revision="main",
         license="mit",
     ),
+    # Mamba-3 candidates. These are registered as opt-in backends so the
+    # rc init auto-sizer (src/embedder_tier.py) and the model-card pinner
+    # (eval/pin_model_cards.py) can find them. They remain NOT in the
+    # default backend until the pre-reg eval from the embedder memo
+    # (thoughts/shared/research/2026-09-19-audit-deferred-embedder.md,
+    # 2026-09-21 revision) passes. max_seq_len and hidden_size are
+    # placeholders pending pin_model_cards.py verification of the actual
+    # HF model cards; the listed values match the paper's quoted claims.
+    "mamba3-siso-893m": _EmbedderBackend(
+        name="mamba3-siso-893m",
+        checkpoint="state-spaces/mamba3-siso-893m",
+        pooling="mean",
+        max_seq_len=16384,
+        hidden_size=1536,
+        revision="main",
+        license="apache-2.0",
+    ),
+    "mamba3-mimo-894m": _EmbedderBackend(
+        name="mamba3-mimo-894m",
+        checkpoint="state-spaces/mamba3-mimo-894m",
+        pooling="mean",
+        max_seq_len=16384,
+        hidden_size=1536,
+        revision="main",
+        license="apache-2.0",
+    ),
+    "mamba3-siso-1.5b": _EmbedderBackend(
+        name="mamba3-siso-1.5b",
+        checkpoint="state-spaces/mamba3-siso-1.5b",
+        pooling="mean",
+        max_seq_len=16384,
+        hidden_size=2048,
+        revision="main",
+        license="apache-2.0",
+    ),
     "random-mamba": _EmbedderBackend(
         name="random-mamba",
         checkpoint="__random_mamba__",
@@ -274,6 +309,81 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
     ),
 }
 
+
+def backend_loadability_probe(backend_name: str) -> bool:
+    """Cheap ``backend_name -> bool`` probe for the auto-sizer.
+
+    BLOCKER #2 fix (2026-09-22 hostile review): previously, ``rc init``
+    auto-picked ``mamba3-siso-1.5b`` on >=32GiB hosts and wrote it to
+    ``.envrc`` as an operator pin, even though the current transformers
+    stack has no ``Mamba3*`` class and the checkpoint cannot be loaded.
+    The loader then refuses fallback for operator-pinned backends, so
+    the gate 503s every score and ``S2_FAIL_CLOSED=1`` blocks every edit.
+
+    This function asks "would ``load_backbone()`` succeed for this
+    backend on this host *without* downloading weights or pulling
+    model files?". The check is purely syntactic + registry-based:
+
+    * Unknown backend name -> ``False``.
+    * Mamba-3 backends (``mamba3-*``) require the
+      ``mamba-ssm>=2.0.0`` (or equivalent) kernel package; if it is
+      not importable on this host the backend is unloadable.
+      ``load_backbone()`` would otherwise hang on the sequential
+      Python fallback and ultimately fail with a size-mismatch
+      error (the Mamba-130M class doesn't match the 1536-dim
+      Mamba-3 hidden size).
+    * All other backends are loadable *a priori*; the registry
+      entry is the source of truth. The actual download + load
+      still happens at runtime in ``load_backbone()``; this probe
+      only screens for the known-bad class of failures.
+
+    The probe is intentionally cheap: no I/O, no HF API calls, no
+    weight downloads. It runs in microseconds.
+    """
+    if backend_name not in _BACKENDS:
+        return False
+    if backend_name.startswith("mamba3-"):
+        # Mamba-3 requires the upstream ``mamba-ssm`` kernels (or an
+        # equivalent registered backend) to load. The current
+        # transformers stack ships ``Mamba*`` for the original
+        # Mamba-130M architecture but no ``Mamba3*`` class, so the
+        # sequential Python fallback fails with a size-mismatch on
+        # the very first parameter copy. Until upstream lands a
+        # CPU fast-path or a transformers-registered Mamba3 class,
+        # any mamba3-* backend is unloadable on this host.
+        try:
+            import mamba_ssm  # noqa: F401 -- side-effect-free probe
+        except ImportError:
+            return False
+        # Anti-spoof: refuse to trust a sys.path-installed ``
+        # `` file (the round-2 review noted that a file named
+        # ``mamba_ssm`` placed on ``sys.path`` flips the probe). We
+        # require the package to expose at least one of the
+        # canonical kernel entry points.
+        try:
+            import mamba_ssm.ops.selective_scan_interface  # noqa: F401
+        except (ImportError, AttributeError):
+            return False
+    # RC-LOAD-PROBE-01 (round-2 Finding 3): every non-mamba3 backend
+    # must have a pinned SHA in ``_PINNED_REVISIONS`` or the loader
+    # will fail-closed on the unpinned revision. Refuse to bless a
+    # backend whose checkpoint is not pinned (or whose pin is the
+    # placeholder ``REVIEWER_PIN_REQUIRED`` -- meaning pin_model_cards
+    # has not run yet).
+    backend = _BACKENDS.get(backend_name)
+    if backend is not None:
+        pin = _PINNED_REVISIONS.get(backend.checkpoint)
+        if not pin or pin == "REVIEWER_PIN_REQUIRED":
+            # Allow the legacy mamba-130m fallback because the loader
+            # has its own fail-closed path that defaults to it when
+            # RC_EMBEDDER is unset. The probe does NOT have to bless
+            # legacy mamba-130m for the picker to use it; the picker
+            # only invokes the probe for non-legacy picks.
+            if backend_name != "mamba-130m":
+                return False
+    return True
+
+
 # Default to a backend with a real SHA pin so a fresh install works without
 # operator-supplied revision overrides. ``codestral-mamba`` / ``bge-code`` /
 # ``unixcoder-base`` carry ``revision="main"`` in the registry and are
@@ -298,6 +408,9 @@ _ALLOWED_CHECKPOINTS = frozenset({
     "gabriellarson/Mamba-Codestral-7B-v0.1-GGUF",
     "BAAI/bge-code-v1",
     "microsoft/unixcoder-base",
+    "state-spaces/mamba3-siso-893m",
+    "state-spaces/mamba3-mimo-894m",
+    "state-spaces/mamba3-siso-1.5b",
     "__random_mamba__",
 })
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -307,6 +420,27 @@ _PINNED_REVISIONS: dict[str, str] = {
     "sshleifer/tiny-gpt2":        "5f91d94bd9cd7190a9f3216ff93cd1dd95f2c7be",
     "mistralai/Mamba-Codestral-7B-v0.1": "4f086c08c1e0f07bdc50ca25125dbbf7475d21da",
     "microsoft/unixcoder-base": "5604afdc964f6c53782a6813140ade5216b99006",
+    # bge-code pin (RC-LOAD-PROBE-01 / round-2 Finding 3, round-3 retest):
+    # fetched from the live HF model card 2026-09-23
+    # (https://huggingface.co/api/models/BAAI/bge-code-v1). Operators may
+    # still override via RC_BAAI_BGE_CODE_V1_REVISION.
+    "BAAI/bge-code-v1": os.environ.get(
+        "RC_BAAI_BGE_CODE_V1_REVISION", ""
+    ) or "bd67852057c5d7ddcc7b8234d9d6c410117ed851",
+    # Mamba-3 candidate pins (round-3 retest): fetched from the live HF
+    # model cards 2026-09-23. Operators may override per checkpoint via
+    # RC_<REPO_SLUG>_REVISION. pin_model_cards.py remains available for
+    # refreshing these on a cadence but is no longer required for the
+    # loader to proceed under _resolve_revision_for_backend.
+    "state-spaces/mamba3-siso-893m": os.environ.get(
+        "RC_STATE_SPACES_MAMBA3_SISO_893M_REVISION", ""
+    ) or "e205b6e6d6075d089140d2e9170970aabc05c481",
+    "state-spaces/mamba3-mimo-894m": os.environ.get(
+        "RC_STATE_SPACES_MAMBA3_MIMO_894M_REVISION", ""
+    ) or "b5c7db27d1c7781d27c203bfd18601b3bbff7bc0",
+    "state-spaces/mamba3-siso-1.5b": os.environ.get(
+        "RC_STATE_SPACES_MAMBA3_SISO_1_5B_REVISION", ""
+    ) or "5cfc721542ec9ccee768088b2fd6b7e8101219d8",
 }
 
 
