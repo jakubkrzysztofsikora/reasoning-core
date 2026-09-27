@@ -20,11 +20,12 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from src.autonomous import LayaAdapter, TaskSpec, _qualification, _sidecar_healthy
+from eval.host_enforcement_qualification.run import _gateway_env
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CASES = Path(__file__).with_name("cases.json")
 HOOK = ROOT / "src" / "hooks" / "pre_edit_guard.py"
-MODEL = "claude-sonnet-4-5"
+DEFAULT_MODEL = "claude-sonnet-4-5"
 ARMS = ("vanilla", "laya", "rc", "laya_rc")
 # Sphinx fixture blobs have intentionally invalid Latin-1 working-tree content.
 CHECKOUT_ARTIFACTS = (
@@ -82,12 +83,15 @@ def task_row(case: dict, revision: str) -> dict:
     }
 
 
-def environment(workspace: Path, audit: Path, guarded: bool) -> dict[str, str]:
+def environment(workspace: Path, audit: Path, guarded: bool, gateway: bool) -> dict[str, str]:
     clean = {
         key: value for key, value in os.environ.items()
         if not key.startswith(("RC_", "S2_", "ANTHROPIC_", "CLAUDE_"))
         or key == "CLAUDE_CODE_OAUTH_TOKEN"
     }
+    if gateway:
+        clean.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        clean.update(_gateway_env())
     clean["PYTHONDONTWRITEBYTECODE"] = "1"
     if guarded:
         clean.update({
@@ -103,7 +107,7 @@ def environment(workspace: Path, audit: Path, guarded: bool) -> dict[str, str]:
 
 def run_arm(
     case: dict, row: dict, arm: str, source: Path, root: Path,
-    *, budget: float, timeout: int,
+    *, budget: float, timeout: int, model: str, gateway: bool,
 ) -> dict:
     arm_dir = root / case["instance_id"] / arm
     arm_dir.mkdir(parents=True)
@@ -144,7 +148,7 @@ def run_arm(
     if initial_dirty:
         raise RuntimeError("masked task baseline has tracked changes")
     guarded = arm in ("rc", "laya_rc")
-    settings = {"model": MODEL}
+    settings = {"model": model}
     if guarded:
         settings["hooks"] = {"PreToolUse": [{
             "matcher": "Edit|Write",
@@ -165,7 +169,7 @@ def run_arm(
         }
         checked = subprocess.run(
             [sys.executable, str(HOOK)], cwd=workspace,
-            env=environment(workspace, arm_dir / "preflight_audit", True),
+            env=environment(workspace, arm_dir / "preflight_audit", True, gateway),
             input=json.dumps(probe).encode(), capture_output=True, timeout=30,
         )
         if checked.returncode != 2 or b"forbidden_path" not in checked.stderr:
@@ -189,7 +193,7 @@ def run_arm(
             raise RuntimeError(f"Laya decision unavailable: {decision.status}")
         prompt += "\n\n" + decision.hint()
     command = [
-        "claude", "--print", "--output-format", "json", "--model", MODEL,
+        "claude", "--print", "--output-format", "json", "--model", model,
         "--permission-mode", "bypassPermissions", "--permission-prompts", "none",
         "--strict-mcp-config", "--setting-sources", "", "--settings", str(settings_path),
         "--tools", "Read,Edit,Write,Glob,Grep", "--max-budget-usd", str(budget), prompt,
@@ -197,7 +201,7 @@ def run_arm(
     started = time.perf_counter()
     try:
         proc = subprocess.run(
-            command, cwd=workspace, env=environment(workspace, arm_dir / "audit", guarded),
+            command, cwd=workspace, env=environment(workspace, arm_dir / "audit", guarded, gateway),
             capture_output=True, timeout=timeout, check=False,
         )
         exit_code = proc.returncode
@@ -245,6 +249,8 @@ def main() -> int:
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--out", type=Path, required=True, help="new directory outside this repo")
     parser.add_argument("--qualification", type=Path, required=True)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--gateway", action="store_true", help="use local NexGate Claude-compatible route")
     parser.add_argument("--max-budget-usd", type=float, default=1.0)
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--seed", type=int, default=20260927)
@@ -255,7 +261,7 @@ def main() -> int:
     if subprocess.run(["claude", "--version"], capture_output=True, text=True,
                       check=True).stdout.strip() != "2.1.282 (Claude Code)":
         parser.error("Claude host version has changed; requalify before running")
-    qualification = _qualification(args.qualification, MODEL, "2.1.282 (Claude Code)")
+    qualification = _qualification(args.qualification, args.model, "2.1.282 (Claude Code)")
     if not _sidecar_healthy("http://127.0.0.1:8765"):
         parser.error("reasoning-core sidecar is unhealthy")
     with urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3) as response:
@@ -276,7 +282,8 @@ def main() -> int:
         "cases_sha256": digest(cases_data), "baseline_id": frozen["baseline_id"],
         "dataset_revision": frozen["dataset_revision"], "benchmark": frozen["benchmark"],
         "split": frozen["split"], "qualification": qualification,
-        "model": MODEL, "host_version": "2.1.282 (Claude Code)",
+        "model": args.model, "provider_route": "nexgate" if args.gateway else "claude_oauth",
+        "host_version": "2.1.282 (Claude Code)",
         "runner_sha256": digest(Path(__file__).read_bytes()),
         "seed": args.seed, "max_budget_usd_per_arm": args.max_budget_usd,
         "timeout_s_per_arm": args.timeout, "order": [
@@ -290,6 +297,7 @@ def main() -> int:
             result = run_arm(
                 case, row, arm, source, output,
                 budget=args.max_budget_usd, timeout=args.timeout,
+                model=args.model, gateway=args.gateway,
             )
             manifest["results"].append({"instance_id": case["instance_id"], **result})
             print(f"finished {arm}: exit={result['agent_exit_code']} "

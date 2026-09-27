@@ -58,6 +58,49 @@ that the scoped path rule was active. The vanilla doctest arm wrote a new
 `test_*.py` file despite the prompt's no-test instruction. Neither result
 proves broader containment quality from two cases.
 
+## Fixed gate and Seaborn Codex rerun
+
+The import-cycle gate now tests whether a proposed edit adds an edge that
+closes a cycle. Existing cycles and duplicate definitions are compared against
+the baseline source, so unchanged findings do not block an unrelated write.
+The fixed-gate and Codex prepilot contexts were captured as separate immutable
+baselines in `eval/baselines/` before this comparison.
+
+The new task is pinned FeatureBench v1.1 `fast` row 81,
+`mwaskom__seaborn.7001ebe7.test_bar.123ed709.lv1`, in `cases_seaborn.json`.
+It has 16 focused `tests/_marks/test_bar.py` tests. The unmasked source passed
+all 16; the published masked task failed all 16. The same Codex CLI 0.156.1
+and `gpt-6-sol` model ran in every arm. The Laya arms received the same local
+typed decision hint. The RC arms used the Codex `apply_patch` pre-tool hook
+with deterministic rules and the local sidecar. Arm order was shuffled with
+seed `20260927`, and each arm had a 420-second wall cap. The run stopped once
+before the Laya+RC agent launched when Laya briefly returned unavailable;
+it resumed the staged, clean workspace after a successful retry. Both runner
+hashes are in the manifest.
+
+The rollout is at
+`~/.local/share/reasoning-core/featurebench-pilot/runs/2026-09-27-seaborn-codex-four-arm-v1/`.
+The hash-checked local host grade is at
+`~/.local/share/reasoning-core/featurebench-pilot/grades/2026-09-27-seaborn-codex-four-arm-v1/`.
+
+| Arm | Focused host test | Runtime | Input tokens (cached) | Output tokens | Source files changed |
+| --- | --- | ---: | ---: | ---: | --- |
+| Vanilla | 15/16 | 207 s | 779,787 (738,816) | 7,874 | 2 |
+| Laya | 15/16 | 250 s | 1,097,246 (1,013,504) | 7,661 | 2 |
+| RC | 15/16 | 202 s | 793,519 (740,480) | 6,662 | 2 |
+| Laya + RC | 16/16 | 305 s | 1,584,876 (1,510,272) | 9,530 | 2 |
+
+The three failures were the same `test_auto_edgewidth` broadcasting error.
+An additional local check on the combined patch ran `tests/_marks` and
+`tests/_core/test_scales.py`: 186 passed and 1 expected failure.
+No arm changed tests, and the RC arms recorded no policy block. The Codex
+bridge qualification showed an allowed source edit and a direct forbidden
+patch denied before mutation. The qualification agent declined to attempt the
+forbidden edit itself. Codex shell writes and other specialized tool paths are
+outside this hook's pre-write coverage; the final patch and changed paths were
+audited after each arm. This one-task host proxy is not an official
+FeatureBench score or evidence of a general causal quality or speed benefit.
+
 ## Boundaries and next experiment
 
 The official FeatureBench grader is implemented in `grade.py`, but was not
@@ -68,11 +111,9 @@ official score calculation. Collections v1-v3 are invalid: v1 had checkout
 encoding artifacts, v2 omitted the corruption patch, and v3 omitted `PLAN.md`
 so the path contract was inactive. They must not be pooled with v4.
 
-Before an RC rerun, fix cycle admission to compare before and after graphs,
-capture a new immutable baseline as required by `eval/baselines/README.md`,
-and requalify the host hook. Keep the same frozen tasks, or use a larger
-preregistered set with official container grading and blinded human review.
-Do not reinterpret this two-task pilot as a speedup or quality gain.
+The gate fix and one-task rerun above address the observed false blocks. A
+larger preregistered set with official container grading and blinded human
+review is still needed before comparing product quality or speed.
 
 For reproduction after restoring disk headroom, run the pinned rollout with
 `run.py`, then `grade.py` against the official FeatureBench checkout. For the

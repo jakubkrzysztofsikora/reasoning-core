@@ -30,3 +30,5 @@ arm configuration, hashes, and report digest.
 | `baseline-2026-09-17-ten-x-confirmatory-corpus-v2` | 2026-09-17 | **Active confirmatory corpus** (150 tasks, frozen). Used for the confirmatory result. |
 | `baseline-2026-09-27-jev-design-prepilot` | 2026-09-27 | Pre-pilot context for the proposed Jev task-triage evaluation; no combined outcome measured. |
 | `baseline-2026-09-27-laya-prepilot` | 2026-09-27 | Pre-Laya integration context for an exploratory local intake and coding smoke evaluation. |
+| `baseline-2026-09-27-featurebench-seaborn-fixed-gate` | 2026-09-27 | Fixed structural gate and frozen Seaborn task before host selection. |
+| `baseline-2026-09-27-featurebench-seaborn-codex-prepilot` | 2026-09-27 | Codex host, local Laya, and reasoning-core context before the Seaborn four-arm comparison. |

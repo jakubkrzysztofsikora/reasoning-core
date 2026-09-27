@@ -3,7 +3,7 @@
   "benchmark": "LiberCoders/FeatureBench",
   "dataset_revision": "76b4a4566e04f4bcc13c35125d4f301791efa736",
   "split": "fast",
-  "baseline_id": "baseline-2026-09-27-featurebench-seaborn-fixed-gate",
+  "baseline_id": "baseline-2026-09-27-featurebench-seaborn-codex-prepilot",
   "cases": [
     {
       "row_index": 81,
