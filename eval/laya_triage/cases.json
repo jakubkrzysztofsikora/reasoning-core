@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "description": "Exploratory labeled intake fixtures; not a coding outcome benchmark.",
+  "cases": [
+    {
+      "id": "localized-trim",
+      "brief": "Update the existing normalize_name function in src/names.py to trim leading and trailing spaces.",
+      "allowed_paths": [
+        "src/names.py"
+      ],
+      "expected_kind": "localized"
+    },
+    {
+      "id": "localized-typo",
+      "brief": "Correct a misspelled CLI error message in src/cli.py without changing behavior.",
+      "allowed_paths": [
+        "src/cli.py"
+      ],
+      "expected_kind": "localized"
+    },
+    {
+      "id": "localized-boundary",
+      "brief": "Add an empty-input guard to parse_rows in src/parser.py.",
+      "allowed_paths": [
+        "src/parser.py"
+      ],
+      "expected_kind": "localized"
+    },
+    {
+      "id": "localized-format",
+      "brief": "Change one CSS token in web/theme.css to improve text contrast.",
+      "allowed_paths": [
+        "web/theme.css"
+      ],
+      "expected_kind": "localized"
+    },
+    {
+      "id": "multifile-api",
+      "brief": "Add a response field to the API handler and update the client decoder to consume it.",
+      "allowed_paths": [
+        "api/handler.py",
+        "client/decoder.py"
+      ],
+      "expected_kind": "multifile"
+    },
+    {
+      "id": "multifile-migration",
+      "brief": "Add a database migration and update the corresponding ORM model for the new column.",
+      "allowed_paths": [
+        "db/migrations/002.py",
+        "src/models.py"
+      ],
+      "expected_kind": "multifile"
+    },
+    {
+      "id": "multifile-cli",
+      "brief": "Add a new CLI option and pass it through to the service configuration.",
+      "allowed_paths": [
+        "src/cli.py",
+        "src/service.py"
+      ],
+      "expected_kind": "multifile"
+    },
+    {
+      "id": "multifile-module",
+      "brief": "Move a shared type to a new module and update both imports that use it.",
+      "allowed_paths": [
+        "src/types.py",
+        "src/a.py",
+        "src/b.py"
+      ],
+      "expected_kind": "multifile"
+    },
+    {
+      "id": "investigate-flaky",
+      "brief": "Investigate why one scheduled job fails intermittently; inspect the logs and identify the cause before proposing a change.",
+      "allowed_paths": [
+        "src/jobs.py"
+      ],
+      "expected_kind": "investigation"
+    },
+    {
+      "id": "investigate-query",
+      "brief": "Diagnose the source of a slow database query across the endpoint and query builder before choosing a fix.",
+      "allowed_paths": [
+        "src/api.py",
+        "src/query.py"
+      ],
+      "expected_kind": "investigation"
+    },
+    {
+      "id": "investigate-compat",
+      "brief": "Research whether the library upgrade changes the parser API before editing the integration.",
+      "allowed_paths": [
+        "src/integration.py"
+      ],
+      "expected_kind": "investigation"
+    },
+    {
+      "id": "investigate-race",
+      "brief": "Trace an intermittent race across the worker and queue modules; establish a reproducer before patching.",
+      "allowed_paths": [
+        "src/worker.py",
+        "src/queue.py"
+      ],
+      "expected_kind": "investigation"
+    }
+  ]
+}

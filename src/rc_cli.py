@@ -1798,11 +1798,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
 
 def cmd_autonomous(args: argparse.Namespace) -> int:
     """Run a bounded coding task in an isolated clone."""
-    from src.autonomous import JevAdapter, LocalAdapter, TaskSpec, run_task
+    from src.autonomous import JevAdapter, LayaAdapter, LocalAdapter, TaskSpec, run_task
 
     task = TaskSpec.from_file(Path(args.task))
-    adapter = (JevAdapter(os.environ.get("TYPESAFE_API_KEY"))
-               if args.adapter == "jev" else LocalAdapter())
+    adapter = (JevAdapter(os.environ.get("TYPESAFE_API_KEY")) if args.adapter == "jev"
+               else LayaAdapter(args.laya_url, model=args.laya_model) if args.adapter == "laya"
+               else LocalAdapter())
     report = run_task(
         task, Path(args.repo), Path(args.out), Path(args.qualification), adapter,
         model=args.model, sidecar_url=args.sidecar_url,
@@ -1810,7 +1811,9 @@ def cmd_autonomous(args: argparse.Namespace) -> int:
         timeout=args.timeout,
     )
     print(json.dumps({"status": report["status"], "report": str(Path(args.out) / "report.json"),
-                      "workspace": report["workspace"]}))
+                      "workspace": report["workspace"],
+                      "decision_source": report["decision"]["source"],
+                      "decision_status": report["decision"]["status"]}))
     return 0 if report["status"] == "completed" else 1
 
 
@@ -1823,7 +1826,11 @@ def main(argv: list | None = None) -> int:
     autonomous.add_argument("--repo", default=".", help="source Git repository")
     autonomous.add_argument("--out", required=True, help="new output directory outside the source repo")
     autonomous.add_argument("--qualification", required=True, help="exact host/model qualification report")
-    autonomous.add_argument("--adapter", choices=["local", "jev"], default="local")
+    autonomous.add_argument("--adapter", choices=["local", "jev", "laya"], default="local")
+    autonomous.add_argument("--laya-url", default="http://127.0.0.1:8000",
+                            help="loopback Laya server origin")
+    autonomous.add_argument("--laya-model", choices=["english", "multilingual", "typed-decisions"],
+                            default="english")
     autonomous.add_argument("--model", default="claude-sonnet-4-5")
     autonomous.add_argument("--sidecar-url", default="http://127.0.0.1:8765")
     autonomous.add_argument("--max-attempts", type=int, default=3)

@@ -272,6 +272,7 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 - [`docs/COMPETITOR_POSITIONING.md`](docs/COMPETITOR_POSITIONING.md) — competitor map, security-trust research, and 10x validation plan
 - [`docs/JEV_AUTONOMOUS_HARNESS_DESIGN.md`](docs/JEV_AUTONOMOUS_HARNESS_DESIGN.md) — Jev integration design and budget-capped evaluation protocol
 - [`docs/AUTONOMOUS_HARNESS.md`](docs/AUTONOMOUS_HARNESS.md) — bounded autonomous runner, qualification, and task format
+- [`docs/LAYA_LOCAL_EVAL.md`](docs/LAYA_LOCAL_EVAL.md) — local Laya setup and exploratory intake results
 
 ## Contributing
 

@@ -24,7 +24,8 @@ Create a JSON file outside the source repository:
 `triage_brief` is the only task text sent to hosted Jev. Write it as a
 redacted summary. Without it, or without `TYPESAFE_API_KEY`, Jev returns an
 uncertain advisory decision and the coding model still receives the full task.
-The local adapter uses no external decision API.
+The rules adapter uses no decision model. For a local typed decision model,
+use Laya as described in [LAYA_LOCAL_EVAL.md](LAYA_LOCAL_EVAL.md).
 
 Each check is an argument array, never a shell command. The checks run on the
 host in the separate clone, with a reduced environment. Supply checks you

@@ -2,8 +2,10 @@
 
 Status: design and evaluation protocol, 2026-09-27. A bounded task-triage
 adapter and qualified Claude Code runner are implemented in `src/autonomous.py`.
-The four-arm evaluation and any combined outcome remain unmeasured. Pre-pilot
-baseline: `baseline-2026-09-27-jev-design-prepilot`.
+The four-arm evaluation and any combined outcome remain unmeasured. A separate
+local Laya adapter and exploratory intake check are documented in
+[LAYA_LOCAL_EVAL.md](LAYA_LOCAL_EVAL.md). Pre-pilot baseline:
+`baseline-2026-09-27-jev-design-prepilot`.
 
 ## Evidence check
 

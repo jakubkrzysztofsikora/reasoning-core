@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from src.autonomous import JevAdapter, LocalAdapter, TaskSpec, run_task
+from src.autonomous import JevAdapter, LayaAdapter, LocalAdapter, TaskSpec, run_task
 
 
 def _task(**overrides):
@@ -76,6 +76,73 @@ def test_jev_failure_returns_uncertain():
     assert decision.source == "jev"
     assert decision.status == "unavailable"
 
+
+def test_laya_adapter_uses_loopback_and_answer_probability():
+    response = {
+        "model": "laya-rl-agent",
+        "routing": {"model": "english"},
+        "answers": {
+            "task_kind": {
+                "type": "choice", "choice": "localized",
+                "confidence": 0.53, "answer_confidence": 0.85,
+            },
+            "needs_deep_reasoning": {"type": "noul", "noul": 0.12},
+        },
+        "usage": {"input_tokens": 132},
+    }
+    seen = {}
+
+    def transport(request, timeout):
+        seen["url"] = request.full_url
+        seen["authorization"] = request.get_header("Authorization")
+        seen["payload"] = json.loads(request.data)
+        return io.BytesIO(json.dumps(response).encode())
+
+    decision = LayaAdapter(
+        "http://127.0.0.1:8000", model="english", transport=transport,
+    ).decide(_task())
+    assert decision.source == "laya"
+    assert decision.kind == "localized"
+    assert decision.confidence == 0.85
+    assert decision.needs_deep_reasoning == 0.12
+    assert decision.model == "english"
+    assert seen["url"] == "http://127.0.0.1:8000/v1/systemone"
+    assert seen["authorization"] is None
+    assert seen["payload"]["model"] == "english"
+
+
+def test_laya_adapter_rejects_nonlocal_endpoint_and_fails_to_uncertain():
+    with pytest.raises(ValueError, match="loopback"):
+        LayaAdapter("https://example.com", model="english")
+
+    def unavailable(request, timeout):
+        raise OSError("offline")
+
+    decision = LayaAdapter(
+        "http://localhost:8000", model="english", transport=unavailable,
+    ).decide(_task())
+    assert decision.kind == "uncertain"
+    assert decision.source == "laya"
+    assert decision.status == "unavailable"
+
+def test_laya_malformed_response_returns_uncertain():
+    response = {
+        "answers": {
+            "task_kind": {
+                "type": "choice", "choice": "localized",
+                "answer_confidence": 0.9,
+            },
+            "needs_deep_reasoning": {"type": "noul", "noul": 0.2},
+        },
+        "routing": ["unexpected"],
+    }
+
+    def transport(request, timeout):
+        return io.BytesIO(json.dumps(response).encode())
+
+    decision = LayaAdapter(transport=transport).decide(_task())
+    assert decision.kind == "uncertain"
+    assert decision.status == "unavailable"
 
 def test_run_task_keeps_source_repo_untouched_and_emits_patch(tmp_path):
     repo = tmp_path / "source"
