@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "baseline_id": "baseline-2026-09-27-real-session-replay-prepilot",
+  "cases": [
+    {
+      "id": "session-scope-reconcile",
+      "commit": "57198d26061d91920156077baf355b32f2144aa5",
+      "source_files": ["src/rc_cli.py"],
+      "test_file": "tests/test_rc_reconcile.py",
+      "focused_tests": ["test_reconcile_ignores_files_predating_session", "test_reconcile_flags_write_after_session_start"]
+    },
+    {
+      "id": "stop-session-identity",
+      "commit": "f359f4faaefa4ee41c814a0e4f9b53dca208750e",
+      "source_files": ["src/hooks/stop_reconcile.py"],
+      "test_file": "tests/test_stop_reconcile.py",
+      "focused_tests": ["test_stop_hook_uses_audit_session_id_for_reconcile"]
+    },
+    {
+      "id": "verification-parent-link",
+      "commit": "5c06f6c37d7963e3ac4fe2262cd28296367b9085",
+      "source_files": ["src/hooks/post_bash_verification.py", "src/rc_cli.py"],
+      "test_file": "tests/test_post_bash_verification.py",
+      "focused_tests": ["test_uses_only_explicit_parent_ids"]
+    }
+  ]
+}
