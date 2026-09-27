@@ -29,7 +29,7 @@
 ############################
 # Stage 1: builder
 ############################
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -70,7 +70,7 @@ RUN chmod +x /tmp/prefetch_mamba.sh && /tmp/prefetch_mamba.sh
 ############################
 # Stage 2: runtime
 ############################
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim@sha256:e41613d42d4891e4930f79523f93f81bbc7632584ec65e36ab055f41a800b41e AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \

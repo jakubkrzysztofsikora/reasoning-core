@@ -2,8 +2,8 @@
 
 The bounded intake and reasoning-core integration is `rc autonomous`.
 It takes a bounded task, makes one advisory intake decision, and runs Claude
-Code unattended in a separate clone. The only enabled mutation tools are
-the exact `Edit`/`Write` lane in a matching host-enforcement qualification.
+Code or Codex unattended in a separate clone. Claude uses the qualified
+`Edit`/`Write` lane. Codex uses its separately qualified `apply_patch` hook.
 Reasoning-core's pre-write hook controls those edits; deterministic checks
 decide whether the final patch is accepted.
 
@@ -70,6 +70,42 @@ Start the loopback Laya server first to get the default advisory hint. The
 server is optional: without it, the run proceeds with an uncertain hint. Use
 `--adapter local` for deterministic intake or `--adapter jev` for hosted Jev.
 No intake response can grant path access or relax a deterministic deny.
+
+For Codex, first run the Codex `apply_patch` bridge qualification with the
+exact CLI version, model, and enforcement source. Use its fresh report:
+
+```bash
+.venv/bin/python -m eval.featurebench_four_arm.qualify_codex \
+  --model gpt-6-astra \
+  --out ~/.local/share/reasoning-core/qualifications/codex-current
+rc autonomous --host codex --model gpt-6-astra \
+  --repo /path/to/source-repo --task /path/to/task.json \
+  --qualification ~/.local/share/reasoning-core/qualifications/codex-current/report.json \
+  --max-attempts 1 --timeout 300 \
+  --out ~/.local/share/reasoning-core/autonomous/codex-task-001
+```
+
+Codex has no enforced dollar budget in this runner; `--max-budget-usd` is
+rejected for that host. The wall timeout and attempt count are enforced.
+Codex shell writes do not pass through the `apply_patch` hook. The runner
+requires an allowed gate receipt matching each final file hash and independently
+replays the final candidates through the deterministic guard in a fresh clone
+with the original task policy. Transient shell writes inside the agent clone
+are still outside pre-write coverage. Use only on tasks for which this
+isolated-clone boundary is acceptable. The Codex qualification proves an
+allowed host-hook delivery and a direct forbidden-hook denial; the agent
+declined its forbidden edit, so agent-initiated denial is unproven.
+
+A local four-arm smoke on a frozen Python normalization fixture
+(`47eed9f1c1815873bd7ac2c575fb6c8f636ca661`, baseline
+`baseline-2026-09-28-codex-four-arm-smoke`) passed the focused check in all
+four configurations: Codex, Codex + Laya, Codex + reasoning-core, and all
+three together. The combined run had an `ok` Laya decision and a matching
+allowed write receipt. An earlier combined attempt succeeded with an
+unavailable Laya decision after a 10-second intake timeout; it is a fallback
+result, not a combined result. The task is too small to establish a quality
+winner or a speed benefit. Raw local artifacts are under
+`~/.local/share/reasoning-core/autonomous/smoke-20260928/`.
 The run refuses an unqualified host, an unhealthy sidecar, a preexisting output
 directory, an existing contract that it cannot merge safely, or an output
 directory inside the source repo.
@@ -87,8 +123,10 @@ merge or deployment is performed.
 
 ## Current limits
 
-- Only the qualified Claude Code `Edit`/`Write` lane is enabled. Bash,
-  delegation, notebook and worktree mutation tools are disabled.
+- Claude enables only its qualified `Edit`/`Write` lane. Bash, delegation,
+  notebook and worktree mutation tools are disabled for Claude. Codex has
+  the qualified `apply_patch` hook and a workspace-write sandbox; its shell
+  path remains outside hook coverage.
 - The agent's separate clone and qualified Edit/Write lane are not an OS
   container. The macOS check sandbox denies external writes and network, but
   it does not provide full read isolation from host files. Checks that need

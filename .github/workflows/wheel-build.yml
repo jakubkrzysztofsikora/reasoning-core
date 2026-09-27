@@ -41,12 +41,12 @@ jobs:
           - { os: macos-14,        python: '3.13', platform: macosx_arm64 }
           - { os: macos-13,        python: '3.11', platform: macosx_x86_64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python }}
       - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         if: runner.os == 'Linux'
       - name: Install cibuildwheel
         run: python -m pip install --upgrade cibuildwheel==2.20.0
@@ -68,7 +68,7 @@ jobs:
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_COMMAND: 'python -m pytest tests/test_data_accessor.py -q'
         run: python -m cibuildwheel --output-dir wheelhouse
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.platform }}
           path: wheelhouse/*.whl
@@ -77,15 +77,15 @@ jobs:
     name: build sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
             python-version: '3.12'
       - name: Build sdist
         run: |
           python -m pip install --upgrade build
           python -m build --sdist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -96,9 +96,9 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
       - name: Sign each wheel with sigstore (keyless, OIDC)
         env:
           COSIGN_EXPERIMENTAL: '1'
@@ -108,7 +108,7 @@ jobs:
             cosign sign-blob --yes "$whl" --output-signature "$whl.sig" --bundle "$whl.bundle"
           done
       - name: SLSA build provenance
-        uses: slsa-framework/slsa-github-generator@v1.9.0
+        uses: slsa-framework/slsa-github-generator@07e64b653f10a80b6510f4568f685f8b7b9ea830
         id: slsa
         with:
           base64-subjects: ${{ needs.build_wheels.outputs.digests }}
@@ -123,11 +123,11 @@ jobs:
     permissions:
       id-token: write  # OIDC for PyPI Trusted Publisher
     steps:
-      - uses: actions/download-artifact@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
       - name: Publish via Trusted Publisher
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
         # No PYPI_API_TOKEN — Trusted Publisher binds this workflow to
         # the project at PyPI console. See https://docs.pypi.org/trusted-publishers/.

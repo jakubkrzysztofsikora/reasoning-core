@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
-from pathlib import Path
 
 from eval.timing_pilot import run
 
@@ -32,6 +32,8 @@ def test_policy_control_fails_for_fixture_contract(tmp_path):
     proc = subprocess.run(
         [sys.executable, "-m", "eval.timing_pilot.check_policy", "--project", ".", "--path", probe["path"]],
         cwd=project,
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, (
+            str(run.ROOT), os.environ.get("PYTHONPATH"))))},
         capture_output=True,
         text=True,
     )

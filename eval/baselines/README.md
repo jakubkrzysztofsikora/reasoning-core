@@ -33,3 +33,4 @@ arm configuration, hashes, and report digest.
 | `baseline-2026-09-27-featurebench-seaborn-fixed-gate` | 2026-09-27 | Fixed structural gate and frozen Seaborn task before host selection. |
 | `baseline-2026-09-27-featurebench-seaborn-codex-prepilot` | 2026-09-27 | Codex host, local Laya, and reasoning-core context before the Seaborn four-arm comparison. |
 | `baseline-2026-09-27-laya-default-prechange` | 2026-09-27 | Context before making auto-routed Laya the advisory `rc autonomous` default and hardening its check lane. |
+| `baseline-2026-09-28-codex-autonomous-prechange` | 2026-09-28 | Context before adding a separately qualified Codex autonomous host lane. |

@@ -72,7 +72,7 @@ PYEOF
 # bottom-up. Keep this list in sync with the per-CLI directories install.sh
 # `mkdir -p`s; missing any one of them leaves an empty dir on disk and trips
 # the multi-cli smoke gate.
-for root in .claude .codex .gemini .copilot .kimi .vibe; do
+for root in .claude .codex .gemini .copilot .kimi .vibe .pi; do
   [[ -d "$root" ]] && find "$root" -depth -type d -empty -delete 2>/dev/null || true
 done
 

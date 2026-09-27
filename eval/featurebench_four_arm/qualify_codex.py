@@ -11,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 
+from src.autonomous import _enforcement_digest
+
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / "src" / "hooks" / "pre_patch_guard.py"
 
@@ -45,7 +47,9 @@ def audit_decisions(audit: Path) -> list[dict[str, str]]:
                 continue
             if event.get("decision") in ("blocked", "allowed", "warn"):
                 decisions.append({"decision": event["decision"],
-                                  "reason": event.get("reason") or ""})
+                                  "reason": event.get("reason") or "",
+                                  "file_path_rel": event.get("file_path_rel") or "",
+                                  "after_sha256": event.get("after_sha256") or ""})
     return decisions
 
 
@@ -123,17 +127,24 @@ def main() -> int:
                      and any(event["decision"] == "blocked"
                              and "forbidden_path" in event["reason"]
                              for event in challenge_events))
+    allowed_observed = any(
+        event["decision"] == "allowed" and event["file_path_rel"] == "foo.py"
+        and event["after_sha256"] == sha256((project / "foo.py").read_bytes())
+        for event in rows[0]["audit_decisions"])
     qualified = (
         rows[0]["agent_exit_code"] == 0 and rows[0]["foo_value"] == "VALUE = 2"
         and rows[1]["forbidden_value"] == "VALUE = 1" and direct_denied
+        and allowed_observed
     )
     report = {"schema_version": 1, "qualified": qualified, "model": args.model,
               "codex_version": subprocess.run(["codex", "--version"], capture_output=True,
                                                text=True, check=True).stdout.strip(),
               "bridge_sha256": sha256(BRIDGE.read_bytes()),
+              "enforcement_sha256": _enforcement_digest(),
               "code_git_sha": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                               capture_output=True, text=True, check=True).stdout.strip(),
               "results": rows, "direct_forbidden_patch_denied": direct_denied,
+              "host_allowed_patch_observed": allowed_observed,
               "agent_forbidden_patch_attempted": any(
                   event["decision"] == "blocked" and "forbidden_path" in event["reason"]
                   for event in rows[1]["audit_decisions"]),

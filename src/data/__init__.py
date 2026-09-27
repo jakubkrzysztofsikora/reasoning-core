@@ -37,8 +37,7 @@ def read_text(relative_path: str) -> str:
     is almost always a packaging bug (the file was added to the source
     tree but not listed in ``pyproject.toml`` ``package-data``).
     """
-    parts = relative_path.split("/")
-    resource = resources.files("src.data.templates").joinpath(*parts)
+    resource = _resource(relative_path)
     if not resource.exists():
         raise FileNotFoundError(
             f"reasoning-core template not found in wheel data: {relative_path!r}. "
@@ -50,8 +49,14 @@ def read_text(relative_path: str) -> str:
 
 def exists(relative_path: str) -> bool:
     """Return True if the bundled template exists."""
-    parts = relative_path.split("/")
-    return resources.files("src.data.templates").joinpath(*parts).exists()
+    return _resource(relative_path).exists()
+
+
+def _resource(relative_path: str):
+    resource = resources.files("src.data.templates")
+    for part in relative_path.split("/"):
+        resource = resource.joinpath(part)
+    return resource
 
 
 __all__ = ["package_root", "read_text", "exists"]

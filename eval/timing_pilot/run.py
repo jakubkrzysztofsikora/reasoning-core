@@ -154,8 +154,11 @@ def _run_control(project: Path, target: Path, probe: dict[str, Any]) -> dict[str
     target.write_text(probe["after"], encoding="utf-8")
     write_completed = time.monotonic_ns()
     started = time.monotonic_ns()
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(ROOT), env.get("PYTHONPATH"))))
     proc = subprocess.run(
-        probe["control"], cwd=project, text=True, capture_output=True, timeout=30,
+        [sys.executable, *probe["control"][1:]], cwd=project, env=env,
+        text=True, capture_output=True, timeout=30,
     )
     finished = time.monotonic_ns()
     elapsed_ms = (finished - started) / 1_000_000

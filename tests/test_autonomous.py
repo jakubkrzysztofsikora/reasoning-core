@@ -16,7 +16,8 @@ import pytest
 
 from src.autonomous import (
     JevAdapter, LayaAdapter, LocalAdapter, TaskSpec, _checks, _enforcement_digest, _git,
-    _patch_reproduces_final, _qualification, _run_bounded, _stage_check_workspace,
+    _codex_qualification, _final_admission, _patch_reproduces_final, _qualification,
+    _run_bounded, _stage_check_workspace,
     _write_policy, run_task,
 )
 
@@ -273,6 +274,158 @@ def test_run_task_refuses_unqualified_host_before_cloning(tmp_path):
         run_task(_task(), repo, tmp_path / "run", report, LocalAdapter(),
                  model="claude-sonnet-4-5", host_version=lambda: "test-host")
     assert not (tmp_path / "run").exists()
+
+
+def test_codex_qualification_requires_exact_bridge_model_and_host(tmp_path):
+    from src.autonomous import _CODEX_HOOK
+
+    report = tmp_path / "codex.json"
+    valid = {"qualified": True, "model": "gpt-6-astra",
+             "codex_version": "codex-cli 0.156.1",
+             "bridge_sha256": hashlib.sha256(_CODEX_HOOK.read_bytes()).hexdigest(),
+             "enforcement_sha256": _enforcement_digest(),
+             "host_allowed_patch_observed": True,
+             "direct_forbidden_patch_denied": True}
+    report.write_text(json.dumps(valid))
+    assert _codex_qualification(report, "gpt-6-astra", "codex-cli 0.156.1")["model"] == "gpt-6-astra"
+    with pytest.raises(ValueError, match="qualification"):
+        _codex_qualification(report, "gpt-6-sol", "codex-cli 0.156.1")
+    with pytest.raises(ValueError, match="qualification"):
+        _codex_qualification(report, "gpt-6-astra", "codex-cli 0.157.0")
+    report.write_text(json.dumps({**valid, "host_allowed_patch_observed": False}))
+    with pytest.raises(ValueError, match="qualification"):
+        _codex_qualification(report, "gpt-6-astra", "codex-cli 0.156.1")
+
+
+def test_codex_final_admission_rejects_forbidden_import_from_fresh_policy(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "main.py").write_text("def value():\n    return 1\n")
+    policy = source / ".reasoning-core"
+    policy.mkdir()
+    (policy / "rules.yaml").write_text(
+        "corpus_version: v1\nrules:\n"
+        "  - id: no_os_import\n    type: forbid_import\n"
+        "    severity: deny\n    language: python\n"
+        "    target: os\n    message: os import is forbidden\n"
+    )
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "add", "main.py", ".reasoning-core/rules.yaml"],
+                   cwd=source, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c",
+                    "user.email=test@example.invalid", "commit", "-q", "-m", "base"],
+                   cwd=source, check=True)
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("import os\n\ndef value():\n    return os.getenv('X')\n")
+    admitted = _final_admission(source, _git(source, "rev-parse", "HEAD"),
+                                workspace, _task(), ["main.py"],
+                                tmp_path / "audit", "http://127.0.0.1:9")
+    assert admitted is False
+
+
+def test_codex_final_admission_accepts_allowed_change(tmp_path, monkeypatch):
+    from src import autonomous
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "main.py").write_text("def value():\n    return 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "add", "main.py"], cwd=source, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c",
+                    "user.email=test@example.invalid", "commit", "-q", "-m", "base"],
+                   cwd=source, check=True)
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("def value():\n    return 2\n")
+    original_env = autonomous._agent_env
+
+    def symbolic_env(project, audit_root, sidecar_url, host):
+        return {**original_env(project, audit_root, sidecar_url, host),
+                "S2_FAIL_CLOSED": "0"}
+
+    monkeypatch.setattr(autonomous, "_agent_env", symbolic_env)
+    def clean_check(project, task):
+        assert (project / "main.py").read_text() == "def value():\n    return 2\n"
+        return [{"returncode": 0}]
+
+    monkeypatch.setattr(autonomous, "_checks", clean_check)
+    patches = []
+    hashes = {}
+    assert _final_admission(
+        source, _git(source, "rev-parse", "HEAD"), workspace, _task(),
+        ["main.py"], tmp_path / "audit", "http://127.0.0.1:9",
+        admitted_hashes=hashes, accepted_patch=patches)
+    assert "+    return 2" in patches[0]
+    assert hashes == {"main.py": hashlib.sha256((workspace / "main.py").read_bytes()).hexdigest()}
+
+
+def test_codex_final_admission_checks_clean_patch_without_ignored_helper(tmp_path, monkeypatch):
+    from src import autonomous
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "main.py").write_text("def value():\n    return 1\n")
+    (source / ".gitignore").write_text("helper.py\n")
+    subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+    subprocess.run(["git", "add", "main.py", ".gitignore"], cwd=source, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c",
+                    "user.email=test@example.invalid", "commit", "-q", "-m", "base"],
+                   cwd=source, check=True)
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("def value():\n    return 3\n")
+    (workspace / "helper.py").write_text("def override():\n    return True\n")
+    original_env = autonomous._agent_env
+    monkeypatch.setattr(autonomous, "_agent_env", lambda project, audit, url, host: {
+        **original_env(project, audit, url, host), "S2_FAIL_CLOSED": "0"})
+
+    def clean_check(project, task):
+        assert not (project / "helper.py").exists()
+        return [{"returncode": 1, "diagnostic": "missing required behavior"}]
+
+    monkeypatch.setattr(autonomous, "_checks", clean_check)
+    results = []
+    assert not _final_admission(
+        source, _git(source, "rev-parse", "HEAD"), workspace, _task(),
+        ["main.py"], tmp_path / "audit", "http://127.0.0.1:9", results)
+    assert results == [{"returncode": 1, "diagnostic": "missing required behavior"}]
+
+
+def test_codex_run_rejects_unqualified_host_before_cloning(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    report = tmp_path / "qualification.json"
+    report.write_text(json.dumps({"qualified": False}))
+    with pytest.raises(ValueError, match="qualification"):
+        run_task(_task(), repo, tmp_path / "run", report, LocalAdapter(),
+                 host="codex", model="gpt-6-astra",
+                 host_version=lambda: "codex-cli 0.156.1")
+    assert not (tmp_path / "run").exists()
+
+
+def test_codex_invocation_uses_qualified_patch_hook_and_workspace_sandbox(tmp_path, monkeypatch):
+    from src import autonomous
+
+    seen = {}
+
+    def bounded(command, *, cwd, env, timeout):
+        seen.update(command=command, cwd=cwd, env=env, timeout=timeout)
+        return 0, b'{"type":"turn.completed","usage":{"output_tokens":7}}\n', b""
+
+    monkeypatch.setattr(autonomous, "_run_bounded", bounded)
+    result = autonomous._invoke_codex(
+        tmp_path, "Edit main.py", tmp_path / "unused.json", {"RC_HOST": "codex"},
+        1.0, 30, "gpt-6-astra",
+    )
+    assert seen["command"][:4] == [
+        "codex", "exec", "--ignore-user-config", "--dangerously-bypass-hook-trust",
+    ]
+    assert seen["command"][seen["command"].index("--sandbox") + 1] == "workspace-write"
+    assert "apply_patch" in " ".join(seen["command"])
+    assert str(autonomous._CODEX_HOOK) in " ".join(seen["command"])
+    assert result == {"returncode": 0, "cost_usd": None, "usage": {"output_tokens": 7}}
 
 
 def test_agent_cannot_replace_allowed_file_with_external_symlink(tmp_path):

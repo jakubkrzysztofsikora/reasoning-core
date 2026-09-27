@@ -1804,10 +1804,14 @@ def cmd_autonomous(args: argparse.Namespace) -> int:
     adapter = (JevAdapter(os.environ.get("TYPESAFE_API_KEY")) if args.adapter == "jev"
                else LayaAdapter(args.laya_url, model=args.laya_model) if args.adapter == "laya"
                else LocalAdapter())
+    if args.host == "codex" and args.max_budget_usd is not None:
+        raise ValueError("Codex CLI does not enforce --max-budget-usd; use --timeout and --max-attempts")
     report = run_task(
         task, Path(args.repo), Path(args.out), Path(args.qualification), adapter,
-        model=args.model, sidecar_url=args.sidecar_url,
-        max_attempts=args.max_attempts, budget_usd=args.max_budget_usd,
+        model=args.model or ("gpt-6-astra" if args.host == "codex" else "claude-sonnet-4-5"),
+        host=args.host, sidecar_url=args.sidecar_url,
+        max_attempts=args.max_attempts,
+        budget_usd=1.0 if args.max_budget_usd is None else args.max_budget_usd,
         timeout=args.timeout,
     )
     print(json.dumps({"status": report["status"], "report": str(Path(args.out) / "report.json"),
@@ -1826,15 +1830,17 @@ def main(argv: list | None = None) -> int:
     autonomous.add_argument("--repo", default=".", help="source Git repository")
     autonomous.add_argument("--out", required=True, help="new output directory outside the source repo")
     autonomous.add_argument("--qualification", required=True, help="exact host/model qualification report")
+    autonomous.add_argument("--host", choices=["claude", "codex"], default="claude")
     autonomous.add_argument("--adapter", choices=["local", "jev", "laya"], default="laya")
     autonomous.add_argument("--laya-url", default="http://127.0.0.1:8000",
                             help="loopback Laya server origin")
     autonomous.add_argument("--laya-model", choices=["auto", "english", "multilingual", "typed-decisions"],
                             default="auto")
-    autonomous.add_argument("--model", default="claude-sonnet-4-5")
+    autonomous.add_argument("--model", default=None)
     autonomous.add_argument("--sidecar-url", default="http://127.0.0.1:8765")
     autonomous.add_argument("--max-attempts", type=int, default=3)
-    autonomous.add_argument("--max-budget-usd", type=float, default=1.0)
+    autonomous.add_argument("--max-budget-usd", type=float, default=None,
+                            help="Claude provider cap; unavailable for Codex")
     autonomous.add_argument("--timeout", type=int, default=300)
     autonomous.set_defaults(func=cmd_autonomous)
     init_cmd = sub.add_parser(

@@ -62,7 +62,10 @@ server by default. Laya routes the task brief to an English or multilingual
 checkpoint and supplies an **advisory** task hint; deterministic policy and
 the qualified write hook retain authority. The server is optional: if it is
 unavailable, the agent receives no intake hint. This default applies to
-`rc autonomous`, not to ordinary `rc init` hooks. See
+`rc autonomous`, not to ordinary `rc init` hooks. A separately qualified
+`--host codex` lane uses the `apply_patch` hook and independently admits final
+file contents against a fresh policy clone;
+Codex shell writes remain outside pre-write coverage. See
 [`docs/AUTONOMOUS_HARNESS.md`](docs/AUTONOMOUS_HARNESS.md) and
 [`docs/LAYA_LOCAL_EVAL.md`](docs/LAYA_LOCAL_EVAL.md).
 

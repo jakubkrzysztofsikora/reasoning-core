@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 _ROOT = Path(__file__).resolve().parent.parent
 _HOOK = _ROOT / "src" / "hooks" / "pre_edit_guard.py"
+_CODEX_HOOK = _ROOT / "src" / "hooks" / "pre_patch_guard.py"
 _DISALLOWED = "Bash,WebFetch,WebSearch,Task,MultiEdit,NotebookEdit,EnterWorktree,ExitWorktree"
 _TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
 _SAFE_PATH = re.compile(r"^[A-Za-z0-9_./-]+$")
@@ -227,6 +228,16 @@ def _host_version() -> str:
     return proc.stdout.strip()
 
 
+def _codex_version() -> str:
+    try:
+        proc = subprocess.run(["codex", "--version"], capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise ValueError("Codex CLI is unavailable") from exc
+    if proc.returncode:
+        raise ValueError("Codex CLI is unavailable")
+    return proc.stdout.strip()
+
+
 def _enforcement_digest() -> str:
     digest = hashlib.sha256()
     for path in sorted((_ROOT / "src").rglob("*.py")):
@@ -261,6 +272,23 @@ def _qualification(path: Path, model: str, host_version: str) -> dict[str, Any]:
         raise ValueError("qualification does not match the current host/model/tool lane")
     return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "claude_version": host_version, "model": model}
+
+
+def _codex_qualification(path: Path, model: str, host_version: str) -> dict[str, Any]:
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("Codex qualification report is invalid") from exc
+    if (not isinstance(report, dict) or report.get("qualified") is not True
+            or report.get("model") != model
+            or report.get("codex_version") != host_version
+            or report.get("bridge_sha256") != hashlib.sha256(_CODEX_HOOK.read_bytes()).hexdigest()
+            or report.get("enforcement_sha256") != _enforcement_digest()
+            or report.get("host_allowed_patch_observed") is not True
+            or report.get("direct_forbidden_patch_denied") is not True):
+        raise ValueError("qualification does not match the current Codex host/model/guard")
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "codex_version": host_version, "model": model}
 
 
 def _changed_paths(workspace: Path) -> list[str]:
@@ -317,12 +345,13 @@ def _write_policy(workspace: Path, task: TaskSpec) -> None:
          "user.email=reasoning-core@example.invalid", "commit", "-m", "task policy setup")
 
 
-def _agent_env(workspace: Path, audit_root: Path, sidecar_url: str) -> dict[str, str]:
+def _agent_env(workspace: Path, audit_root: Path, sidecar_url: str,
+               host: str = "claude") -> dict[str, str]:
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("RC_", "S2_", "ANTHROPIC_", "CLAUDE_"))
            or key == "CLAUDE_CODE_OAUTH_TOKEN"}
     env.update({
-        "RC_HOST": "claude", "RC_PROJECT_DIR": str(workspace),
+        "RC_HOST": host, "RC_PROJECT_DIR": str(workspace),
         "RC_AUDIT_ROOT": str(audit_root), "RC_MODE": "copilot",
         "RC_SHADOW_MODE": "0", "RC_PLAN_GROUNDING": "2",
         "RC_PLAN_BLOCK": "1", "RC_RULE_ENGINE": "1",
@@ -434,6 +463,34 @@ def _invoke_claude(workspace: Path, prompt: str, settings: Path, env: dict[str, 
                 "cost_usd": result.get("total_cost_usd") if isinstance(result, dict) else None}
     except OSError:
         return {"returncode": 125, "cost_usd": None}
+
+
+def _invoke_codex(workspace: Path, prompt: str, settings: Path, env: dict[str, str],
+                  budget: float, timeout: int, model: str) -> dict[str, Any]:
+    command = f"{sys.executable} {_CODEX_HOOK}"
+    hooks = ('hooks.PreToolUse=[{matcher="apply_patch",hooks=[{type="command",'
+             f'command={json.dumps(command)},timeout=60}}]}}]')
+    args = [
+        "codex", "exec", "--ignore-user-config", "--dangerously-bypass-hook-trust",
+        "--ephemeral", "--json", "--sandbox", "workspace-write",
+        "-c", "features.hooks=true", "-c", "features.multi_agent=false",
+        "-c", 'web_search="disabled"', "-c", hooks,
+        "-m", model, "-C", str(workspace), prompt,
+    ]
+    try:
+        returncode, stdout, _ = _run_bounded(args, cwd=workspace, env=env,
+                                              timeout=timeout)
+    except OSError:
+        return {"returncode": 125, "cost_usd": None}
+    usage: dict[str, Any] = {}
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") == "turn.completed":
+            usage = event.get("usage") or {}
+    return {"returncode": returncode, "cost_usd": None, "usage": usage}
 
 
 
@@ -557,11 +614,63 @@ def _patch_reproduces_final(workspace: Path, patch: str, changed: list[str]) -> 
                    for path in changed)
 
 
+def _final_admission(source: Path, base_sha: str, workspace: Path, task: TaskSpec,
+                     changed: list[str], audit_root: Path, sidecar_url: str,
+                     check_results: list[dict[str, Any]] | None = None,
+                     admitted_hashes: dict[str, str] | None = None,
+                     accepted_patch: list[str] | None = None) -> bool:
+    """Recheck Codex candidates against policy the agent could not modify."""
+    with tempfile.TemporaryDirectory(prefix="rc-final-admission-") as temp:
+        trial = (Path(temp) / "source").resolve()
+        try:
+            subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(source),
+                            str(trial)], check=True, capture_output=True, timeout=60)
+            _git(trial, "switch", "--detach", base_sha)
+            _write_policy(trial, task)
+            env = _agent_env(trial, audit_root, sidecar_url, "codex")
+            for relative in changed:
+                candidate = workspace / relative
+                target = trial / relative
+                if (candidate.is_symlink() or not candidate.is_file()
+                        or not target.resolve().is_relative_to(trial.resolve())
+                        or target.is_symlink()):
+                    return False
+                candidate_bytes = candidate.read_bytes()
+                content = candidate_bytes.decode("utf-8")
+                payload = {"tool_name": "Write", "tool_input": {
+                    "file_path": str(target), "content": content}, "cwd": str(trial)}
+                checked = subprocess.run(
+                    [sys.executable, str(_HOOK)], cwd=trial, env=env,
+                    input=json.dumps(payload), text=True, capture_output=True,
+                    timeout=90,
+                )
+                if checked.returncode:
+                    return False
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(candidate_bytes)
+                if _gated_final_paths(trial, audit_root, [relative]):
+                    return False
+                if admitted_hashes is not None:
+                    admitted_hashes[relative] = hashlib.sha256(candidate_bytes).hexdigest()
+            results = _checks(trial, task)
+            if check_results is not None:
+                check_results.extend(results)
+            if not all(item["returncode"] == 0 for item in results):
+                return False
+            if accepted_patch is not None:
+                _git(trial, "add", "--", *changed)
+                accepted_patch.append(_git(trial, "diff", "--cached", "--binary",
+                                           "HEAD", strip=False))
+            return True
+        except (OSError, UnicodeError, ValueError, subprocess.SubprocessError):
+            return False
+
+
 def run_task(
     task: TaskSpec, repo: Path, out: Path, qualification: Path, adapter: Any,
-    *, model: str, invoke: Callable[..., dict[str, Any]] | None = None,
+    *, model: str, host: str = "claude", invoke: Callable[..., dict[str, Any]] | None = None,
     check_runner: Callable[[Path, TaskSpec], list[dict[str, Any]]] | None = None,
-    host_version: Callable[[], str] = _host_version,
+    host_version: Callable[[], str] | None = None,
     sidecar_health: Callable[[], bool] | None = None,
     sidecar_url: str = "http://127.0.0.1:8765",
     max_attempts: int = 3, budget_usd: float = 1.0, timeout: int = 300,
@@ -571,7 +680,11 @@ def run_task(
         raise ValueError("output directory must be outside the source repository")
     if max_attempts < 1 or max_attempts > 3 or budget_usd <= 0 or timeout <= 0:
         raise ValueError("attempt, budget, and timeout limits are invalid")
-    qualification_pin = _qualification(qualification, model, host_version())
+    if host not in {"claude", "codex"}:
+        raise ValueError("unsupported coding host")
+    version = (host_version or (_codex_version if host == "codex" else _host_version))()
+    qualification_pin = (_codex_qualification if host == "codex" else _qualification)(
+        qualification, model, version)
     health = sidecar_health or (lambda: _sidecar_healthy(sidecar_url))
     if not health():
         raise ValueError("reasoning-core sidecar is not enforcement-healthy")
@@ -594,20 +707,25 @@ def run_task(
                        "command": f"{sys.executable} {_HOOK}", "timeout": 60000}],
         }]},
     }), encoding="utf-8")
-    env = _agent_env(workspace, out / "audit", sidecar_url)
+    env = _agent_env(workspace, out / "audit", sidecar_url, host)
+    invoker = _invoke_codex if host == "codex" else _invoke_claude
     call = invoke or (lambda ws, prompt, settings, env, budget, timeout:
-                      _invoke_claude(ws, prompt, settings, env, budget, timeout, model))
+                      invoker(ws, prompt, settings, env, budget, timeout, model))
     base_prompt = (
         "Read each existing target file before editing. Work only inside the allowed "
         "paths. Do not edit tests to evade a failing check. Stop after completing the "
         "task.\n\nTask: " + task.prompt
         + "\nAllowed paths: " + ", ".join(task.allowed_paths)
+        + ("\nUse apply_patch for edits; shell commands are for inspection and tests only."
+           if host == "codex" else "")
         + ("\n" + decision.hint() if decision.hint() else "")
     )
     prompt = base_prompt
     attempts: list[dict[str, Any]] = []
     status = "failed"
     changed: list[str] = []
+    admitted_hashes: dict[str, str] = {}
+    accepted_patch: list[str] = []
     for _ in range(max_attempts):
         agent_result = call(workspace, prompt, settings, env, budget_usd / max_attempts, timeout)
         changed = _changed_paths(workspace)
@@ -629,13 +747,39 @@ def run_task(
                 attempts[-1]["missing_gate_receipts"] = missing_receipts
                 status = "ungated_change"
                 break
+            if host == "codex":
+                admission_checks: list[dict[str, Any]] = []
+                admitted_hashes.clear()
+                accepted_patch.clear()
+                admitted = _final_admission(
+                    repo, base_sha, workspace, task, changed,
+                    out / "admission-audit", sidecar_url, admission_checks,
+                    admitted_hashes, accepted_patch)
+                attempts[-1]["admission_checks"] = admission_checks
+                if not admitted:
+                    status = "final_admission_failed"
+                    break
             status = "completed"
             break
         prompt = (base_prompt + "\nThe last attempt did not pass. Fix only allowed "
                   "paths. Check results: " + json.dumps(results)[-1500:])
+    if status == "completed" and host == "codex":
+        try:
+            stable = set(admitted_hashes) == set(changed) and all(
+                         not (workspace / path).is_symlink()
+                         and (workspace / path).is_file()
+                         and hashlib.sha256((workspace / path).read_bytes()).hexdigest() == digest
+                         for path, digest in admitted_hashes.items())
+        except OSError:
+            stable = False
+        if not stable:
+            status = "candidate_changed_after_admission"
     if status == "completed":
-        _git(workspace, "add", "--", *task.allowed_paths)
-        patch = _git(workspace, "diff", "--cached", "--binary", "HEAD", strip=False)
+        if host == "codex":
+            patch = accepted_patch[0] if len(accepted_patch) == 1 else ""
+        else:
+            _git(workspace, "add", "--", *task.allowed_paths)
+            patch = _git(workspace, "diff", "--cached", "--binary", "HEAD", strip=False)
         if not _patch_reproduces_final(workspace, patch, changed):
             status = "patch_verification_failed"
         else:
@@ -644,9 +788,10 @@ def run_task(
         "status": status, "base_sha": base_sha, "changed_paths": changed,
         "decision": decision.__dict__, "qualification": qualification_pin,
         "attempts": attempts, "workspace": str(workspace),
-        "started_from": str(repo), "model": model,
+        "started_from": str(repo), "model": model, "host": host,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "budget_usd": budget_usd,
+        "budget_usd": budget_usd if host == "claude" else None,
+        "provider_budget_enforced": host == "claude",
     }
     (out / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
                                      encoding="utf-8")
