@@ -28,8 +28,7 @@ _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from src import _init as _init_mod  # noqa: E402
-from src._init import init, uninstall, InitResult  # noqa: E402
+from src._init import init, uninstall  # noqa: E402
 
 
 def _isolated_home(tmp: Path) -> dict:
@@ -46,7 +45,6 @@ class RcInitTest(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.target = self.tmp / "repo"
         self.target.mkdir()
-        self._home_patch = mock.patch.dict(os.environ if False else {}, {})  # placeholder
         self._home_mock = mock.patch.object(Path, "home", lambda: self.tmp / "home")
         (self.tmp / "home").mkdir()
         self._home_mock.start()
@@ -115,6 +113,56 @@ class RcInitTest(unittest.TestCase):
         # Manifest must NOT have duplicate lines.
         manifest_lines = (self.target / ".reasoning-core" / "install.manifest").read_text().splitlines()
         self.assertEqual(len(manifest_lines), len(set(manifest_lines)), "manifest has duplicate lines")
+
+    def test_existing_claude_settings_merge_missing_hooks_and_preserve_other_settings(self) -> None:
+        path = self.target / ".claude" / "settings.local.json"
+        path.parent.mkdir()
+        original = {
+            "permissions": {"allow": ["Bash(git status:*)"]},
+            "env": {"USER_SETTING": "keep"},
+            "hooks": {
+                "PreToolUse": [{"matcher": "Bash", "hooks": [
+                    {"type": "command", "command": "echo user-hook"},
+                    {"type": "command", "command": "${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/.venv/bin/python ${RC_REPO:-/Users/you/Repos/personal/reasoning-core}/src/hooks/pre_bash_guard.py", "timeout": 1000},
+                ]}],
+                "Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
+            },
+            "mcpServers": {"custom": {"command": "custom-server"}},
+        }
+        path.write_text(json.dumps(original))
+        result = init(self.target, install_sidecar=False, install_model=False)
+        merged = json.loads(path.read_text())
+        self.assertIn(".claude/settings.local.json", result.wrote)
+        self.assertEqual(merged["permissions"], original["permissions"])
+        self.assertEqual(merged["env"], original["env"])
+        self.assertEqual(merged["hooks"]["Stop"], original["hooks"]["Stop"])
+        self.assertEqual(merged["mcpServers"], original["mcpServers"])
+        bash_hooks = merged["hooks"]["PreToolUse"][0]["hooks"]
+        self.assertEqual(bash_hooks[0], original["hooks"]["PreToolUse"][0]["hooks"][0])
+        self.assertIn("-m src.hooks.pre_bash_guard", bash_hooks[1]["command"])
+        self.assertNotIn("/Users/you", bash_hooks[1]["command"])
+        self.assertTrue(any("post_edit_check" in hook["command"]
+                            for group in merged["hooks"]["PostToolUse"]
+                            for hook in group["hooks"]))
+        self.assertNotIn(".claude/settings.local.json",
+                         (self.target / ".reasoning-core/install.manifest").read_text().splitlines())
+
+        before = path.read_bytes()
+        second = init(self.target, install_sidecar=False, install_model=False)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertIn(".claude/settings.local.json", second.skipped)
+        self.assertEqual(sum("pre_bash_guard" in hook["command"]
+                             for group in merged["hooks"]["PreToolUse"]
+                             for hook in group["hooks"]), 1)
+
+    def test_invalid_existing_claude_settings_are_preserved(self) -> None:
+        path = self.target / ".claude" / "settings.local.json"
+        path.parent.mkdir()
+        path.write_text("{ invalid json")
+        result = init(self.target, install_sidecar=False, install_model=False)
+        self.assertEqual(path.read_text(), "{ invalid json")
+        self.assertTrue(any("cannot merge existing settings" in warning
+                            for warning in result.warned))
 
     def test_init_handles_no_sidecar_and_no_model(self) -> None:
         result = init(self.target, install_sidecar=False, install_model=False)

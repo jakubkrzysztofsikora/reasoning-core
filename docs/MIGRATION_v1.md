@@ -1,20 +1,21 @@
-# Migrating from the v0.1 quickstart to the v0.2 wheel flow
+# Migrating from the v0.1 quickstart
 
-v0.2.0 ships the new bootstrap. The old `git clone` + venv + `pip install
--r requirements.txt` + `huggingface-cli download` + `install.sh` dance
-still works (the files are unchanged), but the recommended path is now
-two commands:
+The current bootstrap uses a tagged GitHub source install. The
+`reasoning-core` name on PyPI belongs to a different project; bare
+`pip install reasoning-core` commands in older instructions are unsafe.
+The old checkout and editable install flow still works. The recommended
+end-user path is:
 
 ```bash
-pip install reasoning-core[full]
+python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
 cd /path/to/your-repo && rc init
 ```
 
 ## Walkthrough
 
-1. **Install the wheel.**
+1. **Install this project's tagged source.**
    ```bash
-   pip install --upgrade reasoning-core[full]
+   python3 -m pip install --upgrade 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
    ```
    This pulls every runtime dep the framework needs (~500 MB across
    torch, transformers, tree-sitter, fastapi, mcp, ruff, …). The
@@ -86,13 +87,10 @@ users see, but resolves into your checkout instead of site-packages.
 The legacy `install.sh` and `bin/rc` shim are still in the repo for
 this reason; they will be removed in v0.4.0.
 
-## Supply-chain hardening
+## Release source
 
-v0.2 wheels are:
-- Built by `cibuildwheel` on a matrix of GitHub-hosted runners.
-- Signed with sigstore/cosign (keyless, OIDC-backed).
-- Published to PyPI via a Trusted Publisher — no long-lived API token.
-- Provenance-attested via SLSA.
+Use a pinned GitHub tag. This project does not publish under the occupied
+`reasoning-core` PyPI name.
 
 The Mamba-130m checkpoint download inside `rc init` continues to use
 the SHA pin `1e76775f628fbf1350fbe4dbb3d971ba64af25a1` (mutable refs
@@ -103,7 +101,8 @@ rejected; see `src/ssm_backbone.py`).
 - **`rc: command not found`** — your `pip` and the shell that runs `rc`
   disagree on which Python to use. Either activate the venv you pip'd
   into, or reinstall with `python3 -m pip install --user
-  reasoning-core[full]` and ensure `~/.local/bin` is on PATH.
+  'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'`
+  and ensure `~/.local/bin` is on PATH.
 - **`rc init` hangs on the mamba download** — set
   `HF_HOME=/your/writable/path` and re-run, or pass `--no-model` and
   prefetch separately with `python3 -c "from huggingface_hub import

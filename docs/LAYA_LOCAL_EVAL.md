@@ -19,10 +19,6 @@ uv pip install --python .venv/bin/python 'laya[serve]==0.3.20'
 LAYA_HOST=127.0.0.1 LAYA_PORT=8000 LAYA_DEVICE=mps \
   LAYA_MODELS=english,multilingual LAYA_PRELOAD=1 .venv/bin/laya-serve
 curl -fsS http://127.0.0.1:8000/health
-rc autonomous --laya-url http://127.0.0.1:8000 \
-  --repo /path/to/repo --task /path/to/task.json \
-  --qualification /path/to/current-host/report.json \
-  --model claude-sonnet-4-5 --max-budget-usd 1 --out /path/to/new-run
 ```
 
 Use `LAYA_DEVICE=cpu` without MPS. First startup downloads the checkpoints;
@@ -31,7 +27,11 @@ other languages after a cold model load. Use `--laya-model english` only for a
 deliberately English-only workload, or `--adapter local` to skip Laya.
 The adapter accepts loopback HTTP only. A Laya outage or malformed answer
 returns an uncertain hint; the coding agent still receives the full task.
-The Claude Code host/model qualification remains required.
+The exact host/model qualification remains required. For Codex, run
+`rc autonomous --host codex --model gpt-6-astra` with a fresh Codex
+qualification report; for Claude, use the qualified Claude host and its
+provider budget flag. The complete task format, qualification commands, and
+both run commands are in [AUTONOMOUS_HARNESS.md](AUTONOMOUS_HARNESS.md).
 
 ## Repeat the intake evaluation
 

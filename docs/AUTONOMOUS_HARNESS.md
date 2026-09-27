@@ -106,6 +106,7 @@ unavailable Laya decision after a 10-second intake timeout; it is a fallback
 result, not a combined result. The task is too small to establish a quality
 winner or a speed benefit. Raw local artifacts are under
 `~/.local/share/reasoning-core/autonomous/smoke-20260928/`.
+
 The run refuses an unqualified host, an unhealthy sidecar, a preexisting output
 directory, an existing contract that it cannot merge safely, or an output
 directory inside the source repo.

@@ -342,8 +342,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         try:
             data = json.loads(config.read_text(encoding="utf-8"))
             blob = json.dumps(data.get("hooks", {}).get("PostToolUse", []))
-            file_bash = "post_bash_verification.py" in blob
-            file_edit = "post_edit_check.py" in blob
+            file_bash = ("post_bash_verification.py" in blob
+                         or "src.hooks.post_bash_verification" in blob)
+            file_edit = ("post_edit_check.py" in blob
+                         or "src.hooks.post_edit_check" in blob)
             bash_wired = bash_wired or file_bash
             edit_wired = edit_wired or file_edit
             config_details.append(
@@ -1626,8 +1628,8 @@ def cmd_episodes(args: argparse.Namespace) -> int:
 def cmd_init(args: argparse.Namespace) -> int:
     """Wire reasoning-core hooks into a target repo.
 
-    Replaces ``install.sh`` for end users who installed the framework
-    via ``pip install reasoning-core[full]``. Behavior:
+    Replaces ``install.sh`` for end users who installed this project's
+    tagged GitHub source with the ``[full]`` extra. Behavior:
 
     - Writes per-CLI hook config (.claude/, .codex/, .gemini/, etc.).
     - Writes an .envrc that the user can ``direnv allow`` later.
@@ -1736,9 +1738,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     * editable checkout (``pip install -e .`` or ``pip install -e .[full]``)
       -> ``pip install -e .[full] --upgrade`` from the current directory.
     * git+https install -> ``pip install --upgrade "reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@<ref>"``.
-    * wheel install (no PyPI release exists yet for this repo as of v0.2.0) ->
-      falls back to the git ref above; the wheel-build workflow publishes on
-      tag push, so a pinned ref is the most honest upgrade path.
+    * wheel install -> falls back to the GitHub ref above. The
+      ``reasoning-core`` PyPI name belongs to another project.
 
     After the install, ``rc upgrade`` re-runs ``rc init --check`` from the
     current directory so the operator sees whether the new version still

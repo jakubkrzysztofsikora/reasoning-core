@@ -2,8 +2,9 @@
 
 Two flows are documented here:
 
-- **Recommended (v0.2+):** `pip install reasoning-core[full]` + `rc init`.
-  End users do not need a checkout or a venv — the wheel brings everything.
+- **Recommended:** install the tagged GitHub source with the `[full]` extra,
+  then run `rc init`. The `reasoning-core` name on PyPI belongs to a different
+  project; do not install it by bare package name.
 - **Maintainers / contributors:** `git clone` + `pip install -e .[dev]` +
   `huggingface-cli download` + sidecar scripts. This is the only flow that
   picks up live edits to `src/`.
@@ -17,10 +18,10 @@ to the v0.2 wheel flow.
 
 ---
 
-## End-user install (wheel)
+## End-user install
 
 ```bash
-pip install reasoning-core[full]      # ~500 MB of deps + 250 MB mamba checkpoint
+python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
 cd /path/to/your-repo
 rc init                                # wires hooks + boots sidecar
 claude                                 # or: codex / gemini / copilot / kimi / vibe / pi

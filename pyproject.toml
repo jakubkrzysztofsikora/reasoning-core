@@ -75,7 +75,7 @@ dev = [
   "pytest-timeout>=2.2",
 ]
 
-# `pip install reasoning-core[full]` exposes `rc` on PATH; the binary
+# Installing this project's GitHub source with [full] exposes `rc` on PATH; the binary
 # dispatches into src.rc_cli.main() exactly like bin/rc used to do, but
 # without needing the source tree on disk.
 [project.scripts]

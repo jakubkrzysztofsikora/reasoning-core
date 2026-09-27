@@ -81,18 +81,16 @@ product guarantee.
 
 ## Quick start
 
-Two commands. No git clone, no venv, no launchd dance, no `pip install -r
-requirements.txt`. `pip install reasoning-core[full]` puts the framework
-and every Python dep (torch, transformers, tree-sitter, fastapi, mcp,
-ruff, …) on PATH and installs an `rc` console script. `rc init` wires
+Two commands. Install this project's tagged source from GitHub: the
+`reasoning-core` name on PyPI belongs to a different project, so a bare
+`pip install reasoning-core` is unsafe. The `[full]` extra installs the runtime
+dependencies and an `rc` console script. `rc init` wires
 hooks into the current repo, downloads the default embedder, and brings
 up the sidecar supervisor as a per-user daemon.
 
 ```bash
-# 1. Install the framework (one-shot, ~5 min on broadband — pulls ~500 MB
-#    of Python deps and the 250 MB mamba-130m checkpoint up front so the
-#    gate is complete by the time you reach step 3).
-pip install reasoning-core[full]
+# 1. Install this project's tagged GitHub source, not the unrelated PyPI package.
+python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
 
 # 2. Wire it into the repo you want gated
 cd /path/to/your-repo
@@ -103,15 +101,66 @@ rc init                         # adds .envrc, .claude/, .codex/, .gemini/,
 claude                           # or: codex / gemini / copilot / kimi / vibe / pi
 ```
 
-If `pip install reasoning-core[full]` fails on your platform, the
-fallback flow is `pip install reasoning-core && pip install -r
-requirements.txt` (still no git clone). See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md)
-for moving off the old clone-and-install flow.
+If a dependency lacks a wheel on your platform, use the maintainer checkout
+flow in [`docs/INSTALL.md`](docs/INSTALL.md). See
+[`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md) for older installations.
+
+### Bounded coding with Laya and Codex
+
+This workflow uses the reasoning-core source checkout for host qualification.
+It runs Codex in a disposable clone and exports a reviewed patch; it does not
+merge into your source repo. Keep the source changes committed, and put the task
+file and output directory outside that repo. In the reasoning-core checkout:
+
+```bash
+rc status                                  # sidecar must be healthy on 127.0.0.1:8765
+uv pip install --python .venv/bin/python 'laya[serve]==0.3.20'
+LAYA_HOST=127.0.0.1 LAYA_PORT=8000 LAYA_DEVICE=mps \
+  LAYA_MODELS=english,multilingual LAYA_PRELOAD=1 .venv/bin/laya-serve
+```
+
+Keep the Laya server running in that terminal. Use `LAYA_DEVICE=cpu` on a host
+without Apple MPS. In another terminal, verify `curl -fsS
+http://127.0.0.1:8000/health`, then create a bounded task outside the source
+repo:
+
+```json
+{
+  "prompt": "Update src/service.py so normalize_name trims surrounding spaces.",
+  "triage_brief": "Small Python string-normalization change.",
+  "allowed_paths": ["src/service.py"],
+  "checks": [["python", "-m", "pytest", "-q", "tests/test_service.py"]]
+}
+```
+
+Save it as `/path/to/task.json`. Redact `triage_brief`: Laya receives that
+brief and the allowed path names. Qualify the exact Codex CLI, model, and
+guard build, then use a fresh output directory for the run:
+
+```bash
+.venv/bin/python -m eval.featurebench_four_arm.qualify_codex \
+  --model gpt-6-astra \
+  --out ~/.local/share/reasoning-core/qualifications/codex-001
+rc autonomous --host codex --model gpt-6-astra \
+  --repo /path/to/source-repo --task /path/to/task.json \
+  --qualification ~/.local/share/reasoning-core/qualifications/codex-001/report.json \
+  --max-attempts 1 --timeout 300 \
+  --out ~/.local/share/reasoning-core/autonomous/codex-task-001
+```
+
+Inspect `report.json` and `final.patch` in the output directory. Check
+`decision.status == "ok"` in the report to confirm Laya answered; an unavailable
+server yields an uncertain hint and the coding run continues. Codex shell
+writes are contained in its disposable clone but do not pass through the
+pre-write hook; final candidates are checked against the original policy
+before export. Codex has no enforced dollar cap in this runner. See
+[`docs/AUTONOMOUS_HARNESS.md`](docs/AUTONOMOUS_HARNESS.md) for qualification,
+limits, and Claude usage.
 
 To move between framework versions without re-doing the install:
 
 ```bash
-rc upgrade                  # pip install --upgrade + rc init --check (idempotent)
+rc upgrade                  # GitHub main + rc init --check (idempotent)
 rc upgrade --ref v0.3.0     # pin a specific tag/branch
 rc upgrade --dry-run         # see the plan before it runs
 ```

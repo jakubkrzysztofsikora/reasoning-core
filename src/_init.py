@@ -20,12 +20,12 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Iterable, Optional
 
 from src import _install_paths
 from src import data as _data
@@ -111,15 +111,91 @@ def install_envrc(target: Path, manifest: Path, substitutions: dict[str, str],
 # ---------------------------------------------------------------------------
 # .claude/settings.local.json
 # ---------------------------------------------------------------------------
+_RC_HOOK_MODULE = re.compile(r"src(?:\.hooks\.|/hooks/)([a-zA-Z0-9_]+)(?:\.py)?\b")
+
+
+def _rc_hook_name(hook: object) -> Optional[str]:
+    if not isinstance(hook, dict) or not isinstance(hook.get("command"), str):
+        return None
+    match = _RC_HOOK_MODULE.search(hook["command"])
+    return match.group(1) if match else None
+
+
+def _merge_claude_hooks(existing: dict, template: dict) -> bool:
+    """Refresh identifiable RC hooks and add missing ones without touching other hooks."""
+    current = existing.setdefault("hooks", {})
+    changed = False
+    for event, desired_groups in template["hooks"].items():
+        groups = current.setdefault(event, [])
+        for desired_group in desired_groups:
+            matcher = desired_group.get("matcher")
+            for desired_hook in desired_group["hooks"]:
+                name = _rc_hook_name(desired_hook)
+                found = False
+                for group in groups:
+                    for hook in group["hooks"]:
+                        if _rc_hook_name(hook) != name:
+                            continue
+                        found = True
+                        for key in ("type", "command", "timeout"):
+                            if hook.get(key) != desired_hook.get(key):
+                                hook[key] = desired_hook[key]
+                                changed = True
+                        # A group containing other hooks may have a deliberate matcher.
+                        if len(group["hooks"]) == 1 and group.get("matcher") != matcher:
+                            if matcher is None:
+                                group.pop("matcher", None)
+                            else:
+                                group["matcher"] = matcher
+                            changed = True
+                if found:
+                    continue
+                group = next((g for g in groups if g.get("matcher") == matcher), None)
+                if group is None:
+                    group = {"hooks": []}
+                    if matcher is not None:
+                        group["matcher"] = matcher
+                    groups.append(group)
+                group["hooks"].append(desired_hook.copy())
+                changed = True
+    return changed
+
+
 def install_claude(target: Path, manifest: Path, substitutions: dict[str, str],
                   result: InitResult) -> None:
     rel = ".claude/settings.local.json"
     path = target / rel
+    text = _render(_read_template("claude/settings.local.json.template"), substitutions)
     if path.exists():
-        result.skipped.append(rel)
+        try:
+            existing = json.loads(path.read_text())
+            template = json.loads(text)
+            if not isinstance(existing, dict) or not isinstance(existing.get("hooks", {}), dict):
+                raise ValueError("expected an object with an optional hooks object")
+            if any(not isinstance(groups, list) or any(
+                not isinstance(group, dict) or not isinstance(group.get("hooks"), list)
+                for group in groups
+            ) for groups in existing.get("hooks", {}).values()):
+                raise ValueError("expected hook event lists containing hook groups")
+        except (OSError, ValueError) as exc:
+            result.warned.append(f"{rel}: cannot merge existing settings: {exc}")
+            return
+        if not _merge_claude_hooks(existing, template):
+            result.skipped.append(rel)
+            return
+        with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".settings.",
+                                         suffix=".tmp", delete=False) as fh:
+            tmp = Path(fh.name)
+            json.dump(existing, fh, indent=2, ensure_ascii=False)
+            fh.write("\n")
+        try:
+            os.chmod(tmp, path.stat().st_mode & 0o777)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+        result.wrote.append(rel)
         return
     (target / ".claude").mkdir(parents=True, exist_ok=True)
-    text = _render(_read_template("claude/settings.local.json.template"), substitutions)
     path.write_text(text)
     result.wrote.append(rel)
     _record(manifest, rel)
