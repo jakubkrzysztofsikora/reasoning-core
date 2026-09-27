@@ -270,6 +270,7 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 - [`docs/HARDENING.md`](docs/HARDENING.md) — threat model
 - [`docs/CLI_PARITY.md`](docs/CLI_PARITY.md) — per-host caveats
 - [`docs/COMPETITOR_POSITIONING.md`](docs/COMPETITOR_POSITIONING.md) — competitor map, security-trust research, and 10x validation plan
+- [`docs/JEV_AUTONOMOUS_HARNESS_DESIGN.md`](docs/JEV_AUTONOMOUS_HARNESS_DESIGN.md) — Jev integration design and budget-capped evaluation protocol
 
 ## Contributing
 

@@ -28,3 +28,4 @@ arm configuration, hashes, and report digest.
 | `baseline-2026-09-15-ten-x-feasibility-corpus-v1` | 2026-09-15 | Feasibility corpus (20 tasks). |
 | `baseline-2026-09-15-ten-x-confirmatory-corpus-v1` | 2026-09-15 | Superseded by v2 (prompt design defect eliminated control pressure). |
 | `baseline-2026-09-17-ten-x-confirmatory-corpus-v2` | 2026-09-17 | **Active confirmatory corpus** (150 tasks, frozen). Used for the confirmatory result. |
+| `baseline-2026-09-27-jev-design-prepilot` | 2026-09-27 | Pre-pilot context for the proposed Jev task-triage evaluation; no combined outcome measured. |
