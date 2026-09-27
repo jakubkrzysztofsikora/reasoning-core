@@ -1,0 +1,135 @@
+{
+  "artifacts": [
+    {
+      "exists": true,
+      "path": "/Users/jakubsikora/.local/share/reasoning-core/baselines/baseline-2026-09-15-ten-x-feasibility-corpus-v1"
+    },
+    {
+      "exists": true,
+      "path": "/Users/jakubsikora/.local/share/reasoning-core/events"
+    }
+  ],
+  "baseline_id": "baseline-2026-09-15-host-enforcement-qualification",
+  "captured_at": "2026-09-15T07:47:47Z",
+  "code": {
+    "dirty": true,
+    "git_sha": "25d042b41b4fb6c7bf06167f7998d9c68d2eda99"
+  },
+  "configuration": {
+    "RC_AUDIT_RETENTION_DAYS": "90",
+    "RC_BEST_EFFORT_SPEC": "1",
+    "RC_BROKER_PORT": "8764",
+    "RC_CALIBRATION_ENABLED": "1",
+    "RC_DIFF_AUDIT": "1",
+    "RC_EMBEDDER": "mamba-130m",
+    "RC_GEN_BUDGET_MS": "2500",
+    "RC_HOST": "pi",
+    "RC_LANG_LOCK": "1",
+    "RC_MOCK_DETECTOR": "1",
+    "RC_MODE": "copilot",
+    "RC_ORACLE_BLOCK": "1",
+    "RC_PLAN_BLOCK": "1",
+    "RC_PLAN_GROUNDING": "2",
+    "RC_PLAN_QUALITY": "0",
+    "RC_PRM_GATE": "0",
+    "RC_PROJECT_INDEX": "1",
+    "RC_REASONER_BACKEND": "mlx",
+    "RC_RECALIBRATE_POLL_S": "60",
+    "RC_REPO": "/Users/jakubsikora/Repos/personal/reasoning-core",
+    "RC_RULE_ENGINE": "1",
+    "RC_SHADOW_MODE": "0",
+    "S2_DEVICE": "cpu",
+    "S2_FAIL_CLOSED": "1",
+    "S2_HARD_CAP_MS": "1500",
+    "S2_MEM_LIMIT_GB": "25",
+    "S2_PORT": "8765",
+    "S2_TIMEOUT": "60"
+  },
+  "configuration_hash": "218df4a3aa4d79f5265235f48d7c60e79315c48398647f6c2ce30aa97dfb8959",
+  "created_at": "2026-09-15T07:47:47.866790+00:00",
+  "decisions": {
+    "approach": "Disable unsupported mutation channels (the user-requested option); no staged-write broker needed for the Edit+Write scope.",
+    "disabled_in_harness_to_avoid_unmediated_channels": [
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "Task",
+      "NotebookEdit",
+      "EnterWorktree",
+      "ExitWorktree"
+    ],
+    "host_unavailable_tools": [
+      "MultiEdit"
+    ],
+    "supported_mutation_tools_on_claude_code_2_1_268": [
+      "Edit",
+      "Write"
+    ]
+  },
+  "purpose": "Claude Code 2.1.268 PreToolUse enforcement qualification. Not a containment or 10x claim.",
+  "repair_note": "Fields baseline_id/captured_at/code/configuration/configuration_hash/artifacts were added on 2026-09-17 so the manifest satisfies the rc baseline registry schema; context mirrors baseline-2026-09-15-ten-x-feasibility-corpus-v1 captured the same day (same HEAD, same machine). Run-content hashes in the runs section are unchanged.",
+  "runs": {
+    "full_set_original_claude": {
+      "hashes": {
+        "manifest.json": null,
+        "raw.jsonl": "2753668df8b6eada99564972d268db17abb005562ff1033aedf6e57851ac299b",
+        "report.json": "e31369e6ec9dbf9e9cf130f907062ee2dc273d8c16d5b04a4bbab17074514599",
+        "report.md": "0df8a5ced7dadd19b8bd6734bbade521163827db7286c1fde2360691ba3b0f57"
+      },
+      "model": "claude-sonnet-4-5",
+      "out_dir": "eval/runs/host-enforcement-qualification-20260915T073224Z",
+      "results": {
+        "pass": 3,
+        "tool_unavailable": 1
+      },
+      "tool_unavailable": [
+        "MultiEdit"
+      ]
+    },
+    "narrowed_original_claude_qualified": {
+      "claude_version": "2.1.268 (Claude Code)",
+      "hashes": {
+        "manifest.json": "7114bb5f1a160888540a04d98cd8437d9b2a887fbb56ab50f8afca93c072a07b",
+        "raw.jsonl": "c9fc0bdad5b8715971704b1cd9b6ddc323b938c1b72437032911a116c5a02343",
+        "report.json": "a9d68370eb2a90897e25747c8ed155c3bf07319aee991a187093fc7c3f8031a0",
+        "report.md": "b67d06357336c2ebc92ec9fa062856ebaa63e43a6f8959979adaeb5f84e2307d"
+      },
+      "model": "claude-sonnet-4-5",
+      "out_dir": "eval/runs/host-enforcement-qualification-orig-20260915T073820Z",
+      "permission_mode": "bypassPermissions",
+      "qualified": true,
+      "results": {
+        "pass": 3
+      },
+      "tools_disabled": [
+        "Bash",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+        "MultiEdit",
+        "NotebookEdit",
+        "EnterWorktree",
+        "ExitWorktree"
+      ],
+      "tools_qualified": [
+        "Edit",
+        "Write"
+      ]
+    },
+    "terra_gateway_failure": {
+      "finding": "LiteLLM gateway rejects system messages with HTTP 400 'System messages are not allowed' for the chatgpt/gpt-5.6-terra route. The harness cannot exercise this configuration until the gateway config is updated.",
+      "hashes": {
+        "manifest.json": "5a430f129073db51b267064be5ead8d129326a173b809881a871dfaab4a5a96a",
+        "raw.jsonl": "c9029e4ab6b4c993305ca92d05637f5da346c57dd318bf3c4494fe979ab932a3",
+        "report.json": "b32ecacc68740b67bd06fb138bc80d5af0874f6bbb49d2387de606e39b4f5c9c",
+        "report.md": "bf53945df1792cd2ff06b51f6256e7d9393c12e67eacf294691d65685fb1988e"
+      },
+      "model": "chatgpt/gpt-5.6-terra (via LiteLLM gateway at https://litellm.tail5d39b4.ts.net)",
+      "out_dir": "eval/runs/host-enforcement-qualification-terra-20260915T074026Z",
+      "results": {
+        "host_execution_failed": 4
+      }
+    }
+  },
+  "schema_version": 1
+}

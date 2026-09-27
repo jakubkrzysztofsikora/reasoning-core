@@ -90,7 +90,9 @@ def main() -> None:
         sys.exit(0)
 
     existing = _sm.load(key)
-    if existing and (time.time() - float(existing.get("created_ts", 0))) < 86400:
+    if (existing
+            and existing.get("language_schema_version") == _sm.LANGUAGE_SCHEMA_VERSION
+            and (time.time() - float(existing.get("created_ts", 0))) < 86400):
         # Rehydrate: < 24h old, same task_spec_hash → keep manifest.
         _emit_session_start(
             payload,
@@ -108,6 +110,7 @@ def main() -> None:
         "cwd_hash": key.split("_", 1)[0] if "_" in key else key[:12],
         "task_spec_hash": key.split("_", 1)[1] if "_" in key else "",
         "created_ts": time.time(),
+        "language_schema_version": _sm.LANGUAGE_SCHEMA_VERSION,
         "declared_language": declared,
         "framework": None,  # detection deferred
         "ext_distribution": counts,

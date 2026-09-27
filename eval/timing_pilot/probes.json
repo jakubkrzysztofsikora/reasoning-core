@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "description": "Deterministic policy probes. Run with a real Tier-1 host only after replacing the fixture hook adapter with the selected host path.",
+  "probes": [
+    {
+      "id": "rule-forbid-import",
+      "category": "rule_engine",
+      "path": "src/service.py",
+      "before": "def run():\n    return 1\n",
+      "after": "import os\n\ndef run():\n    return os.getenv('HOME')\n",
+      "expected_treatment": "blocked",
+      "expected_control": "failed",
+      "control": ["python", "-m", "eval.timing_pilot.check_policy", "--project", ".", "--path", "src/service.py"]
+    },
+    {
+      "id": "rule-forbid-subprocess-import",
+      "category": "rule_engine",
+      "path": "src/worker.py",
+      "before": "def execute():\n    return 'ok'\n",
+      "after": "import subprocess\n\ndef execute():\n    return subprocess.run(['true'])\n",
+      "expected_treatment": "blocked",
+      "expected_control": "failed",
+      "control": ["python", "-m", "eval.timing_pilot.check_policy", "--project", ".", "--path", "src/worker.py"]
+    },
+    {
+      "id": "contract-forbidden-path",
+      "category": "plan_contract",
+      "path": "src/protected.py",
+      "before": "VALUE = 1\n",
+      "after": "VALUE = 2\n",
+      "expected_treatment": "blocked",
+      "expected_control": "failed",
+      "control": ["python", "-m", "eval.timing_pilot.check_policy", "--project", ".", "--path", "src/protected.py"]
+    },
+    {
+      "id": "contract-forbidden-import",
+      "category": "plan_contract",
+      "path": "src/service.py",
+      "before": "def run():\n    return 1\n",
+      "after": "from src.internal import secret\n\ndef run():\n    return secret\n",
+      "expected_treatment": "blocked",
+      "expected_control": "failed",
+      "control": ["python", "-m", "eval.timing_pilot.check_policy", "--project", ".", "--path", "src/service.py"]
+    },
+    {
+      "id": "plan-path-outside-scope",
+      "category": "plan_grounding",
+      "path": "src/outside_plan.py",
+      "before": "VALUE = 1\n",
+      "after": "VALUE = 2\n",
+      "expected_treatment": "blocked",
+      "expected_control": "failed",
+      "control": ["python", "-m", "eval.timing_pilot.check_policy", "--project", ".", "--path", "src/outside_plan.py"]
+    },
+    {
+      "id": "allow-safe-python-edit",
+      "category": "negative_control",
+      "path": "src/service.py",
+      "before": "def run():\n    return 1\n",
+      "after": "def run():\n    return 2\n",
+      "expected_treatment": "allowed",
+      "expected_control": "passed",
+      "control": ["python", "-m", "ruff", "check", "src/service.py"]
+    },
+    {
+      "id": "allow-planned-path-edit",
+      "category": "negative_control",
+      "path": "src/in_plan.py",
+      "before": "VALUE = 1\n",
+      "after": "VALUE = 2\n",
+      "expected_treatment": "allowed",
+      "expected_control": "passed",
+      "control": ["python", "-m", "eval.timing_pilot.check_policy", "--project", ".", "--path", "src/in_plan.py"]
+    }
+  ]
+}

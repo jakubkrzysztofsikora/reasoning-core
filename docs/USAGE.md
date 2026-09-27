@@ -18,7 +18,7 @@ Put `bin/` on PATH (`export PATH="$RC_REPO/bin:$PATH"`).
 | `rc confirm-next` | Record operator agreement with the next block — emits `operator_confirmed` |
 | `rc skip-file <path>` | Add `<path>` to the per-session skip list (logged) |
 | `rc unskip-file <path>` | Remove `<path>` from the skip list |
-| `rc enable-enforcement [--hard]` | Flip repo to copilot mode (operator-authenticated; requires existing `PLAN.md`). `--hard` promotes plan-grounding to hard block. |
+| `rc enable-enforcement [--hard]` | Flip repo to copilot mode (operator-authenticated; requires existing `PLAN.md`). `--hard` promotes plan-grounding to hard block. For batch promotion across all installed repos, use `bash scripts/promote-all-repos.sh`. |
 | `rc disable-enforcement` | Revert to advisory mode (operator-authenticated) |
 | `rc guard-hash [--init]` | Verify guard files and enforcement config against stored hashes |
 | `rc reconcile` | Diff git working tree against gate_edit audit rows (post-session safety net) |
@@ -37,8 +37,10 @@ enforcement block into `.envrc.local` and flips the repo to `RC_MODE=copilot`.
 The default profile is **Stage 1** (warn-only plan-grounding); pass `--hard` for
 **Stage 2** (hard plan-grounding block). `rc disable-enforcement` reverts.
 
-`rc audit-history` labels the last `n` commits as positive/negative using a
-48-hour follow-up-fix heuristic. Use `--json` for machine-readable output and
+`rc audit-history` uses a 48-hour follow-up-fix heuristic to label the last
+`n` commits as positive/negative. Treat these labels as reviewable calibration
+input rather than ground truth: the command does not automatically change
+thresholds or enforcement. Use `--json` for machine-readable output and
 `--reasons` to print why each commit was labelled.
 
 `rc benchmark` produces a Markdown report from the local audit log. It reports
@@ -98,7 +100,7 @@ and correlation fields, then deletes the artifact. Canary paths carry the
 | # | Hook | Event / matcher | Purpose |
 |---|---|---|---|
 | L1 | `pre_bash_guard.py` | PreToolUse / `Bash` | Blocks shell-level source writes (heredoc, sed, tee), kills against the sidecar, env tampering, edits to guard files |
-| L2 | `pre_edit_guard.py` | PreToolUse / `Edit\|Write\|MultiEdit` | Neural scoring; per-kind threshold dispatch; mock-detector; OOD detector; language-lock; drift policy; guard-file lock; rule-engine dispatch when `RC_RULE_ENGINE=1` |
+| L2 | `pre_edit_guard.py` | PreToolUse / `Edit\|Write\|MultiEdit` | Required Mamba SSM scoring; per-kind threshold dispatch; mock-detector; OOD detector; language-lock; drift policy; guard-file lock; rule-engine dispatch. Uncorroborated neural regression is advisory by default (`RC_NEURAL_CORROBORATED=1`). |
 | L3 | `pre_plan_guard.py` | PreToolUse / `Write` (and Plan-shaped writes to `**/plans/**.md`) | Plan-time heuristics + plan-quality CGS (kNN novelty, section drift, plan→impl coherence) |
 | L4 | `pre_task_guard.py` | PreToolUse / `Task` | Regex screen on subagent prompts mentioning guarded paths with mutation verbs |
 | L5 | `post_bash_revive.py` | PostToolUse / `Bash` | Re-spawns sidecar when `/health` stops responding after a kill-shaped command |

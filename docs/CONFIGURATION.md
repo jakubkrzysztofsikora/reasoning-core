@@ -92,7 +92,7 @@ metric and would silently disable the gate.
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `RC_MODE` | `advise` | Canonical posture: `advise` (warn/audit only), `copilot` (block on contract/oracle/rule failures), `autopilot` (block + auto-repair). |
+| `RC_MODE` | `advise` | Canonical posture: `advise` (warn/audit only), `copilot` (block on configured deterministic failures), `autopilot` (currently the same enforcement posture as `copilot`; repair is not shipped). |
 | `RC_SHADOW_MODE` | `1` | Legacy log-only flag; `1` log decisions, `0` enforce. Equivalent to `RC_MODE=advise` when `RC_MODE` is unset. |
 | `RC_PLAN_GROUNDING` | `1` | `0` off, `1` warn when an Edit drifts from `PLAN.md`, `2` hard block. |
 | `RC_PLAN_BLOCK` | `0` | (legacy, `pre_plan_guard.py`) escalate plan-doc write warnings to hard block. |
@@ -112,6 +112,7 @@ metric and would silently disable the gate.
 | `RC_DRIFT_WARN` | `4.0` | Cumulative-drift warn level (post-`_l2_distance` chord scale — re-tune for production) |
 | `RC_DRIFT_DENY` | `6.0` | Cumulative-drift hard-deny level (chord scale) |
 | `RC_DRIFT_OVERRIDE` | _unset_ | `1` disables drift policy (hard-denied if set inline via Bash) |
+| `RC_NEURAL_CORROBORATED` | `1` | `1` keeps an uncorroborated Mamba/structural regression advisory; deterministic evidence remains the default hard-block source. Set `0` only to enable direct neural blocking after validating it on the repository. |
 
 ## Architectural rule engine (symbolic gate)
 
@@ -225,8 +226,8 @@ calibration and PRM threshold tuning.
 The `rc audit-history` subcommand reads the last `n` commits, labels a commit
 _negative_ if it was followed within 48 hours by a fix/revert/hotfix/patch
 commit touching the same files, and prints a table (or JSON with `--json`).
-These labels provide the feedback signal for recalibrating neural and symbolic
-thresholds without manual labeling.
+These labels are calibration input for operator review; `rc audit-history` does
+not automatically recalibrate neural or symbolic thresholds.
 
 The `rc benchmark` subcommand aggregates the local audit log into a Markdown
 report (and optional JSON via `--json PATH`). It reports decisions by outcome,

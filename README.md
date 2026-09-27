@@ -7,17 +7,15 @@
 </p>
 
 <p align="center">
-  <strong>reasoning-core</strong> — local pre-edit gate for AI coding CLIs.
+  <strong>reasoning-core</strong> — local pre-write containment harness for AI coding agents.
 </p>
 
 <p align="center">
-  Audit and warn on AI edits that drift off-plan, import what's banned, or break invariants — before they hit disk.
+  Deterministic repository policy enforces hard blocks; a local Mamba SSM provides advisory structural scoring.
   <br/>
-  Opt-in enforcement mode can block these edits.
+  Confirmed to reduce observer-detected invalid policy writes by &gt;10× vs vanilla Claude Code (rate-ratio upper 95% CI: 0.0295; 150 pairs).
   <br/>
-  At runtime: loopback-only sidecar, no telemetry, no cloud relay.
-  <br/>
-  One-time model download from HuggingFace is required for the default SSM embedder.
+  Loopback-only sidecar, no telemetry, no cloud relay. One-time local Mamba download from Hugging Face.
 </p>
 
 <p align="center">
@@ -42,22 +40,32 @@
 
 ## What it is
 
-A local scorer reads every Edit / Write an AI coding agent proposes, runs cheap
-execution-grounded oracles on it (`py_compile`, `ruff`, `ast.parse`, your
-`.reasoning-core/rules.yaml`), and scores it against an 8-dim risk vector. In the
-**default advisory mode** it warns and audits; in **opt-in copilot mode** it can
-block the change before it lands if it drifts off-plan, invents a helper you
-already have, or violates a coupling/coherence threshold. One sidecar, six
-CLIs (Claude Code, OpenAI Codex, Gemini, Moonshot Kimi, GitHub Copilot,
-Mistral Vibe). At runtime the sidecar binds to loopback only; no telemetry,
-no cloud relay, no ongoing network calls.
+A local Mamba SSM scorer reads every Edit / Write an AI coding agent proposes,
+builds structural signals, and returns an 8-dimension risk vector. It runs with
+cheap execution-grounded oracles (`py_compile`, `ruff`, `ast.parse`, and your
+`.reasoning-core/rules.yaml`). In the **default advisory mode** it warns and
+audits. In **opt-in copilot mode**, deterministic repository policy -- rules,
+contracts, language locks, and configured oracles -- can block a change before
+it lands. Uncorroborated SSM risk is retained as an auditable advisory signal;
+it becomes an independent hard block only when explicitly configured.
 
-**Evidence status:** The benchmark figures in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
-and the whitepaper are historical controlled-study results from one codebase,
-using an earlier risk-label schema. They are not a current real-usage guarantee.
-The shipped install remains advisory/shadow by default; current real-session
-quality evidence is being built from decision-linked labels and repository
-outcomes.
+One sidecar supports eight agent hosts: Claude Code, OpenAI Codex, Gemini,
+Moonshot Kimi, GitHub Copilot, Mistral Vibe, Pi, and Antigravity. Runtime hooks
+provide pre-write interception where the host supports them; Copilot and Vibe
+use a model-mediated MCP gate. At runtime the sidecar binds to loopback only;
+there is no telemetry or cloud relay. The required default SSM checkpoint is a
+one-time Hugging Face download; optional generative critics can use a configured
+remote endpoint.
+
+**Evidence status:** A preregistered confirmatory evaluation found that the
+full harness reduced observer-detected invalid policy writes on disposable
+worktrees by more than 10x compared with vanilla Claude Code (rate-ratio upper
+95% CI: 0.0295; 150 pairs; Claude Code 2.1.274, `claude-sonnet-4-5`, Edit/Write
+only). See [`docs/EVAL_10X_PROTOCOL.md`](docs/EVAL_10X_PROTOCOL.md) and
+[`docs/EVAL_RESULTS.md`](docs/EVAL_RESULTS.md) for full results, scope, and
+limitations. The benchmark figures in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
+are separate historical results from an earlier schema and are not a current
+product guarantee.
 
 ## Quick start
 
@@ -95,6 +103,9 @@ rc upgrade                  # pip install --upgrade + rc init --check (idempoten
 rc upgrade --ref v0.3.0     # pin a specific tag/branch
 rc upgrade --dry-run         # see the plan before it runs
 ```
+
+After reviewing repository rules and shadow-mode receipts, use
+`rc enable-enforcement --hard` to opt in to deterministic blocking.
 
 When the gate blocks an edit, you see a `Decision ID` you can inspect or
 override from the terminal:
@@ -139,22 +150,30 @@ production edits get. All dimensions are scored in [0, 1] with a chord-distance
 `Decision ID: <hex>` and an `rc explain` / `rc bypass-next` follow-up so the
 audit log and operator action stay linked by the same ID.
 
-**Self-calibrating from your git history** — `rc audit-history` labels a
-commit negative if it was followed within 48 h by a fix/revert/hotfix on the
-same files. The labeled feedback recalibrates thresholds where you actually
-make mistakes.
+**Local history feedback** — `rc audit-history` heuristically labels a commit
+negative when a fix/revert/hotfix follows within 48 h on the same files. Use
+those labels as calibration input and inspect them before changing thresholds;
+the command does not automatically retune enforcement.
 
-**Same hooks across 6 CLIs**
+**Same gate across eight agent hosts**
 
 | CLI | Hook surface | Tier |
 |---|---|---|
-| Claude Code, OpenAI Codex, Gemini CLI, Moonshot Kimi | runtime PreToolUse | 1 |
+| Claude Code, OpenAI Codex, Gemini CLI, Moonshot Kimi, Pi | runtime hook | 1 |
 | GitHub Copilot CLI, Mistral Vibe CLI | MCP `gate_edit` + post-turn audit | 2 |
+| Antigravity CLI | native bridge | 1 |
 
 Tier-2 means the gate runs at the model layer — the LLM is asked to call
 `gate_edit` before every write. Under context pressure it sometimes skips;
 for mission-critical work use a Tier-1 host. Detail:
 [`docs/CLI_PARITY.md`](docs/CLI_PARITY.md).
+
+**What the SSM decides** — the default Mamba SSM is an inseparable scoring
+component: it supplies structural change, novelty, coupling, and coherence
+signals for every supported edit. Its uncorroborated regression signal is
+advisory by default (`RC_NEURAL_CORROBORATED=1`); deterministic evidence is
+required for a default hard block. Set `RC_NEURAL_CORROBORATED=0` only when you
+intentionally want direct SSM enforcement and have validated it on your repo.
 
 **Local-only by construction** — sidecars bind `127.0.0.1` only, refuse
 external NIC. The hook chain, the audit log, and the rule engine all run on
@@ -168,7 +187,7 @@ authenticated operator action. See [`docs/HARDENING.md`](docs/HARDENING.md) for
 the guard-integrity model.
 
 ```bash
-export RC_MODE=advise              # advise | copilot | autopilot
+export RC_MODE=advise              # advise | copilot | autopilot (reserved repair posture)
 export S2_HARD_CAP_MS=1500         # client cap on /score POST
 export S2_COHERENCE_THRESHOLD=0.09 # chord-distance ceiling (95th-pct)
 export S2_TIMEOUT=30               # server cap on /score
@@ -222,7 +241,7 @@ rc record-verification      # persist a deterministic test/lint/build result
 rc real-session-eval        # correlate real sessions with labels and outcomes
 rc episodes                 # derived edit episodes (checks, repairs, final status)
 rc reasoning-efficiency     # composite north-star metric from the audit log
-rc audit-history            # label commits negative if followed by fix/revert
+rc audit-history            # mine heuristic commit-follow-up labels for review
 ```
 
 ## Use it from code
@@ -250,6 +269,7 @@ curl -fsS -X POST http://127.0.0.1:8765/score \
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — deep technical dive
 - [`docs/HARDENING.md`](docs/HARDENING.md) — threat model
 - [`docs/CLI_PARITY.md`](docs/CLI_PARITY.md) — per-host caveats
+- [`docs/COMPETITOR_POSITIONING.md`](docs/COMPETITOR_POSITIONING.md) — competitor map, security-trust research, and 10x validation plan
 
 ## Contributing
 

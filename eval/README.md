@@ -340,3 +340,13 @@ continuing weekly monitoring design uses five paired arms (`vanilla`,
 `full_copilot`) with 20 tasks. These runs are regression monitoring, not proof
 of broad performance claims; use two arm-blind labelers and report reliability
 before interpreting differences.
+
+# 10x Containment Evaluation
+
+A separate evaluation harness in [`eval/ten_x_pilot/`](ten_x_pilot/) measures
+whether the full reasoning-core configuration reduces observer-detected invalid
+policy writes by at least 10x compared with vanilla Claude Code. This uses a
+different runner (`eval/ten_x_pilot/run.py`) and corpus than the SWE-bench
+suite above. The confirmatory result passed on the v2 corpus; see
+[`docs/EVAL_10X_PROTOCOL.md`](../docs/EVAL_10X_PROTOCOL.md) for results and
+[`eval/ten_x_pilot/README.md`](ten_x_pilot/README.md) for the operator guide.

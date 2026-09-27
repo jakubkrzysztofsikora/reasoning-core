@@ -405,8 +405,14 @@ rc status
 ## Multi-machine deployment
 
 The default `.envrc` installed by `install.sh` is in **advise mode** (log and
-warn, never block). To promote a repo to **copilot** enforcement on this
-machine or another, add the same block to that repo's `.envrc.local`:
+warn, never block). To promote a repo to **copilot** enforcement, use:
+
+```bash
+rc enable-enforcement --hard    # writes .envrc.local with full enforcement
+direnv reload
+```
+
+Or manually add this block to `.envrc.local`:
 
 ```bash
 # >>> reasoning-core enforcement pilot (2026-07-10) >>>
@@ -424,20 +430,47 @@ export S2_FAIL_CLOSED=1
 # <<< reasoning-core enforcement pilot (2026-07-10) <<<
 ```
 
-`.envrc.local` is **gitignored** and sourced last, so any pre-existing
-machine-specific overrides (for example `RC_EMBEDDER`, `S2_DEVICE`, or
-`S2_MEM_LIMIT_GB`) are preserved. After editing the file, reload the
-environment with:
+### Batch promotion across all installed repos
+
+To promote every repo that has a `.reasoning-core/install.manifest` on a
+machine, run the batch script:
 
 ```bash
-direnv reload
+bash scripts/promote-all-repos.sh
 ```
 
-On a second machine the workflow is: pull the latest `reasoning-core` clone,
-re-run `install.sh` in each gated repo (or hand-copy the block into its
-`.envrc.local`), preserve that machine's overrides, and restart the
-sidecar/supervisor. Because `.envrc.local` is ignored by git, the enforcement
-block is never part of a commit.
+This is idempotent — repos that already have the correct block are skipped.
+Repos with stale or partial blocks are updated. New `.envrc.local` files are
+created for repos that don't have one yet.
+
+### Second machine setup
+
+On a new machine (e.g., MacBook Pro):
+
+```bash
+# 1. Clone + bootstrap
+git clone https://github.com/jakubkrzysztofsikora/reasoning-core.git \
+  ~/Repos/personal/reasoning-core
+cd ~/Repos/personal/reasoning-core
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+huggingface-cli download state-spaces/mamba-130m-hf
+
+# 2. Daemonize the sidecar
+bash scripts/install-supervisor-launchagent.sh
+curl -fsS http://127.0.0.1:8764/health | jq   # verify both children alive
+
+# 3. Install hooks into each target repo
+cd /path/to/target-repo
+bash ~/Repos/personal/reasoning-core/install.sh
+direnv reload
+
+# 4. Promote all repos to enforcement
+bash ~/Repos/personal/reasoning-core/scripts/promote-all-repos.sh
+```
+
+`.envrc.local` is **gitignored** and sourced last, so any pre-existing
+machine-specific overrides (for example `RC_EMBEDDER`, `S2_DEVICE`, or
+`S2_MEM_LIMIT_GB`) are preserved. The enforcement block is never committed.
 
 ---
 

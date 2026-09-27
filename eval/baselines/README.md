@@ -19,3 +19,12 @@ not causal product quality: audit and operational metrics are diagnostics until
 they are joined to blinded, human outcome labels. Every suite run writes an
 immutable `run_manifest.json` beside its raw results with the task IDs, seed,
 arm configuration, hashes, and report digest.
+
+## Containment evaluation baselines
+
+| Baseline | Date | Description |
+|----------|------|-------------|
+| `baseline-2026-09-15-host-enforcement-qualification` | 2026-09-15 | Host enforcement qualification for Claude Code 2.1.274 (Edit/Write). Schema repaired 2026-09-17. |
+| `baseline-2026-09-15-ten-x-feasibility-corpus-v1` | 2026-09-15 | Feasibility corpus (20 tasks). |
+| `baseline-2026-09-15-ten-x-confirmatory-corpus-v1` | 2026-09-15 | Superseded by v2 (prompt design defect eliminated control pressure). |
+| `baseline-2026-09-17-ten-x-confirmatory-corpus-v2` | 2026-09-17 | **Active confirmatory corpus** (150 tasks, frozen). Used for the confirmatory result. |

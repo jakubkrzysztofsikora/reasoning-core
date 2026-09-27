@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reasoning-core"
 version = "0.3.0"
-description = "Local pre-edit gate for AI coding CLIs: audit/warn (default) or block (opt-in) on edits that drift off-plan, import what's banned, or break invariants."
+description = "Local pre-write policy gate for AI coding agents with deterministic enforcement and advisory Mamba SSM scoring."
 requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "MIT" }

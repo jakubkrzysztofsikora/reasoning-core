@@ -5,36 +5,39 @@
 The reasoning core is a two-brain layout inspired by Kahneman's
 fast/slow framing.
 
-- **System 1 (linguistic, fast)** — Claude Code itself, routed through
-  `y-router` to **Scaleway Generative APIs**. Model:
-  `devstral-2-123b-instruct-2512`. System 1 produces source-code
-  *proposals*: edits, rewrites, new files. It is fluent but does not
-  guarantee structural soundness.
+- **System 1 (linguistic, fast)** — the supported coding-agent host
+  (Claude Code, Codex, Gemini, Kimi, Pi, Antigravity, or the MCP-mediated
+  Copilot/Vibe path). It produces source-code *proposals*: edits, rewrites,
+  and new files. Its model provider is independent of reasoning-core.
+  `y-router` and Scaleway are optional maintainer/evaluation infrastructure,
+  not a product runtime dependency.
 
 - **System 2 (mathematical, slow)** — A local Python sidecar
   (`src/s2_core.py`) that parses each proposed edit with **Tree-sitter**,
-  builds an AST + call-graph, and runs a **real Mamba state-space-model
-  forward pass** over the linearized AST tokens. It returns a typed
-  `ImpactReport` with an architectural-impact score (AIS), a coherence
-  delta, and an 8-dimensional risk vector.
+  builds an AST + call graph where applicable, and runs the required default
+  **Mamba state-space-model forward pass** over linearized AST tokens. It
+  returns a typed `ImpactReport` with an architectural-impact score (AIS), a
+  coherence delta, and an 8-dimensional risk vector. Uncorroborated neural
+  risk is advisory by default; deterministic policy supplies hard blocks.
 
 - **Bridge** — `src/mcp_reasoner.py` exposes a FastMCP server named
   `hybrid-reasoner` with the tool `reason_over_edit(file_path,
   proposed_change, change_kind)`, which calls the sidecar over loopback
   HTTP.
 
-- **Pre-edit hook** — `src/hooks/pre_edit_guard.py` is registered as a
-  Claude Code `PreToolUse` hook for `Edit|Write|MultiEdit`. It reads the
-  hook payload from stdin, calls the sidecar directly at
-  `127.0.0.1:8765/score`, and exits `2` (block) when
-  `regression_detected` is true. Otherwise it exits `0`.
+- **Pre-edit hook** — `src/hooks/pre_edit_guard.py` is registered through
+  each runtime-hook host's pre-write surface for `Edit|Write|MultiEdit`.
+  It reads the hook payload from stdin and calls the sidecar directly at
+  `127.0.0.1:8765/score`. Default hard blocks come from deterministic
+  policy; an uncorroborated SSM `regression_detected` result is audited as a
+  warning unless direct neural enforcement is explicitly enabled.
 
 ## Data flow
 
 ```
                 +-----------------+
-   user -->     |   Claude Code    |  <-- y-router  <-- Scaleway
-                |   (System 1)     |       :8787      api.scaleway.ai
+   user -->     | supported coding |  Claude / Codex / Gemini / Kimi /
+                | agent (System 1) |  Pi / Antigravity / MCP host
                 +-----------------+
                         |
                         | Edit / Write / MultiEdit (intent)
@@ -53,7 +56,7 @@ fast/slow framing.
                          | parse + analyze
                          v
             +-------------+-------------+
-            | Tree-sitter (13 grammars) |
+            | Tree-sitter (12 public languages) |
             | AST + call graph (code)   |
             | AST only        (data)    |
             +-------------+-------------+
@@ -75,11 +78,9 @@ fast/slow framing.
 | Port  | Process               | Bind         | Notes                                |
 | ----- | --------------------- | ------------ | ------------------------------------ |
 | 8765  | S2 sidecar (HTTP)     | `127.0.0.1`  | Loopback only; refuses external NIC. |
-| 8787  | y-router (Anthropic)  | `127.0.0.1`  | Default `ANTHROPIC_BASE_URL`.        |
-
-The y-router is an external dependency (not shipped here). It must be
-running locally for the live Scaleway probe in
-`scripts/configure-scaleway.sh`.
+`y-router` and Scaleway are optional external infrastructure used by the
+maintainer's live probe and remote generative-critic configuration. They are
+not required by the local SSM sidecar or its loopback score endpoint.
 
 ## File map
 
@@ -97,7 +98,7 @@ reasoning-core/
 |   |-- grammars.py                Tree-sitter loader + select_grammar
 |   |-- ssm_backbone.py            Mamba weights + embed() helper
 |   |-- mcp_reasoner.py            FastMCP bridge
-|   |-- audit_log.py               JSONL audit emitter for /tmp/rc-events
+|   |-- audit_log.py               JSONL audit emitter under RC_AUDIT_ROOT
 |   `-- hooks/
 |       |-- pre_edit_guard.py      PreToolUse hook (Edit|Write|MultiEdit)
 |       |-- pre_bash_guard.py      PreToolUse hook (Bash) — L1 hardening
@@ -226,7 +227,7 @@ retuned when swapping embedders. The same chord distance is used for
 
 ## Tree-sitter language support
 
-The sidecar supports thirteen languages, split into two tiers. Selection
+The sidecar advertises twelve public language categories, split into two tiers. Selection
 is by file extension, done in `src/grammars.py::select_grammar`.
 
 ### Code languages (full call-graph + embedding)
@@ -253,7 +254,9 @@ is by file extension, done in `src/grammars.py::select_grammar`.
 | SCSS        | `.scss`                          | tree-sitter-scss       |
 | HTML        | `.html`, `.htm`                  | tree-sitter-html       |
 | Dockerfile  | `Dockerfile`, `.dockerfile`      | tree-sitter-dockerfile |
-| Vue         | `.vue`                           | HTML grammar (fallback)*|
+`.vue` files use the HTML grammar as an implementation fallback. Vue is not a
+separate advertised language category and does not provide Vue-specific call
+semantics.
 
 *No `tree-sitter-vue` wheel exists on PyPI for Python 3.13; `.vue` files
 are routed through the HTML grammar so `/score` returns 200 instead of a
@@ -302,7 +305,8 @@ the architectural map.
 All five hooks are stdlib-only (no `httpx`, no FastAPI, no transformers
 imports) so a broken venv does not disable policy. They share an
 audit-log helper at `src/audit_log.py` which appends a JSONL event to
-`/tmp/rc-events/<date>/<session>.jsonl` per fire.
+`$RC_AUDIT_ROOT/<date>/<session>.jsonl` per fire (default:
+`~/.local/share/reasoning-core/events`).
 
 By default L3 ships in **warn-only** mode — operators see plan-quality
 stderr noise but the write proceeds. Setting `RC_PLAN_BLOCK=1` flips the
@@ -356,7 +360,7 @@ drift. See `EVAL_DESIGN.md` §1–§5.
                            v                        |
             +------------------------------+        | append
             | claude_transcript.jsonl      |        v
-            | hook_events.jsonl (treatment)|  /tmp/rc-events/<date>/
+            | hook_events.jsonl (treatment)|  $RC_AUDIT_ROOT/<date>/
             | sidecar.log     (treatment)  |   <session>.jsonl
             +--------------+---------------+        |
                            |                        |
@@ -413,7 +417,7 @@ when scoring offline.
 
 3. **Hook telemetry (treatment only).** `hook_events.jsonl` (one line
    per PreToolUse fire) is consumed alongside the structured audit
-   stream at `/tmp/rc-events/<date>/<session>.jsonl` to compute FPBR,
+   stream at `$RC_AUDIT_ROOT/<date>/<session>.jsonl` to compute FPBR,
    TPBR, BRR, and hook overhead p50/p95. Replay verification for TPBR
    re-applies blocked content to a scratch clone and re-runs pytest;
    that step is the only post-hoc pass that needs network and a clean

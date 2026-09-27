@@ -68,11 +68,15 @@ That's what this is.
 
 ## System 1 + System 2
 
-Loose nod to Kahneman: System 1 = fast, linguistic, intuitive (LLM); System
-2 = slow, structural, deliberate (the neural scorer + symbolic rules).
+Loose nod to Kahneman: System 1 is the fast, linguistic coding agent; System
+2 is the local, structural Mamba SSM scorer plus symbolic rules. The default
+SSM is required for every supported score request, not an optional add-on.
+Deterministic repository policy supplies default hard blocks; an
+uncorroborated neural regression remains an auditable warning unless an
+operator explicitly enables direct neural enforcement.
 
 ```
-Claude proposes an edit
+A supported coding agent proposes an edit
         │
         ▼
 ┌─────────────────────────────┐
@@ -84,9 +88,9 @@ Claude proposes an edit
 ┌──────────────────────────────────────────────────────┐
 │ Sidecar (FastAPI, 127.0.0.1:8765)                    │
 │                                                      │
-│   Neural gate                                        │
+│   Required Mamba SSM scoring                          │
 │   • Tree-sitter parse → AST + call graph             │
-│   • Embedder forward (RC_EMBEDDER) → pooled emb      │
+│   • Default Mamba forward → pooled embedding         │
 │   • 8-dim risk vector (delta semantics)              │
 │   • Chord-distance coherence_delta in [0, 2]         │
 │   • Per-kind thresholds (source/test/plan/doc/cfg)   │
@@ -101,10 +105,11 @@ Claude proposes an edit
                            ▼
 ┌─────────────────────────────────────────────────────┐
 │ Hook decides:                                       │
-│   regression OR rule deny? → exit 2,                │
-│     stderr block w/ top-3 contributors +            │
-│     unified-diff RECOVERY hints                     │
-│   safe? → exit 0, edit proceeds                     │
+│   deterministic deny? → exit 2,                     │
+│   uncorroborated SSM regression? → warn + audit,    │
+│   direct neural enforcement explicitly enabled? →   │
+│     exit 2 with top contributors + recovery hints   │
+│   otherwise → exit 0, edit proceeds                 │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -146,8 +151,9 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the deep-dive and
 
 ## Under the hood (step-by-step)
 
-1. **Claude proposes an edit.** The PreToolUse hook fires before the file
-   is modified.
+1. **A supported agent proposes an edit.** A runtime pre-write hook fires
+   before the file is modified where the host exposes one. Copilot and Vibe
+   use the model-mediated MCP gate documented in [`CLI_PARITY.md`](CLI_PARITY.md).
 2. **`pre_edit_guard.py`** reads the hook payload from stdin,
    **reconstructs** the post-edit file (`before` from disk + apply
    `old_string→new_string`), POSTs `{path, before_src, after_src, session_id?}`
@@ -174,12 +180,14 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the deep-dive and
    delta-shaped dims.
 7. **File-kind dispatch** (`source_code` / `test_code` / `plan_md` /
    `doc_md` / `config`) picks per-kind `cd` / `ais` / `dim` thresholds.
-8. The hook **blocks** (exit 2) iff:
-   - `architectural_impact_score < ais_threshold[kind]`, OR
-   - `coherence_delta > cd_threshold[kind]`, OR
-   - any risk dim `> dim_ceiling[kind]`, OR
-   - the rule engine emits a `deny` hit (when `RC_RULE_ENGINE=1`).
-9. Block stderr surfaces top-3 risk contributors, their margins, and (on
+8. The scorer marks a neural regression when `architectural_impact_score`,
+   `coherence_delta`, or a risk dimension crosses its threshold. With the
+   default `RC_NEURAL_CORROBORATED=1`, that uncorroborated neural result is
+   logged as advisory. The hook blocks (exit 2) on deterministic deny signals
+   such as configured rules, contracts, language locks, and enabled oracles;
+   it can also block directly on neural regression only when an operator sets
+   `RC_NEURAL_CORROBORATED=0` after validating the policy for that repository.
+9. Block or warning output surfaces top-3 risk contributors, their margins, and (on
    retry) unified-diff `RECOVERY` guidance pointing at the
    `validate_unified_diff` MCP tool. Retries within 120s trigger a "RETRY
    DETECTED" banner.
@@ -259,8 +267,10 @@ the gate. The sidecar logs a warning at load time if
 | `doc_md`      | `0.30` | `0.3` | `1.0` |
 | `config`      | `0.08` | `0.5` | `0.9` |
 
-Block fires iff `ais < threshold[kind]` OR `cd > threshold[kind]` OR any
-`risk_dim > dim_ceiling[kind]`.
+The scorer flags a neural regression iff `ais < threshold[kind]` OR
+`cd > threshold[kind]` OR any `risk_dim > dim_ceiling[kind]`. Under the default
+corroborated policy this is advisory unless a deterministic signal also denies
+the edit; direct neural blocking requires `RC_NEURAL_CORROBORATED=0`.
 
 ---
 
@@ -272,7 +282,7 @@ Phase 0 introduces a single canonical posture knob:
 |---|---|---|---|
 | `advise` (default) | No | No | Learning the gate on your repo; shadow reporting |
 | `copilot` | On contract / oracle / rule / lang-lock failures | No | You trust the 48-hour shadow report |
-| `autopilot` | Same as `copilot` | Yes, within policy | Explicit opt-in after oracles pass kill criteria |
+| `autopilot` | Same as `copilot` | Not yet | Reserved repair posture; current implementation has copilot enforcement only |
 
 `RC_SHADOW_MODE=1` is kept as a legacy alias for the log-only posture and is
 equivalent to `RC_MODE=advise` for blocking behavior. `RC_MODE` takes

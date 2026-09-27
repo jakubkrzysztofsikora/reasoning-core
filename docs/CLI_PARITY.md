@@ -2,22 +2,19 @@
 
 Per-host integration of the System 2 sidecar across Claude Code, OpenAI
 Codex CLI, Gemini CLI, GitHub Copilot CLI, Moonshot Kimi CLI, Mistral
-Vibe CLI, and Pi CLI. Verified hands‑on 2026‑05‑08 (Codex + Kimi added 2026‑06‑15).
+Vibe CLI, Pi CLI, and Antigravity CLI. Runtime-hook support differs by host;
+review the gate path before relying on enforcement.
 
 ## Parity matrix
 
-| Surface | Claude Code | Codex CLI | Gemini CLI | Copilot CLI | Kimi CLI | Vibe | Pi |
-|---|---|---|---|---|---|---|---|
-| **PreToolUse hook** | ✓ exit-2 | ✓ Claude-compat | ✓ Claude-compat | ✗ | ✓ Claude-compat | ✗ | ✓ (runtime `tool_call` block) |
-| **PostToolUse hook** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ (via `tool_result`) |
-| **SessionStart** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ (`session_start` event) |
-| **UserPromptSubmit** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ |
-| **PreCompact** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ (`session_before_compact`) |
-| **MCP server** | ✓ `.claude/` | ✓ `.codex/` | ✓ `.gemini/` | ✓ `~/.copilot/` | ✓ `.kimi/` | ✓ `.vibe/` | ✗ (runtime, no MCP) |
-| **Skills** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Context file** | `CLAUDE.md` | `CODEX.md` | `GEMINI.md` | `copilot-instructions.md` | `KIMI.md` | `AGENTS.md` | `AGENTS.md` (shared) |
-| **Gate path** | hooks | hooks | hooks | MCP tool | hooks | MCP tool | runtime `tool_call` extension |
-| **Audit visibility** | full | full | full | post‑MCP‑call | full | post‑MCP‑call | full |
+| Surface | Claude Code | Codex CLI | Gemini CLI | Copilot CLI | Kimi CLI | Vibe | Pi | Antigravity |
+|---|---|---|---|---|---|---|---|---|
+| **Pre-write gate** | ✓ exit-2 | ✓ Claude-compat | ✓ Claude-compat | ✗ | ✓ Claude-compat | ✗ | ✓ runtime `tool_call` block | ✓ native bridge |
+| **Post-write receipt** | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ via `tool_result` | ✓ native bridge |
+| **Session lifecycle** | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✓ `pre_invocation` |
+| **MCP server** | ✓ `.claude/` | ✓ `.codex/` | ✓ `.gemini/` | ✓ `~/.copilot/` | ✓ `.kimi/` | ✓ `.vibe/` | ✗ runtime | ✗ native bridge |
+| **Gate path** | runtime hooks | runtime hooks | runtime hooks | MCP tool | runtime hooks | MCP tool | runtime extension | `agy_bridge.py` |
+| **Audit visibility** | full | full | full | post-MCP-call | full | post-MCP-call | full | full |
 
 ## Install
 
@@ -49,6 +46,10 @@ bash $RC_REPO/scripts/enable-in-repo-vibe.sh
 # Pi
 bash $RC_REPO/scripts/enable-in-repo-pi.sh
 ```
+
+Antigravity uses the machine-global hook configuration described in
+[`docs/USAGE.md`](USAGE.md#antigravity-cli-agy); it does not yet have a
+repo-scoped installer script.
 
 All scripts:
 - Refuse to overwrite existing per‑host config (use `--force` to override).

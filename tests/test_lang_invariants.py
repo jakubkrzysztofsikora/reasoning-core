@@ -1,10 +1,12 @@
 """P3 long-horizon invariant tests (Invariants 1, 2, 4, 5)."""
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -101,6 +103,53 @@ def test_detect_initial_language_single_lang_string(tmp_path):
     declared, counts = sm.detect_initial_language(str(tmp_path))
     assert isinstance(declared, str)
     assert declared == "csharp"
+
+
+def test_cpp_firmware_detection_and_path_policy(tmp_path):
+    import _session_manifest as sm
+
+    for i in range(20):
+        (tmp_path / f"module_{i}.cpp").write_text("int main() { return 0; }\n")
+    (tmp_path / "device.h").write_text("#pragma once\n")
+    (tmp_path / "device.hpp").write_text("#pragma once\n")
+    (tmp_path / "helper.py").write_text("pass\n")
+
+    declared, _ = sm.detect_initial_language(str(tmp_path))
+    assert declared == "cpp"
+    assert sm.language_for_path("firmware/src/main.cpp") == "cpp"
+    assert sm.language_for_path("firmware/include/device.h") == "cpp"
+    assert sm.language_for_path("firmware/include/device.hpp") == "cpp"
+    assert sm.is_path_allowed({"declared_language": "cpp"}, "firmware/src/main.cpp")
+    assert not sm.is_path_allowed({"declared_language": "python"}, "firmware/src/main.cpp")
+
+
+def test_session_start_refreshes_manifest_after_language_schema_change(tmp_path, monkeypatch):
+    import importlib
+    import _session_manifest as sm
+    import session_start_manifest as start
+
+    state_dir = tmp_path / "state"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for i in range(20):
+        (repo / f"module_{i}.cpp").write_text("int value;\n")
+    monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("RC_LANG_LOCK", "1")
+    monkeypatch.delenv("RC_TASK_SPEC", raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    monkeypatch.setattr(start, "_emit_session_start", lambda *args, **kwargs: None)
+    importlib.reload(sm)
+    key = sm.manifest_key(str(repo), "")
+    sm.save({"key": key, "created_ts": time.time(), "declared_language": "python"})
+
+    try:
+        start.main()
+    except SystemExit as exc:
+        assert exc.code == 0
+    refreshed = sm.load(key)
+    assert refreshed["declared_language"] == "cpp"
+    assert refreshed["language_schema_version"] == sm.LANGUAGE_SCHEMA_VERSION
 
 
 def test_legacy_string_manifest_still_works():
@@ -268,4 +317,3 @@ def test_godot_alias_compatibility():
         mani = sm.load(sm.manifest_key("/fake/repo", "test-task"))
         assert sm.is_path_allowed(mani, "src/main.gd") is True
         assert sm.is_path_allowed(mani, "scenes/level.tscn") is True
-

@@ -49,3 +49,18 @@ Per-child sidecar logs land in `/tmp/rc-mamba.log` and `/tmp/rc-gen.log`.
 launchctl unload ~/Library/LaunchAgents/com.reasoning-core.supervisor.plist
 rm ~/Library/LaunchAgents/com.reasoning-core.supervisor.plist
 ```
+
+## Batch enforcement promotion
+
+`promote-all-repos.sh` finds every repo with a `.reasoning-core/install.manifest`
+and ensures its `.envrc.local` contains the copilot enforcement block.
+Idempotent — already-correct repos are skipped, stale blocks are updated,
+missing `.envrc.local` files are created.
+
+```sh
+bash scripts/promote-all-repos.sh              # all repos under ~/Repos
+bash scripts/promote-all-repos.sh /path/to     # specific parent directory
+```
+
+The reasoning-core checkout itself is excluded. See
+[`docs/INSTALL.md`](../docs/INSTALL.md) for the full multi-machine setup guide.
