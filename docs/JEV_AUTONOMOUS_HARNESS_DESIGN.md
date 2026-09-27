@@ -1,8 +1,9 @@
 # Jev + reasoning-core: autonomous coding harness design
 
-Status: design and evaluation protocol, 2026-09-27. No Jev integration or
-combined outcome is implemented or measured here. Pre-pilot baseline:
-`baseline-2026-09-27-jev-design-prepilot`.
+Status: design and evaluation protocol, 2026-09-27. A bounded task-triage
+adapter and qualified Claude Code runner are implemented in `src/autonomous.py`.
+The four-arm evaluation and any combined outcome remain unmeasured. Pre-pilot
+baseline: `baseline-2026-09-27-jev-design-prepilot`.
 
 ## Evidence check
 

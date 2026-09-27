@@ -1796,10 +1796,40 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_autonomous(args: argparse.Namespace) -> int:
+    """Run a bounded coding task in an isolated clone."""
+    from src.autonomous import JevAdapter, LocalAdapter, TaskSpec, run_task
+
+    task = TaskSpec.from_file(Path(args.task))
+    adapter = (JevAdapter(os.environ.get("TYPESAFE_API_KEY"))
+               if args.adapter == "jev" else LocalAdapter())
+    report = run_task(
+        task, Path(args.repo), Path(args.out), Path(args.qualification), adapter,
+        model=args.model, sidecar_url=args.sidecar_url,
+        max_attempts=args.max_attempts, budget_usd=args.max_budget_usd,
+        timeout=args.timeout,
+    )
+    print(json.dumps({"status": report["status"], "report": str(Path(args.out) / "report.json"),
+                      "workspace": report["workspace"]}))
+    return 0 if report["status"] == "completed" else 1
+
+
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    autonomous = sub.add_parser("autonomous", help="run a bounded coding task in a disposable clone")
+    autonomous.add_argument("--task", required=True, help="JSON task specification")
+    autonomous.add_argument("--repo", default=".", help="source Git repository")
+    autonomous.add_argument("--out", required=True, help="new output directory outside the source repo")
+    autonomous.add_argument("--qualification", required=True, help="exact host/model qualification report")
+    autonomous.add_argument("--adapter", choices=["local", "jev"], default="local")
+    autonomous.add_argument("--model", default="claude-sonnet-4-5")
+    autonomous.add_argument("--sidecar-url", default="http://127.0.0.1:8765")
+    autonomous.add_argument("--max-attempts", type=int, default=3)
+    autonomous.add_argument("--max-budget-usd", type=float, default=1.0)
+    autonomous.add_argument("--timeout", type=int, default=300)
+    autonomous.set_defaults(func=cmd_autonomous)
     init_cmd = sub.add_parser(
         "init",
         help="wire reasoning-core hooks into a target repo (replaces install.sh)",
