@@ -1499,6 +1499,8 @@ def create_app():
                 content={"error": "internal_error", "detail": str(exc)},
             )
         _set_session_baseline(session_id, file_baselines)
+        corpus = file_baselines["__corpus__"]
+        drift_p95 = file_baselines["__drift_p95__"]
         return JSONResponse(
             status_code=200,
             content={

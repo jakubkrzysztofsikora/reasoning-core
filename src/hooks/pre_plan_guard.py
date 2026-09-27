@@ -682,7 +682,8 @@ def _gather_warnings(content: str, project_dir: str) -> List[Dict[str, Any]]:
     warnings.extend(_check_per_file_loc(content))
     warnings.extend(_check_phase_file_ratio(content))
     warnings.extend(_check_boundary_prose(content))
-    warnings.extend(_check_novelty(content, project_dir))
+    if os.environ.get("RC_PLAN_NOVELTY", "1") == "1":
+        warnings.extend(_check_novelty(content, project_dir))
     warnings.extend(_check_specificity(content))
     warnings.extend(_check_framework_pivot(content))
     warnings.extend(_check_ood(content))

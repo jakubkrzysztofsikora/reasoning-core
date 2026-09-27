@@ -113,9 +113,11 @@ def _run_hook(payload: Dict[str, Any], *, env: Optional[Dict[str, str]] = None,
         "S2_FAIL_CLOSED", "S2_URL", "S2_TIMEOUT", "S2_HARD_CAP_MS",
         "RC_ALLOW_GUARD_EDIT", "RC_LANG_LOCK", "RC_STATE_DIR",
         "RC_BEST_EFFORT_SPEC", "RC_PLAN_GROUNDING", "RC_RUN_DIR",
-        "RC_MODE", "RC_ORACLE_BLOCK", "RC_ORACLE_T1", "RC_ORACLE_T2",
+        "RC_PROJECT_DIR", "RC_MODE", "RC_ORACLE_BLOCK", "RC_ORACLE_T1", "RC_ORACLE_T2",
     ):
         real_env.pop(var, None)
+    # Match a real agent session: project checks should scan the fixture repo.
+    real_env["RC_PROJECT_DIR"] = os.path.dirname(payload["tool_input"]["file_path"])
     if env:
         real_env.update(env)
     return subprocess.run(

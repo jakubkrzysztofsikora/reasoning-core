@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 ARMS = ("vanilla", "laya", "rc", "laya_rc")
+DEFAULT_CASES = Path(__file__).with_name("cases.json")
 
 
 def sha256(data: bytes) -> str:
@@ -18,6 +19,7 @@ def sha256(data: bytes) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rollout", type=Path, required=True)
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--featurebench", type=Path, required=True, help="official source checkout")
     parser.add_argument("--python", type=Path, required=True, help="Python with FeatureBench dependencies")
@@ -27,9 +29,11 @@ def main() -> int:
     if out.exists() or args.timeout < 1:
         parser.error("grading output must be new and timeout positive")
     manifest = json.loads((rollout / "run_manifest.json").read_text())
-    expected = {(item["instance_id"], arm) for item in json.loads(
-        (Path(__file__).with_name("cases.json")).read_text()
-    )["cases"] for arm in ARMS}
+    cases_data = args.cases.read_bytes()
+    if manifest["cases_sha256"] != sha256(cases_data):
+        parser.error("rollout does not match pinned cases")
+    expected = {(item["instance_id"], arm) for item in json.loads(cases_data)["cases"]
+                for arm in ARMS}
     results = {(row["instance_id"], row["arm"]): row for row in manifest["results"]}
     if set(results) != expected:
         parser.error("rollout is incomplete or case set drifted")

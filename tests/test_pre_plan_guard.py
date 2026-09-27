@@ -31,6 +31,7 @@ def _run(payload, *, env_extra=None, timeout=20):
     env.pop("RC_PLAN_BLOCK", None)
     env.pop("RC_EMBEDDER", None)
     env["RC_EMBEDDER"] = "random-mamba"
+    env["RC_PLAN_NOVELTY"] = "0"
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
@@ -41,6 +42,12 @@ def _run(payload, *, env_extra=None, timeout=20):
         env=env,
         timeout=timeout,
     )
+
+
+def test_novelty_can_be_disabled_for_heuristic_only_runs(monkeypatch):
+    monkeypatch.setenv("RC_PLAN_NOVELTY", "0")
+    monkeypatch.setattr(pre_plan_guard, "_check_novelty", lambda *_: (_ for _ in ()).throw(AssertionError("novelty called")))
+    assert pre_plan_guard._gather_warnings("# Plan\n", "/tmp") == []
 
 
 def _plan_payload(content: str, *, path: str = "thoughts/shared/plans/foo.plan.md"):

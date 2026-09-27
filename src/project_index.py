@@ -14,13 +14,13 @@ from __future__ import annotations
 import logging
 import fnmatch
 import os
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 import re
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -73,36 +73,57 @@ def _python_definitions(src: str) -> list[tuple[str, int, str]]:
 
 
 def find_duplicate_definitions(repo_root: str, file_path: str, after_src: str) -> list[dict[str, Any]]:
-    """Find exact-name and high-confidence same-body definitions in a repo.
-
-    The caller supplies the proposed source, allowing this to run before the
-    write reaches disk.  Same-file matches are excluded by line/name pairing.
-    """
+    """Find exact-name and same-body duplicates introduced by a proposed write."""
     proposed = _python_definitions(after_src) if file_path.endswith(".py") else []
     if not proposed:
         return []
-    findings: list[dict[str, Any]] = []
     root = Path(repo_root)
     target = Path(file_path)
     try:
         target_rel = str(target.resolve().relative_to(root.resolve())) if target.is_absolute() else str(target)
     except ValueError:
         target_rel = str(target)
+    try:
+        before = _python_definitions((root / target_rel).read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        before = []
+    other_definitions: list[tuple[str, list[tuple[str, int, str]]]] = []
     for rel_path in _iter_repo_files(repo_root):
-        if not rel_path.endswith(".py"):
+        if not rel_path.endswith(".py") or rel_path == target_rel:
             continue
         try:
             existing = _python_definitions((root / rel_path).read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
-        for new_name, new_line, new_body in proposed:
-            for old_name, old_line, old_body in existing:
-                if rel_path == target_rel and old_name == new_name and old_line == new_line:
-                    continue
+        other_definitions.append((rel_path, existing))
+
+    def findings_for(definitions: list[tuple[str, int, str]]) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
+        findings: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+        for new_name, _, new_body in definitions:
+            for rel_path, existing in other_definitions:
+                for old_name, old_line, old_body in existing:
+                    kind = "exact_name" if new_name == old_name else "semantic_body"
+                    if kind == "exact_name" or new_body == old_body:
+                        key = (kind, new_name, rel_path, str(old_line))
+                        findings.append((key, {"kind": kind, "symbol": new_name,
+                                               "path": rel_path, "line": old_line}))
+        for index, (new_name, _, new_body) in enumerate(definitions):
+            for old_name, old_line, old_body in definitions[:index]:
                 kind = "exact_name" if new_name == old_name else "semantic_body"
                 if kind == "exact_name" or new_body == old_body:
-                    findings.append({"kind": kind, "symbol": new_name, "path": rel_path, "line": old_line})
-    return findings
+                    key = (kind, new_name, target_rel, old_name)
+                    findings.append((key, {"kind": kind, "symbol": new_name,
+                                           "path": target_rel, "line": old_line}))
+        return findings
+
+    old_counts = Counter(key for key, _ in findings_for(before))
+    new_findings: list[dict[str, Any]] = []
+    for key, finding in findings_for(proposed):
+        if old_counts[key]:
+            old_counts[key] -= 1
+        else:
+            new_findings.append(finding)
+    return new_findings
 
 
 def _module_for_path(path: str) -> str:
@@ -148,32 +169,47 @@ def find_import_cycle(repo_root: str, file_path: str, after_src: str) -> list[st
     """Return one newly present local import cycle, including its closing node."""
     root = Path(repo_root)
     files = [path for path in _iter_repo_files(repo_root) if path.endswith(".py")]
-    known = {_module_for_path(path) for path in files}
-    graph: dict[str, set[str]] = {}
     try:
         target_rel = str(Path(file_path).resolve().relative_to(root.resolve())) if Path(file_path).is_absolute() else str(Path(file_path))
     except ValueError:
         target_rel = str(Path(file_path))
+    before_known = {_module_for_path(path) for path in files}
+    after_known = before_known | {_module_for_path(target_rel)}
+    before_graph: dict[str, set[str]] = {}
+    after_graph: dict[str, set[str]] = {}
     for rel in files:
-        source = after_src if rel == target_rel else (root / rel).read_text(encoding="utf-8", errors="replace")
-        graph[_module_for_path(rel)] = _local_imports(source, rel, known)
-    start = _module_for_path(target_rel)
-    visiting: list[str] = []
-    visited: set[str] = set()
-    def visit(module: str) -> list[str] | None:
-        if module in visiting:
-            return visiting[visiting.index(module):] + [module]
-        if module in visited:
-            return None
-        visiting.append(module)
-        for child in graph.get(module, set()):
-            cycle = visit(child)
-            if cycle:
-                return cycle
-        visiting.pop()
-        visited.add(module)
+        source = (root / rel).read_text(encoding="utf-8", errors="replace")
+        module = _module_for_path(rel)
+        before_graph[module] = _local_imports(source, rel, before_known)
+        after_graph[module] = _local_imports(
+            after_src if rel == target_rel else source, rel, after_known
+        )
+    if target_rel not in files:
+        after_graph[_module_for_path(target_rel)] = _local_imports(
+            after_src, target_rel, after_known
+        )
+
+    def path_to(start: str, destination: str) -> list[str] | None:
+        paths = [[start]]
+        visited = {start}
+        for path in paths:
+            module = path[-1]
+            if module == destination:
+                return path
+            for child in sorted(after_graph.get(module, set())):
+                if child not in visited:
+                    visited.add(child)
+                    paths.append([*path, child])
         return None
-    return visit(start)
+
+    # An unchanged edge cannot create a cycle; check only edges added by the
+    # proposed write, including imports resolved when a new module appears.
+    for module in sorted(after_graph):
+        for child in sorted(after_graph[module] - before_graph.get(module, set())):
+            path = path_to(child, module)
+            if path:
+                return [module, *path]
+    return None
 
 
 # ---------------------------------------------------------------------------

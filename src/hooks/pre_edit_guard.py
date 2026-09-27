@@ -1045,9 +1045,15 @@ def main() -> None:
             report = _post_score(file_path, before_src, after_src)
         except SidecarUnavailable as exc:
             reason_str = str(exc)
-            # Phase 0: real symbolic fallback on hard cap. Do not silently
-            # fail-open; run the symbolic gate chain and honor RC_MODE.
-            if reason_str.startswith("hard_cap_exceeded"):
+            # Keep deterministic policy active when neural scoring is down.
+            # Explicit fail-closed still blocks non-timeout outages outright.
+            shadow_active = _shadow_mode.is_active() if _shadow_mode else False
+            if reason_str.startswith("hard_cap_exceeded") or not _fail_closed() or shadow_active:
+                if not reason_str.startswith("hard_cap_exceeded"):
+                    sys.stderr.write(
+                        f"[hybrid-reasoner] sidecar unavailable ({exc}); "
+                        "symbolic fallback engaged.\n"
+                    )
                 fb = _apply_mode(
                     _symbolic_fallback(
                         file_path=file_path,
@@ -1121,7 +1127,7 @@ def main() -> None:
                 continue
             # SHADOW=1 honored at sidecar-unavailable too. Calibration window
             # must not produce hard-blocks on infra flake. (Reviewer #7.)
-            if _fail_closed() and not (_shadow_mode.is_active() if _shadow_mode else False):
+            if _fail_closed() and not shadow_active:
                 _emit_audit(
                     tool_name=tool_name,
                     decision="blocked",

@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 ARMS = ("vanilla", "laya", "rc", "laya_rc")
-CASES = Path(__file__).with_name("cases.json")
+DEFAULT_CASES = Path(__file__).with_name("cases.json")
 F2P_TESTS = {
     96: ["tests/test_extensions/test_ext_doctest.py"],
     99: ["tests/test_command_line.py"],
@@ -35,6 +35,7 @@ def git(source: Path, *args: str) -> bytes:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rollout", type=Path, required=True)
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--python", type=Path, required=True)
@@ -43,10 +44,11 @@ def main() -> int:
     rollout, out, source = args.rollout.resolve(), args.out.resolve(), args.source.resolve()
     if out.exists() or args.timeout < 1:
         parser.error("output must be new and timeout positive")
-    frozen = json.loads(CASES.read_text())
+    cases_data = args.cases.read_bytes()
+    frozen = json.loads(cases_data)
     manifest_bytes = (rollout / "run_manifest.json").read_bytes()
     manifest = json.loads(manifest_bytes)
-    if (manifest["cases_sha256"] != sha256(CASES.read_bytes())
+    if (manifest["cases_sha256"] != sha256(cases_data)
             or manifest["dataset_revision"] != frozen["dataset_revision"]):
         parser.error("rollout does not match pinned cases")
     expected = {(case["instance_id"], arm) for case in frozen["cases"] for arm in ARMS}
@@ -61,7 +63,9 @@ def main() -> int:
     }
     try:
         for case in frozen["cases"]:
-            tests = F2P_TESTS[case["row_index"]]
+            tests = case.get("fail_to_pass_files", F2P_TESTS.get(case["row_index"]))
+            if not tests:
+                raise ValueError("case has no pinned FAIL_TO_PASS test files")
             for arm in ARMS:
                 row = results[(case["instance_id"], arm)]
                 patch = (rollout / case["instance_id"] / arm / "final.patch").read_bytes()
@@ -87,7 +91,8 @@ def main() -> int:
                 else:
                     for relative in tests:
                         safe = PurePosixPath(relative.removeprefix("/testbed/"))
-                        if safe.is_absolute() or ".." in safe.parts or not str(safe).startswith("tests/"):
+                        if (safe.is_absolute() or ".." in safe.parts
+                                or not str(safe).startswith(("tests/", "testing/"))):
                             raise ValueError("unsafe test path")
                         target = workspace / str(safe)
                         target.parent.mkdir(parents=True, exist_ok=True)

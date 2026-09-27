@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 from src.autonomous import LayaAdapter, TaskSpec, _qualification, _sidecar_healthy
 
 ROOT = Path(__file__).resolve().parents[2]
-CASES = Path(__file__).with_name("cases.json")
+DEFAULT_CASES = Path(__file__).with_name("cases.json")
 HOOK = ROOT / "src" / "hooks" / "pre_edit_guard.py"
 MODEL = "claude-sonnet-4-5"
 ARMS = ("vanilla", "laya", "rc", "laya_rc")
@@ -73,6 +73,8 @@ def task_row(case: dict, revision: str) -> dict:
             raise ValueError(f"dataset {key} drifted")
     if digest(row["problem_statement"].encode()) != case["problem_sha256"]:
         raise ValueError("problem statement drifted")
+    if "fail_to_pass_files" in case and row["FAIL_TO_PASS"] != case["fail_to_pass_files"]:
+        raise ValueError("FAIL_TO_PASS paths drifted")
     return {
         "problem_statement": row["problem_statement"],
         "mask_patch": row["patch"],
@@ -176,8 +178,10 @@ def run_arm(
         "Use the available file tools. Finish with your implementation."
     )
     if arm in ("laya", "laya_rc"):
+        source_paths = [line.split(" b/", 1)[1] for line in row["mask_patch"].splitlines()
+                        if line.startswith("diff --git a/") and " b/" in line]
         task = TaskSpec.from_dict({
-            "prompt": row["problem_statement"], "allowed_paths": ["repository.py"],
+            "prompt": row["problem_statement"], "allowed_paths": source_paths,
             "checks": [["true"]], "triage_brief": row["problem_statement"][:1800],
         })
         decision = LayaAdapter().decide(task)
@@ -238,6 +242,7 @@ def run_arm(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True, help="local clone of task repo")
+    parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--out", type=Path, required=True, help="new directory outside this repo")
     parser.add_argument("--qualification", type=Path, required=True)
     parser.add_argument("--max-budget-usd", type=float, default=1.0)
@@ -257,7 +262,7 @@ def main() -> int:
         health = json.load(response)
     if health.get("status") != "ok" or "english" not in health.get("loaded", []):
         parser.error("Laya English checkpoint is not loaded")
-    cases_data = CASES.read_bytes()
+    cases_data = args.cases.read_bytes()
     frozen = json.loads(cases_data)
     rows = [(case, task_row(case, frozen["dataset_revision"])) for case in frozen["cases"]]
     if any(git(source, "rev-parse", case["base_commit"]) != case["base_commit"]
