@@ -271,7 +271,7 @@ def test_run_task_refuses_unqualified_host_before_cloning(tmp_path):
     report.write_text(json.dumps({"qualified": False, "manifest": {}}))
     with pytest.raises(ValueError, match="qualification"):
         run_task(_task(), repo, tmp_path / "run", report, LocalAdapter(),
-                 model="claude-sonnet-4-5")
+                 model="claude-sonnet-4-5", host_version=lambda: "test-host")
     assert not (tmp_path / "run").exists()
 
 
