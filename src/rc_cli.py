@@ -1701,7 +1701,7 @@ def _detect_install_target() -> dict:
     """
     out = {"mode": "unknown", "ref": None, "location": None, "version": None}
     try:
-        from importlib.metadata import version as _v, distribution as _d
+        from importlib.metadata import version as _v
         out["version"] = _v("reasoning-core")
     except Exception:
         pass
@@ -1753,7 +1753,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
 
     info = _detect_install_target()
     ref = args.ref or "main"
-    print(f"rc upgrade")
+    print("rc upgrade")
     print(f"  current_version = {info.get('version') or 'unknown'}")
     print(f"  current_mode    = {info['mode']}")
     print(f"  location        = {info['location'] or 'unknown'}")
@@ -1826,11 +1826,11 @@ def main(argv: list | None = None) -> int:
     autonomous.add_argument("--repo", default=".", help="source Git repository")
     autonomous.add_argument("--out", required=True, help="new output directory outside the source repo")
     autonomous.add_argument("--qualification", required=True, help="exact host/model qualification report")
-    autonomous.add_argument("--adapter", choices=["local", "jev", "laya"], default="local")
+    autonomous.add_argument("--adapter", choices=["local", "jev", "laya"], default="laya")
     autonomous.add_argument("--laya-url", default="http://127.0.0.1:8000",
                             help="loopback Laya server origin")
-    autonomous.add_argument("--laya-model", choices=["english", "multilingual", "typed-decisions"],
-                            default="english")
+    autonomous.add_argument("--laya-model", choices=["auto", "english", "multilingual", "typed-decisions"],
+                            default="auto")
     autonomous.add_argument("--model", default="claude-sonnet-4-5")
     autonomous.add_argument("--sidecar-url", default="http://127.0.0.1:8765")
     autonomous.add_argument("--max-attempts", type=int, default=3)

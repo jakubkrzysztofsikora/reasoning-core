@@ -23,7 +23,6 @@ import hashlib
 import json
 import os
 import queue
-import shutil
 import subprocess
 import sys
 import threading
@@ -34,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from eval.ten_x_pilot.observe import WorktreeObserver, write_jsonl
+from src.autonomous import _enforcement_digest
 
 ROOT = Path(__file__).resolve().parents[2]
 GUARD = ROOT / "src" / "hooks" / "pre_edit_guard.py"
@@ -401,6 +401,7 @@ def main(argv: list[str] | None = None) -> int:
     version = subprocess.run(["claude", "--version"], capture_output=True, text=True, check=False).stdout.strip()
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "enforcement_sha256": _enforcement_digest(),
         "model": args.model,
         "claude_version": version,
         "permission_mode": args.permission_mode,

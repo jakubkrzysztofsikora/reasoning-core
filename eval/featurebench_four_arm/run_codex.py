@@ -77,7 +77,7 @@ def run_arm(case: dict, row: dict, arm: str, source: Path, out: Path,
                                    "allowed_paths": source_paths, "checks": [["true"]],
                                    "triage_brief": row["problem_statement"][:1800]})
         for attempt in range(3):
-            decision = LayaAdapter().decide(task)
+            decision = LayaAdapter(model="english").decide(task)
             if decision.status == "ok":
                 break
             if attempt < 2:

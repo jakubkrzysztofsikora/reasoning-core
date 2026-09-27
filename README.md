@@ -57,6 +57,15 @@ there is no telemetry or cloud relay. The required default SSM checkpoint is a
 one-time Hugging Face download; optional generative critics can use a configured
 remote endpoint.
 
+For bounded autonomous coding, `rc autonomous` now tries a local Laya decision
+server by default. Laya routes the task brief to an English or multilingual
+checkpoint and supplies an **advisory** task hint; deterministic policy and
+the qualified write hook retain authority. The server is optional: if it is
+unavailable, the agent receives no intake hint. This default applies to
+`rc autonomous`, not to ordinary `rc init` hooks. See
+[`docs/AUTONOMOUS_HARNESS.md`](docs/AUTONOMOUS_HARNESS.md) and
+[`docs/LAYA_LOCAL_EVAL.md`](docs/LAYA_LOCAL_EVAL.md).
+
 **Evidence status:** A preregistered confirmatory evaluation found that the
 full harness reduced observer-detected invalid policy writes on disposable
 worktrees by more than 10x compared with vanilla Claude Code (rate-ratio upper
@@ -242,6 +251,7 @@ rc real-session-eval        # correlate real sessions with labels and outcomes
 rc episodes                 # derived edit episodes (checks, repairs, final status)
 rc reasoning-efficiency     # composite north-star metric from the audit log
 rc audit-history            # mine heuristic commit-follow-up labels for review
+rc autonomous               # bounded coding runner; local Laya intake by default
 ```
 
 ## Use it from code

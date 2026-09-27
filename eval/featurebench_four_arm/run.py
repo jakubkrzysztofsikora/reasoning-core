@@ -188,7 +188,7 @@ def run_arm(
             "prompt": row["problem_statement"], "allowed_paths": source_paths,
             "checks": [["true"]], "triage_brief": row["problem_statement"][:1800],
         })
-        decision = LayaAdapter().decide(task)
+        decision = LayaAdapter(model="english").decide(task)
         if decision.status != "ok":
             raise RuntimeError(f"Laya decision unavailable: {decision.status}")
         prompt += "\n\n" + decision.hint()

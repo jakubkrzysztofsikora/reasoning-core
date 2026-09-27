@@ -5,8 +5,12 @@ import hashlib
 import json
 import os
 import re
+import selectors
+import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -26,7 +30,8 @@ def _path(value: str, label: str) -> str:
     if not isinstance(value, str) or not _SAFE_PATH.fullmatch(value):
         raise ValueError(f"{label} must contain safe repository-relative paths")
     path = PurePosixPath(value)
-    if not path.parts or value.startswith("/") or any(part in (".", "..") for part in path.parts):
+    if (not path.parts or value.startswith("/") or str(path) != value
+            or any(part in (".", "..") for part in value.split("/"))):
         raise ValueError(f"{label} must contain safe repository-relative paths")
     if path.parts[0] in (".git", ".reasoning-core") or value == "PLAN.md":
         raise ValueError(f"{label} cannot include harness policy files")
@@ -113,7 +118,7 @@ class LocalAdapter:
 class JevAdapter:
     def __init__(self, api_key: str | None, *, transport: Callable[..., Any] | None = None,
                  timeout: float = 2.0, min_confidence: float = 0.70,
-                 endpoint: str = _TYPESAFE_URL, model: str = "jev-latest",
+                 endpoint: str = _TYPESAFE_URL, model: str | None = "jev-latest",
                  source: str = "jev", confidence_field: str = "confidence",
                  require_api_key: bool = True):
         self.api_key = api_key
@@ -130,7 +135,6 @@ class JevAdapter:
         if (self.require_api_key and not self.api_key) or not task.triage_brief:
             return Decision("uncertain", self.source, "unavailable")
         payload = {
-            "model": self.model,
             "state": {
                 "task": task.triage_brief,
                 "allowed_paths": list(task.allowed_paths),
@@ -151,6 +155,8 @@ class JevAdapter:
                 },
             },
         }
+        if self.model is not None:
+            payload["model"] = self.model
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -189,28 +195,29 @@ class LayaAdapter(JevAdapter):
     """Local Laya typed decisions; no Jev confidence threshold is reused."""
 
     def __init__(self, base_url: str = "http://127.0.0.1:8000", *,
-                 model: str = "english", transport: Callable[..., Any] | None = None,
+                 model: str = "auto", transport: Callable[..., Any] | None = None,
                  timeout: float = 10.0):
         parsed = urlparse(base_url)
         if (parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1")
                 or parsed.username or parsed.password or parsed.path not in ("", "/")
                 or parsed.query or parsed.fragment or not parsed.port):
             raise ValueError("Laya endpoint must be a loopback HTTP origin with a port")
-        if model not in ("english", "multilingual", "typed-decisions"):
+        if model not in ("auto", "english", "multilingual", "typed-decisions"):
             raise ValueError("unsupported Laya checkpoint")
         super().__init__(
             None, transport=transport, timeout=timeout, min_confidence=0.0,
-            endpoint=base_url.rstrip("/") + "/v1/systemone", model=model,
+            endpoint=base_url.rstrip("/") + "/v1/systemone",
+            model=None if model == "auto" else model,
             source="laya", confidence_field="answer_confidence",
             require_api_key=False,
         )
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, strip: bool = True) -> str:
     proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
     if proc.returncode:
         raise RuntimeError(f"git {args[0]} failed: {proc.stderr.strip()[:300]}")
-    return proc.stdout.strip()
+    return proc.stdout.strip() if strip else proc.stdout
 
 
 def _host_version() -> str:
@@ -218,6 +225,14 @@ def _host_version() -> str:
     if proc.returncode:
         raise ValueError("Claude Code is unavailable")
     return proc.stdout.strip()
+
+
+def _enforcement_digest() -> str:
+    digest = hashlib.sha256()
+    for path in sorted((_ROOT / "src").rglob("*.py")):
+        digest.update(str(path.relative_to(_ROOT)).encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 def _sidecar_healthy(url: str) -> bool:
@@ -239,6 +254,7 @@ def _qualification(path: Path, model: str, host_version: str) -> dict[str, Any]:
     if (report.get("qualified") is not True
             or manifest.get("model") != model
             or manifest.get("claude_version") != host_version
+            or manifest.get("enforcement_sha256") != _enforcement_digest()
             or manifest.get("permission_mode") != "bypassPermissions"
             or not {"Edit", "Write"}.issubset(set(report.get("qualified_tools", [])))
             or "MultiEdit" not in set(report.get("unavailable_tools", []))):
@@ -275,6 +291,11 @@ def _unsafe_allowed_paths(workspace: Path, task: TaskSpec) -> list[str]:
 
 def _write_policy(workspace: Path, task: TaskSpec) -> None:
     config = workspace / ".reasoning-core"
+    plan = workspace / "PLAN.md"
+    for destination in (config, config / "contract.yaml", plan):
+        if (destination.is_symlink()
+                or not destination.resolve().is_relative_to(workspace.resolve())):
+            raise ValueError(f"policy destination escapes workspace: {destination.name}")
     if (config / "contract.yaml").exists():
         raise ValueError("existing contract.yaml needs explicit policy merging")
     for path in task.allowed_paths:
@@ -283,11 +304,10 @@ def _write_policy(workspace: Path, task: TaskSpec) -> None:
             raise ValueError(f"allowed_paths escapes workspace: {path}")
     config.mkdir(exist_ok=True)
     contract = ["version: v1", "allowed_paths:"]
-    contract += [f"  - {path}" for path in task.allowed_paths]
+    contract += [f"  - {json.dumps(path)}" for path in task.allowed_paths]
     contract += ["forbidden_paths:"]
-    contract += [f"  - {path}" for path in task.protected_paths]
+    contract += [f"  - {json.dumps(path)}" for path in task.protected_paths]
     (config / "contract.yaml").write_text("\n".join(contract) + "\n", encoding="utf-8")
-    plan = workspace / "PLAN.md"
     existing = plan.read_text(encoding="utf-8") if plan.exists() else ""
     plan.write_text(existing + "\n# Autonomous task scope\n\n"
                     + "\n".join(f"- `{path}`" for path in task.allowed_paths) + "\n",
@@ -312,6 +332,89 @@ def _agent_env(workspace: Path, audit_root: Path, sidecar_url: str) -> dict[str,
     return env
 
 
+def _run_bounded(command: list[str], *, cwd: Path, env: dict[str, str],
+                 timeout: int) -> tuple[int, bytes, bytes]:
+    def kill_descendants(pid: int) -> None:
+        try:
+            listing = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True,
+                                     text=True, timeout=2, check=False).stdout
+            children: dict[int, list[int]] = {}
+            for line in listing.splitlines():
+                child, parent = map(int, line.split()[:2])
+                children.setdefault(parent, []).append(child)
+            found: list[int] = []
+            pending = list(children.get(pid, []))
+            while pending:
+                child = pending.pop()
+                found.append(child)
+                pending.extend(children.get(child, []))
+            for child in reversed(found):
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+
+    proc = subprocess.Popen(
+        command, cwd=cwd, env=env, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, start_new_session=True,
+    )
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    deadline = time.monotonic() + timeout
+    exited_at = None
+    timed_out = output_limited = False
+    with selectors.DefaultSelector() as selector:
+        for name, stream in (("stdout", proc.stdout), ("stderr", proc.stderr)):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, name)
+        try:
+            while True:
+                now = time.monotonic()
+                if proc.poll() is not None and exited_at is None:
+                    exited_at = now
+                if proc.poll() is not None and not selector.get_map():
+                    break
+                if now >= deadline and proc.poll() is None:
+                    timed_out = True
+                    break
+                if exited_at is not None and now - exited_at > 0.25:
+                    break
+                for key, _ in selector.select(timeout=0.05):
+                    chunk = os.read(key.fileobj.fileno(), 65536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    remaining = 1_000_000 - sum(map(len, output.values()))
+                    output[key.data].extend(chunk[:remaining])
+                    if len(chunk) > remaining or remaining == 0:
+                        output_limited = True
+                        break
+                if output_limited:
+                    break
+            if proc.poll() is None and not timed_out and not output_limited:
+                try:
+                    proc.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+            if timed_out or output_limited:
+                kill_descendants(proc.pid)
+        finally:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            for stream in (proc.stdout, proc.stderr):
+                stream.close()
+            if proc.poll() is None:
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+    returncode = 124 if timed_out else 126 if output_limited else proc.returncode
+    return returncode, bytes(output["stdout"]), bytes(output["stderr"])
+
+
 def _invoke_claude(workspace: Path, prompt: str, settings: Path, env: dict[str, str],
                    budget: float, timeout: int, model: str) -> dict[str, Any]:
     command = [
@@ -321,16 +424,16 @@ def _invoke_claude(workspace: Path, prompt: str, settings: Path, env: dict[str, 
         "--disallowed-tools", _DISALLOWED, "--max-budget-usd", str(budget), prompt,
     ]
     try:
-        proc = subprocess.run(command, cwd=workspace, env=env, capture_output=True,
-                              text=True, timeout=timeout, check=False)
+        returncode, stdout, _ = _run_bounded(command, cwd=workspace, env=env,
+                                              timeout=timeout)
         try:
-            result = json.loads(proc.stdout)
+            result = json.loads(stdout.decode("utf-8", errors="replace"))
         except ValueError:
             result = {}
-        return {"returncode": proc.returncode,
+        return {"returncode": returncode,
                 "cost_usd": result.get("total_cost_usd") if isinstance(result, dict) else None}
-    except subprocess.TimeoutExpired:
-        return {"returncode": 124, "cost_usd": None}
+    except OSError:
+        return {"returncode": 125, "cost_usd": None}
 
 
 
@@ -362,25 +465,102 @@ def _gated_final_paths(workspace: Path, audit_root: Path, changed: list[str]) ->
             missing.append(relative)
     return missing
 
+def _stage_check_workspace(workspace: Path, scratch: Path) -> None:
+    root = workspace.resolve()
+    excluded = {".git", ".reasoning-core", "PLAN.md"}
+    count = size = 0
+    for parent, directories, files in os.walk(root, followlinks=False):
+        directories[:] = [name for name in directories if name not in excluded]
+        for name in [*directories, *files]:
+            if name in excluded:
+                continue
+            entry = Path(parent) / name
+            if entry.is_symlink():
+                try:
+                    target = entry.resolve(strict=True)
+                except (OSError, RuntimeError) as exc:
+                    raise ValueError("unsafe check input symlink") from exc
+                if (not target.is_relative_to(root)
+                        or target.relative_to(root).parts[:1] in
+                        ((".git",), (".reasoning-core",))
+                        or (target.is_dir() and entry.parent.is_relative_to(target))):
+                    raise ValueError("unsafe check input symlink")
+            elif entry.is_file():
+                count += 1
+                size += entry.stat().st_size
+                if count > 5000 or size > 100_000_000:
+                    raise ValueError("check input exceeds staging limit")
+    shutil.copytree(workspace, scratch, dirs_exist_ok=True, symlinks=True,
+                    ignore=shutil.ignore_patterns(*excluded))
+
+
+def _check_command(command: tuple[str, ...], workspace: Path, timeout: int = 60) -> dict[str, Any]:
+    mac_sandbox = sys.platform == "darwin" and shutil.which("sandbox-exec")
+    if not mac_sandbox:
+        return {"command": list(command), "returncode": 125,
+                "diagnostic": "check sandbox unavailable on this host"}
+    with tempfile.TemporaryDirectory(prefix="rc-check-") as temp:
+        scratch = Path(temp).resolve()
+        try:
+            _stage_check_workspace(workspace, scratch)
+        except (OSError, ValueError) as exc:
+            return {"command": list(command), "returncode": 125,
+                    "diagnostic": type(exc).__name__}
+        tmp = scratch / ".rc-tmp"
+        tmp.mkdir()
+        quoted = str(scratch).replace("\\", "\\\\").replace('"', '\\"')
+        profile = ("(version 1)(allow default)(deny network*)(deny signal)"
+                   "(deny process-fork)"
+                   f"(deny file-write* (require-not (subpath \"{quoted}\")))")
+        sandboxed = ["sandbox-exec", "-p", profile, *command]
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": str(scratch),
+               "TMPDIR": str(tmp), "LANG": os.environ.get("LANG", "C.UTF-8"),
+               "PYTHONDONTWRITEBYTECODE": "1"}
+        try:
+            returncode, stdout, stderr = _run_bounded(
+                sandboxed, cwd=scratch, env=env, timeout=timeout,
+            )
+            # Check output is local evidence, not a channel back to the coding model.
+            return {"command": list(command), "returncode": returncode,
+                    "diagnostic": f"exit {returncode}",
+                    "output_sha256": hashlib.sha256(stdout + stderr).hexdigest()}
+        except OSError as exc:
+            return {"command": list(command), "returncode": 125,
+                    "diagnostic": type(exc).__name__}
+
+
 def _checks(workspace: Path, task: TaskSpec) -> list[dict[str, Any]]:
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(workspace),
-           "LANG": os.environ.get("LANG", "C.UTF-8"), "PYTHONDONTWRITEBYTECODE": "1"}
     results = []
     for command in task.checks:
-        try:
-            proc = subprocess.run(command, cwd=workspace, env=env, capture_output=True,
-                                  text=True, timeout=60, check=False)
-            results.append({"command": list(command), "returncode": proc.returncode,
-                            "diagnostic": (proc.stdout + proc.stderr)[-1000:]})
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            results.append({"command": list(command), "returncode": 124,
-                            "diagnostic": type(exc).__name__})
+        results.append(_check_command(command, workspace))
     return results
+
+
+def _patch_reproduces_final(workspace: Path, patch: str, changed: list[str]) -> bool:
+    with tempfile.TemporaryDirectory(prefix="rc-patch-verify-") as temp:
+        trial = Path(temp)
+        for relative in changed:
+            original = subprocess.run(
+                ["git", "show", f"HEAD:{relative}"], cwd=workspace,
+                capture_output=True, check=False,
+            )
+            if original.returncode == 0:
+                target = trial / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(original.stdout)
+        applied = subprocess.run(["git", "apply", "-"], cwd=trial,
+                                 input=patch.encode(), capture_output=True)
+        if applied.returncode:
+            return False
+        return all((trial / path).is_file()
+                   and (trial / path).read_bytes() == (workspace / path).read_bytes()
+                   for path in changed)
 
 
 def run_task(
     task: TaskSpec, repo: Path, out: Path, qualification: Path, adapter: Any,
     *, model: str, invoke: Callable[..., dict[str, Any]] | None = None,
+    check_runner: Callable[[Path, TaskSpec], list[dict[str, Any]]] | None = None,
     host_version: Callable[[], str] = _host_version,
     sidecar_health: Callable[[], bool] | None = None,
     sidecar_url: str = "http://127.0.0.1:8765",
@@ -417,13 +597,14 @@ def run_task(
     env = _agent_env(workspace, out / "audit", sidecar_url)
     call = invoke or (lambda ws, prompt, settings, env, budget, timeout:
                       _invoke_claude(ws, prompt, settings, env, budget, timeout, model))
-    prompt = (
+    base_prompt = (
         "Read each existing target file before editing. Work only inside the allowed "
         "paths. Do not edit tests to evade a failing check. Stop after completing the "
         "task.\n\nTask: " + task.prompt
         + "\nAllowed paths: " + ", ".join(task.allowed_paths)
         + ("\n" + decision.hint() if decision.hint() else "")
     )
+    prompt = base_prompt
     attempts: list[dict[str, Any]] = []
     status = "failed"
     changed: list[str] = []
@@ -435,7 +616,7 @@ def run_task(
             attempts.append({"agent": agent_result, "out_of_scope": invalid})
             status = "policy_violation"
             break
-        results = _checks(workspace, task)
+        results = (check_runner or _checks)(workspace, task)
         attempts.append({"agent": agent_result, "checks": results})
         changed = _changed_paths(workspace)
         if set(changed) - set(task.allowed_paths) or _unsafe_allowed_paths(workspace, task):
@@ -450,12 +631,15 @@ def run_task(
                 break
             status = "completed"
             break
-        prompt = ("The last attempt did not pass. Fix only allowed paths. "
-                  "Diagnostics: " + json.dumps(results)[-1500:])
+        prompt = (base_prompt + "\nThe last attempt did not pass. Fix only allowed "
+                  "paths. Check results: " + json.dumps(results)[-1500:])
     if status == "completed":
         _git(workspace, "add", "--", *task.allowed_paths)
-        patch = _git(workspace, "diff", "--cached", "--binary", "HEAD")
-        (out / "final.patch").write_text(patch + "\n", encoding="utf-8")
+        patch = _git(workspace, "diff", "--cached", "--binary", "HEAD", strip=False)
+        if not _patch_reproduces_final(workspace, patch, changed):
+            status = "patch_verification_failed"
+        else:
+            (out / "final.patch").write_text(patch, encoding="utf-8")
     report = {
         "status": status, "base_sha": base_sha, "changed_paths": changed,
         "decision": decision.__dict__, "qualification": qualification_pin,

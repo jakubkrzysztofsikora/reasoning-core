@@ -1,6 +1,6 @@
 # Autonomous coding harness
 
-The first runnable integration of Jev and reasoning-core is `rc autonomous`.
+The bounded intake and reasoning-core integration is `rc autonomous`.
 It takes a bounded task, makes one advisory intake decision, and runs Claude
 Code unattended in a separate clone. The only enabled mutation tools are
 the exact `Edit`/`Write` lane in a matching host-enforcement qualification.
@@ -21,22 +21,30 @@ Create a JSON file outside the source repository:
 }
 ```
 
-`triage_brief` is the only task text sent to hosted Jev. Write it as a
-redacted summary. Without it, or without `TYPESAFE_API_KEY`, Jev returns an
-uncertain advisory decision and the coding model still receives the full task.
-The rules adapter uses no decision model. For a local typed decision model,
-use Laya as described in [LAYA_LOCAL_EVAL.md](LAYA_LOCAL_EVAL.md).
+`triage_brief` is the only task text sent to the decision adapter. Write it as
+a redacted summary. The default adapter is local Laya with automatic language
+routing; it also receives the allowed path names. If the server is unavailable
+or the brief is empty, the decision is uncertain and the coding model still
+receives the full task. `--adapter local` uses simple rules without a model.
+`--adapter jev` explicitly selects the hosted TypeSafe API and requires its
+key. See [LAYA_LOCAL_EVAL.md](LAYA_LOCAL_EVAL.md) for local setup and evidence.
 
-Each check is an argument array, never a shell command. The checks run on the
-host in the separate clone, with a reduced environment. Supply checks you
-trust. This version does not put the agent or tests in an OS container.
+Each check is an argument array, never a shell command. Checks run in a
+disposable copy of the clone. macOS uses `sandbox-exec` to deny network,
+signals, child processes, and writes outside that copy. Check output is bounded
+and captured as bytes. Linux currently fails closed: a root bind with `bwrap`
+exposed host Unix control sockets, and a narrower backend is not qualified.
+Without a supported sandbox, the check fails closed. The sandbox still permits reads of
+host dependencies, so do not use this runner for hostile code that must not
+read host files. Check output is hashed locally and is not sent to the coding
+model on retry.
 
 ## Qualification and run
 
 The qualification must match the exact installed Claude Code version, model,
-permission mode, and offered mutation tools. A result for an older version
-cannot authorize the current host. Run the existing qualification suite after
-a host upgrade:
+permission mode, offered mutation tools, and enforcement source digest. A
+result for an older host or guard build cannot authorize the current host.
+Run the qualification suite after a host or enforcement-code upgrade:
 
 ```bash
 .venv/bin/python -m eval.host_enforcement_qualification.run \
@@ -52,15 +60,16 @@ rc autonomous \
   --repo /path/to/source-repo \
   --task /path/to/task.json \
   --qualification /path/to/qualification/report.json \
-  --adapter jev \
   --model claude-sonnet-4-5 \
   --max-budget-usd 1 \
   --max-attempts 3 \
   --out ~/.local/share/reasoning-core/autonomous/task-001
 ```
 
-Use `--adapter local` to run entirely without Jev. A Jev response is
-advisory task data. It cannot grant path access or relax a deterministic deny.
+Start the loopback Laya server first to get the default advisory hint. The
+server is optional: without it, the run proceeds with an uncertain hint. Use
+`--adapter local` for deterministic intake or `--adapter jev` for hosted Jev.
+No intake response can grant path access or relax a deterministic deny.
 The run refuses an unqualified host, an unhealthy sidecar, a preexisting output
 directory, an existing contract that it cannot merge safely, or an output
 directory inside the source repo.
@@ -68,9 +77,11 @@ directory inside the source repo.
 The harness clones the committed source revision; uncommitted source changes
 are not copied. It writes task policy only in the clone. It allows at most two
 repair turns after the first attempt and allocates the declared provider budget
-across attempts. It stops on an out-of-scope final change, a symlink escape,
+across attempts. Every repair turn repeats the original task and scope. It
+stops on an out-of-scope final change, a symlink escape,
 failed checks, a final file whose bytes lack a matching allowed gate audit
-receipt, or exhaustion. Successful runs produce `final.patch`;
+receipt, an exported patch that fails byte-for-byte verification, or exhaustion.
+Successful runs produce `final.patch`;
 all runs retain `workspace/` and `report.json` for review. No source-branch
 merge or deployment is performed.
 
@@ -78,12 +89,14 @@ merge or deployment is performed.
 
 - Only the qualified Claude Code `Edit`/`Write` lane is enabled. Bash,
   delegation, notebook and worktree mutation tools are disabled.
-- A separate clone limits where ordinary file-tool edits land, but it is not
-  OS-level filesystem or network containment. Trusted acceptance commands can
-  execute arbitrary code on the host.
+- The agent's separate clone and qualified Edit/Write lane are not an OS
+  container. The macOS check sandbox denies external writes and network, but
+  it does not provide full read isolation from host files. Checks that need
+  subprocesses will fail under the current macOS profile; Linux check
+  execution is unavailable until a socket-isolating backend is qualified.
 - The current runner checks final paths and tests. It is not the independent
   transient-write observer used by the 10x evaluation, so its report is not a
   new containment, speed, or quality claim.
-- Jev's confidence floor is provisional. The proposed four-arm, frozen-task
-  pilot in [JEV_AUTONOMOUS_HARNESS_DESIGN.md](JEV_AUTONOMOUS_HARNESS_DESIGN.md)
-  is still required before claiming combined value.
+- The one-task Laya + reasoning-core FeatureBench pilot is exploratory. See
+  [the four-arm report](../eval/featurebench_four_arm/README.md); it does not
+  establish a general quality, speed, or causal benefit.

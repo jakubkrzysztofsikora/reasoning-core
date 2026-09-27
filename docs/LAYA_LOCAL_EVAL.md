@@ -1,25 +1,34 @@
 # Local Laya intake and exploratory evaluation
 
 Laya 0.3.20 is an open-weight decision model with a Jev-compatible
-`POST /v1/systemone` route. `rc autonomous --adapter laya` sends only
+`POST /v1/systemone` route. `rc autonomous` uses it by default and sends only
 `triage_brief` and allowed path names to a loopback server. No TypeSafe key
 is needed. Laya gives an advisory task kind; reasoning-core's qualified
 Edit/Write hook and deterministic checks continue to control edits.
+
+The default checkpoint mode is `auto`: Laya's server Router chooses English
+or multilingual from the request. The Laya maintainers recommend this over
+pinning English because the English checkpoint can be confidently wrong on
+non-Latin scripts. The default does not require Laya to be installed; an
+unavailable server yields an uncertain hint and the coding agent continues.
 
 ## Start and run
 
 ```bash
 uv pip install --python .venv/bin/python 'laya[serve]==0.3.20'
 LAYA_HOST=127.0.0.1 LAYA_PORT=8000 LAYA_DEVICE=mps \
-  LAYA_MODELS=english LAYA_PRELOAD=1 .venv/bin/laya-serve
+  LAYA_MODELS=english,multilingual LAYA_PRELOAD=1 .venv/bin/laya-serve
 curl -fsS http://127.0.0.1:8000/health
-rc autonomous --adapter laya --laya-url http://127.0.0.1:8000 \
-  --laya-model english --repo /path/to/repo --task /path/to/task.json \
+rc autonomous --laya-url http://127.0.0.1:8000 \
+  --repo /path/to/repo --task /path/to/task.json \
   --qualification /path/to/current-host/report.json \
   --model claude-sonnet-4-5 --max-budget-usd 1 --out /path/to/new-run
 ```
 
-Use `LAYA_DEVICE=cpu` without MPS. First startup downloads the checkpoint.
+Use `LAYA_DEVICE=cpu` without MPS. First startup downloads the checkpoints;
+preloading both uses more memory. An English-only preload can still route
+other languages after a cold model load. Use `--laya-model english` only for a
+deliberately English-only workload, or `--adapter local` to skip Laya.
 The adapter accepts loopback HTTP only. A Laya outage or malformed answer
 returns an uncertain hint; the coding agent still receives the full task.
 The Claude Code host/model qualification remains required.
@@ -47,12 +56,17 @@ the same patch. Claude Code reported $0.0644265 with Laya and $0.0647988
 with rules. Laya's first decision took 1,020 ms; later warm calls were faster.
 
 These synthetic labels and one live coding task cannot prove improved coding
-quality, cost, speed, or containment. The four-arm blinded pilot in
-[JEV_AUTONOMOUS_HARNESS_DESIGN.md](JEV_AUTONOMOUS_HARNESS_DESIGN.md)
-remains the evaluation gate for a combined-value claim.
+quality, cost, speed, or containment. A later one-task four-arm FeatureBench
+host pilot found the combined Laya + reasoning-core patch passed 16/16 task
+tests while the three other patches passed 15/16; see
+[the pilot report](../eval/featurebench_four_arm/README.md). That single
+result is exploratory and cannot establish a general benefit.
 
 Laya's `answer_confidence` is the chosen answer probability. Its `confidence`
 has different semantics from Jev's, so the adapter records the former and
 does not reuse Jev's 0.70 threshold. The checkpoint also warned about
 invalid temperature values in some calibration entries. Treat its
-probabilities as diagnostic until validated on a larger held-out corpus.
+probabilities as diagnostic until validated on a larger held-out corpus. The
+Laya model card recommends domain fine-tuning and calibration rather than
+relying on raw confidence for control decisions:
+[Laya model card](https://huggingface.co/convaiinnovations/laya).
