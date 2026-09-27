@@ -614,6 +614,17 @@ def _patch_reproduces_final(workspace: Path, patch: str, changed: list[str]) -> 
                    for path in changed)
 
 
+def _guard_allows(trial: Path, target: Path, content: str,
+                  env: dict[str, str]) -> bool:
+    payload = {"tool_name": "Write", "tool_input": {
+        "file_path": str(target), "content": content}, "cwd": str(trial)}
+    checked = subprocess.run(
+        [sys.executable, str(_HOOK)], cwd=trial, env=env,
+        input=json.dumps(payload), text=True, capture_output=True, timeout=90,
+    )
+    return checked.returncode == 0
+
+
 def _final_admission(source: Path, base_sha: str, workspace: Path, task: TaskSpec,
                      changed: list[str], audit_root: Path, sidecar_url: str,
                      check_results: list[dict[str, Any]] | None = None,
@@ -637,14 +648,7 @@ def _final_admission(source: Path, base_sha: str, workspace: Path, task: TaskSpe
                     return False
                 candidate_bytes = candidate.read_bytes()
                 content = candidate_bytes.decode("utf-8")
-                payload = {"tool_name": "Write", "tool_input": {
-                    "file_path": str(target), "content": content}, "cwd": str(trial)}
-                checked = subprocess.run(
-                    [sys.executable, str(_HOOK)], cwd=trial, env=env,
-                    input=json.dumps(payload), text=True, capture_output=True,
-                    timeout=90,
-                )
-                if checked.returncode:
+                if not _guard_allows(trial, target, content, env):
                     return False
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(candidate_bytes)

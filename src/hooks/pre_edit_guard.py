@@ -35,6 +35,9 @@ from typing import Any, Dict, List, Optional, Tuple
 _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _HOOKS_DIR not in sys.path:
     sys.path.insert(0, _HOOKS_DIR)
+_PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])
+if _PACKAGE_ROOT not in sys.path:
+    sys.path.insert(0, _PACKAGE_ROOT)
 
 import audit_log  # type: ignore  # noqa: E402
 import _guard_paths  # type: ignore  # noqa: E402

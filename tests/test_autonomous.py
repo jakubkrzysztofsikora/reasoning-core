@@ -345,6 +345,8 @@ def test_codex_final_admission_accepts_allowed_change(tmp_path, monkeypatch):
                 "S2_FAIL_CLOSED": "0"}
 
     monkeypatch.setattr(autonomous, "_agent_env", symbolic_env)
+    monkeypatch.setattr(autonomous, "_guard_allows", lambda *args: True)
+    monkeypatch.setattr(autonomous, "_gated_final_paths", lambda *args: [])
     def clean_check(project, task):
         assert (project / "main.py").read_text() == "def value():\n    return 2\n"
         return [{"returncode": 0}]
@@ -379,6 +381,8 @@ def test_codex_final_admission_checks_clean_patch_without_ignored_helper(tmp_pat
     original_env = autonomous._agent_env
     monkeypatch.setattr(autonomous, "_agent_env", lambda project, audit, url, host: {
         **original_env(project, audit, url, host), "S2_FAIL_CLOSED": "0"})
+    monkeypatch.setattr(autonomous, "_guard_allows", lambda *args: True)
+    monkeypatch.setattr(autonomous, "_gated_final_paths", lambda *args: [])
 
     def clean_check(project, task):
         assert not (project / "helper.py").exists()
