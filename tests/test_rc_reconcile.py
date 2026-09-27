@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,18 @@ def _write_event(audit_root: Path, file_path: str, decision: str = "allowed"):
     log.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
 
+def _write_session_start(audit_root: Path, project_dir: Path, when: datetime):
+    day_dir = audit_root / datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day_dir.mkdir(parents=True, exist_ok=True)
+    event = {
+        "ts": when.isoformat().replace("+00:00", "Z"),
+        "event_type": "session_started",
+        "session_id": "session",
+        "project_dir": str(project_dir.resolve()),
+    }
+    (day_dir / "session.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+
 def test_reconcile_flags_missing_gate_event(fresh_rc_cli, tmp_path, monkeypatch):
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
@@ -76,3 +89,27 @@ def test_reconcile_ignores_gated_files(fresh_rc_cli, tmp_path, monkeypatch):
 
     missing = fresh_rc_cli._reconcile_missing_gate_events(str(project_dir), str(audit_root), "session")
     assert missing == []
+
+
+def test_reconcile_ignores_files_predating_session(fresh_rc_cli, tmp_path):
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(project_dir), check=True, capture_output=True)
+    audit_root = tmp_path / "events"
+    (project_dir / "historical.py").write_text("old\n", encoding="utf-8")
+    _write_session_start(audit_root, project_dir, datetime.now(timezone.utc) + timedelta(seconds=5))
+
+    missing = fresh_rc_cli._reconcile_missing_gate_events(str(project_dir), str(audit_root), "session")
+    assert missing == []
+
+
+def test_reconcile_flags_write_after_session_start(fresh_rc_cli, tmp_path):
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(project_dir), check=True, capture_output=True)
+    audit_root = tmp_path / "events"
+    _write_session_start(audit_root, project_dir, datetime.now(timezone.utc) - timedelta(seconds=5))
+    (project_dir / "orphan.py").write_text("new\n", encoding="utf-8")
+
+    missing = fresh_rc_cli._reconcile_missing_gate_events(str(project_dir), str(audit_root), "session")
+    assert missing == ["orphan.py"]

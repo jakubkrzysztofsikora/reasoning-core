@@ -944,6 +944,7 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
     repo_root_path = Path(repo_root.stdout.strip()) if repo_root.returncode == 0 else project
     gated: set[str] = set()
     acknowledged: set[str] = set()
+    session_started_at: float | None = None
     root = Path(audit_root)
     today = _dt.datetime.now(_dt.timezone.utc).date()
     # Scan yesterday and today to handle sessions that span midnight.
@@ -969,6 +970,21 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
                             ev = json.loads(line)
                         except ValueError:
                             continue
+                        if (
+                            ev.get("session_id") == session_id
+                            and ev.get("event_type") == "session_started"
+                            and ev.get("project_dir") == str(repo_root_path.resolve())
+                        ):
+                            try:
+                                started = _dt.datetime.fromisoformat(
+                                    ev["ts"].replace("Z", "+00:00")
+                                ).timestamp()
+                                session_started_at = (
+                                    started if session_started_at is None
+                                    else min(session_started_at, started)
+                                )
+                            except (KeyError, TypeError, ValueError):
+                                pass
                         if (
                             ev.get("session_id") == session_id
                             and ev.get("decision") == "historical_acknowledgement"
@@ -1012,6 +1028,18 @@ def _reconcile_missing_gate_events(project_dir: str, audit_root: str, session_id
                                 gated.add(fp)
             except OSError:
                 continue
+    if session_started_at is not None:
+        current_session_changes: set[str] = set()
+        for fp in changed:
+            try:
+                stat = (repo_root_path / fp).lstat()
+            except FileNotFoundError:
+                # A deletion has no on-disk timestamp, so retain it for review.
+                current_session_changes.add(fp)
+                continue
+            if max(stat.st_mtime, stat.st_ctime) >= session_started_at:
+                current_session_changes.add(fp)
+        changed = current_session_changes
     return sorted(changed - gated - acknowledged)
 def cmd_reconcile(args: argparse.Namespace) -> int:
     """Post-session safety net: flag files written without a gate_edit call."""
