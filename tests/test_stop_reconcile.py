@@ -1,10 +1,12 @@
 """Tests for the Stop hook reconcile integration."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -126,3 +128,23 @@ def test_stop_hook_infrastructure_error_does_not_block(tmp_path):
     proc = _run_hook(project, {"RC_MODE": "copilot", "RC_SESSION_ID": "test"})
     # Non-git dir → reconcile returns empty → no MCP-skip → exit 0
     assert proc.returncode == 0, proc.stderr
+
+def test_stop_hook_uses_audit_session_id_for_reconcile(tmp_path):
+    project = tmp_path / "repo"
+    _init_repo(project)
+    (project / "historical.py").write_text("old\n", encoding="utf-8")
+    session_id = "anon-" + hashlib.sha1(f"{os.getpid()}|{project}".encode()).hexdigest()[:12]
+    day_dir = project / "_audit" / datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day_dir.mkdir(parents=True)
+    event = {
+        "ts": (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat(),
+        "event_type": "session_started",
+        "session_id": session_id,
+        "project_dir": str(project.resolve()),
+    }
+    (day_dir / f"{session_id}.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+    proc = _run_hook(project, {"RC_MODE": "copilot"}, payload={"session_id": "host-session"})
+    assert proc.returncode == 0, proc.stderr
+    outcomes = [event for event in _events(project) if event.get("event_type") == "session_outcome_recorded"]
+    assert outcomes and outcomes[-1]["reconcile_status"] == "clean"

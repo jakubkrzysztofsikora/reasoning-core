@@ -63,7 +63,7 @@ def _project_dir(payload: dict) -> str:
     )
 
 
-def _run_rc_reconcile(project_dir: str) -> tuple[int, str, str]:
+def _run_rc_reconcile(project_dir: str, session_id: str) -> tuple[int, str, str]:
     """Run `rc reconcile` and return (returncode, stdout, stderr).
 
     Reconcile findings go to stdout. The return code alone distinguishes
@@ -76,6 +76,8 @@ def _run_rc_reconcile(project_dir: str) -> tuple[int, str, str]:
     try:
         env = os.environ.copy()
         env["RC_RUN_DIR"] = project_dir
+        env["RC_SESSION_ID"] = session_id
+        env["CLAUDE_SESSION_ID"] = session_id
         env["PYTHONPATH"] = os.pathsep.join(
             part for part in (str(_PROJECT_ROOT), env.get("PYTHONPATH", "")) if part
         )
@@ -222,7 +224,7 @@ def main() -> None:
     project_dir = _project_dir(payload)
     rc_mode = _resolve_rc_mode(project_dir)
 
-    rc, stdout, stderr = _run_rc_reconcile(project_dir)
+    rc, stdout, stderr = _run_rc_reconcile(project_dir, audit_log._session_id())
     missing = _parse_reconcile_output(stdout)
     _emit_session_outcome(
         payload,
