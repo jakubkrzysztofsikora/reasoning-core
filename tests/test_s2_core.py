@@ -8,7 +8,6 @@ per-language wheels) are gated with `pytest.importorskip` so the suite
 degrades cleanly on partial environments. The Mamba load is paid exactly
 once via a session-scoped fixture.
 """
-
 from __future__ import annotations
 
 import importlib
@@ -20,6 +19,9 @@ from typing import Any
 import pytest
 
 pytestmark = pytest.mark.slow
+
+_AUTH_TOKEN = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
+_AUTH_HEADER = {"Authorization": f"Bearer {_AUTH_TOKEN}"}
 
 # Ensure repo root is importable.
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -218,6 +220,11 @@ def test_parse_source_syntax_error_other_languages(path, src, lang_id, s2_core_m
 
 @pytest.mark.parametrize("ext", [".rb", ".cpp", ".go", ".rs", ".java"])
 def test_unsupported_language_error(ext, grammars_module):
+    if ext == ".cpp":
+        try:
+            import tree_sitter_cpp  # noqa: F401
+        except ImportError:
+            pytest.skip("tree-sitter-cpp not installed on this runner")
     with pytest.raises(grammars_module.UnsupportedLanguageError) as ei:
         grammars_module.select_grammar(f"/tmp/file{ext}")
     assert ei.value.extension == ext
@@ -362,7 +369,7 @@ def http_client(s2_core_module, loaded_backbone):
 
 
 def test_http_health_ok(http_client):
-    resp = http_client.get("/health")
+    resp = http_client.get("/health", headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     assert body.get("status") == "ok"
@@ -375,7 +382,7 @@ def test_http_health_ok(http_client):
 def test_http_score_happy_path(http_client, s2_core_module):
     _require_grammar("python")
     payload = {"path": "/tmp/h.py", "before_src": PY_GOOD, "after_src": PY_GOOD}
-    resp = http_client.post("/score", json=payload)
+    resp = http_client.post("/score", json=payload, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     for key in (
@@ -392,7 +399,7 @@ def test_http_score_happy_path(http_client, s2_core_module):
 
 def test_http_score_unsupported_language(http_client):
     payload = {"path": "/tmp/foo.rb", "before_src": "x", "after_src": "y"}
-    resp = http_client.post("/score", json=payload)
+    resp = http_client.post("/score", json=payload, headers=_AUTH_HEADER)
     assert resp.status_code == 415
     body = resp.json()
     assert body.get("error") == "unsupported_language"
@@ -403,13 +410,13 @@ def test_http_score_malformed_json(http_client):
     resp = http_client.post(
         "/score",
         content=b"{not valid json",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **_AUTH_HEADER},
     )
     assert resp.status_code == 400
 
 
 def test_http_score_missing_path(http_client):
-    resp = http_client.post("/score", json={"before_src": "", "after_src": ""})
+    resp = http_client.post("/score", json={"before_src": "", "after_src": ""}, headers=_AUTH_HEADER)
     assert resp.status_code == 400
 
 

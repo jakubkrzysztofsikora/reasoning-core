@@ -3,8 +3,9 @@
 Heavy deps (torch, transformers, tree_sitter) are gated with importorskip.
 The SSM backbone is loaded once via the session-scoped ``loaded_backbone``
 fixture pattern (mirrors test_s2_core.py) to keep the test suite cheap.
-"""
 
+RC-SEC-07: /score and /baseline require bearer token auth.
+"""
 from __future__ import annotations
 
 import os
@@ -17,6 +18,9 @@ pytestmark = pytest.mark.slow
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+
+_AUTH_TOKEN = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
+_AUTH_HEADER = {"Authorization": f"Bearer {_AUTH_TOKEN}"}
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +52,9 @@ def loaded_backbone():
 def http_client(s2_core_module, loaded_backbone):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
+    # RC-SEC-07: Ensure s2_core's os.environ sees our token
+    import os as _real_os
+    _real_os.environ["RC_ENFORCEMENT_TOKEN"] = _AUTH_TOKEN
     app = s2_core_module.create_app()
     with TestClient(app) as client:
         yield client
@@ -99,6 +106,7 @@ def test_metrics_records_score_call(http_client, s2_core_module):
     resp = http_client.post(
         "/score",
         json={"path": "/tmp/m.py", "before_src": PY, "after_src": PY},
+        headers=_AUTH_HEADER,
     )
     assert resp.status_code == 200
     metrics = http_client.get("/metrics").json()
@@ -126,7 +134,7 @@ def test_baseline_post_happy_path(http_client, s2_core_module):
             {"path": "b.py", "src": "def b():\n    return 2\n"},
         ],
     }
-    resp = http_client.post("/baseline", json=body)
+    resp = http_client.post("/baseline", json=body, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["status"] == "ok"
@@ -137,10 +145,10 @@ def test_baseline_post_happy_path(http_client, s2_core_module):
 
 def test_baseline_post_rejects_bad_body(http_client):
     # Missing session_id.
-    r = http_client.post("/baseline", json={"files": [{"path": "x.py", "src": "x = 1"}]})
+    r = http_client.post("/baseline", json={"files": [{"path": "x.py", "src": "x = 1"}]}, headers=_AUTH_HEADER)
     assert r.status_code == 400
     # Missing files.
-    r = http_client.post("/baseline", json={"session_id": "x"})
+    r = http_client.post("/baseline", json={"session_id": "x"}, headers=_AUTH_HEADER)
     assert r.status_code == 400
 
 
@@ -154,14 +162,14 @@ def test_score_with_session_id_returns_cumulative_drift(http_client, s2_core_mod
             {"path": "a.py", "src": base_src},
             {"path": "b.py", "src": base_src},
         ],
-    })
+    }, headers=_AUTH_HEADER)
     # Now score against the same session.
     resp = http_client.post("/score", json={
         "path": "/tmp/c.py",
         "before_src": base_src,
         "after_src": base_src,
         "session_id": "sess-B",
-    })
+    }, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     assert "cumulative_drift" in body
@@ -174,7 +182,7 @@ def test_score_without_session_id_omits_cumulative_drift(http_client, s2_core_mo
         "path": "/tmp/d.py",
         "before_src": PY,
         "after_src": PY,
-    })
+    }, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     # Field is omitted when no baseline is set.
@@ -189,7 +197,7 @@ def test_score_with_unknown_session_omits_cumulative_drift(http_client, s2_core_
         "before_src": PY,
         "after_src": PY,
         "session_id": "no-baseline-session",
-    })
+    }, headers=_AUTH_HEADER)
     assert resp.status_code == 200
     body = resp.json()
     assert "cumulative_drift" not in body

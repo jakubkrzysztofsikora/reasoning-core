@@ -83,6 +83,8 @@ jobs:
           fi
 
       - name: pytest (offline gate, exclude live)
+        env:
+          RC_ENFORCEMENT_TOKEN: "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
         run: |
           set -euo pipefail
           if ! python3 -m pytest -q -m "not live" --maxfail=10 tests/; then

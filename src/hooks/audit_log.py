@@ -549,15 +549,15 @@ def record_override(file_path: str, blocked_decision_id: str, *, now: Optional[f
     import time as _time, json as _json2
 
     now_ts = now if now is not None else _time.time()
-    state_dir = _os.path.expanduser("~/.local/state/reasoning-core")
+    state_dir = os.path.expanduser("~/.local/state/reasoning-core")
     try:
-        _os.makedirs(state_dir, exist_ok=True)
+        os.makedirs(state_dir, exist_ok=True)
     except OSError:
         return
-    path = _os.path.join(state_dir, "override_links.json")
+    path = os.path.join(state_dir, "override_links.json")
     links: dict = {}
     try:
-        if _os.path.exists(path):
+        if os.path.exists(path):
             with open(path, encoding="utf-8") as fh:
                 links = _json2.loads(fh.read() or "{}")
     except (OSError, ValueError):

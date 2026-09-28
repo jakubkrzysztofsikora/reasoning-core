@@ -54,7 +54,7 @@ Source of truth: [`PLAN.md`](PLAN.md) +
 - **v0.2.0 wheel bootstrap** — tagged GitHub source install +
   `rc init` replaces the 8-step clone/venv/launchd dance. Templates ship
   as package data (`src/data/templates/`), the `rc` console_script
-  resolves into the installed wheel, and `rc init` writes per-CLI hook
+  resolves into the installed package, and `rc init` writes per-CLI hook
   files, downloads mamba-130m, and boots the sidecar supervisor
   (launchd on macOS, systemd --user on Linux). `install.sh` remains for
   the editable / maintainer flow; deprecation banner added in v0.2,

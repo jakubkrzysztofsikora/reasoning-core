@@ -114,6 +114,7 @@ def _build_cmd() -> list[str]:
             sys.executable, "-m", "llama_cpp.server",
             "--model", model_path,
             "--port", port,
+            "--host", "127.0.0.1",
         ]
     if backend == "remote":
         print("[gen-launcher] backend=remote — no local sidecar to start.",

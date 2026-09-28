@@ -28,53 +28,52 @@ def fresh_rc_cli(tmp_path, monkeypatch):
     return rc_cli
 
 
-def test_auth_bootstrap_writes_token_file_on_linux(fresh_rc_cli, tmp_path, monkeypatch):
-    """On non-Darwin platforms, write token to file with mode 0600."""
+def test_auth_bootstrap_refuses_on_linux(fresh_rc_cli, tmp_path, monkeypatch):
+    """RC-SEC-02: On non-Darwin platforms, auth-bootstrap refuses self-service."""
     monkeypatch.setattr(sys, "platform", "linux")
-    rc = fresh_rc_cli.main(["auth-bootstrap"])
-    assert rc == 0
-    token_file = tmp_path / "auth_token"
-    assert token_file.exists()
-    token = token_file.read_text(encoding="utf-8").strip()
-    assert len(token) >= 32
-    # Token printed on stdout (so operator can copy it)
-    # Mode 0600
-    mode = token_file.stat().st_mode & 0o777
-    assert mode == 0o600
+    # Mock operator presence to pass the gate
+    with patch.object(fresh_rc_cli, "_operator_present", return_value=True):
+        rc = fresh_rc_cli.main(["auth-bootstrap"])
+    assert rc == 1  # Refused on non-darwin
 
 
-def test_auth_bootstrap_handles_existing_keychain(monkeypatch, tmp_path):
-    """On Darwin, prefer keychain when available."""
+def test_auth_bootstrap_keychain_darwin(monkeypatch, tmp_path):
+    """RC-SEC-02: On Darwin, store token and HMAC key in keychain."""
     monkeypatch.setattr(sys, "platform", "darwin")
-
-    def fake_security(*args, **kwargs):
-        if "add-generic-password" in args[0]:
+    
+    call_log = []
+    def fake_run(cmd, *args, **kwargs):
+        call_log.append(cmd)
+        if cmd == ["sudo", "-n", "true"]:
+            return subprocess.CompletedProcess(cmd, returncode=0)
+        if isinstance(cmd, list) and "add-generic-password" in cmd:
             return subprocess.CompletedProcess(
-                args=["security"],
+                args=cmd,
                 returncode=0,
                 stdout="",
                 stderr="",
             )
-        return subprocess.CompletedProcess(args=["security"], returncode=1, stdout="", stderr="err")
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="err")
 
-    monkeypatch.setattr(subprocess, "run", fake_security)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path / "events"))
-    monkeypatch.setenv("RC_AUTH_TOKEN_FILE", str(tmp_path / "auth_token"))
-
+    
     import rc_cli
     importlib.reload(rc_cli)
     rc = rc_cli.main(["auth-bootstrap"])
     assert rc == 0
+    # Should have: sudo check + 2 keychain writes (token + HMAC)
+    assert len([c for c in call_log if isinstance(c, list) and "add-generic-password" in c]) == 2
 
 
-def test_operator_authenticated_reads_token_file_on_linux(monkeypatch, tmp_path):
-    """On Linux, _operator_authenticated should read from the token file."""
+def test_operator_authenticated_env_hash_on_linux(monkeypatch, tmp_path):
+    """RC-SEC-02: On Linux, authenticate via RC_ENFORCEMENT_TOKEN + RC_AUTH_TOKEN_HASH."""
     monkeypatch.setattr(sys, "platform", "linux")
-    token = "this-is-a-very-long-test-token-for-auth"
-    token_file = tmp_path / "auth_token"
-    token_file.write_text(token + "\n", encoding="utf-8")
-    monkeypatch.setenv("RC_AUTH_TOKEN_FILE", str(token_file))
+    import hashlib
+    token = "this-is-a-very-long-test-token-for-auth-minimum-32-chars!"
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", token)
+    monkeypatch.setenv("RC_AUTH_TOKEN_HASH", token_hash)
     monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path / "events"))
 
     import rc_cli
@@ -82,13 +81,10 @@ def test_operator_authenticated_reads_token_file_on_linux(monkeypatch, tmp_path)
     assert rc_cli._operator_authenticated() is True
 
 
-def test_operator_authenticated_rejects_wrong_token(monkeypatch, tmp_path):
-    """Wrong token should not authenticate."""
+def test_operator_authenticated_rejects_short_token(monkeypatch, tmp_path):
+    """RC-SEC-02: Tokens shorter than 32 chars are rejected."""
     monkeypatch.setattr(sys, "platform", "linux")
-    token_file = tmp_path / "auth_token"
-    token_file.write_text("stored-token-12345678\n", encoding="utf-8")
-    monkeypatch.setenv("RC_AUTH_TOKEN_FILE", str(token_file))
-    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "wrong-token-but-long-enough")
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "short")
     monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path / "events"))
 
     import rc_cli

@@ -1,0 +1,64 @@
+{
+  "artifacts": [
+    {
+      "exists": true,
+      "path": "/Users/jakubsikora/.local/share/reasoning-core/baselines/baseline-2026-09-22-blocker-fixes-post"
+    },
+    {
+      "exists": true,
+      "path": "/Users/jakubsikora/.local/share/reasoning-core/events"
+    }
+  ],
+  "audit_window_metrics": {},
+  "baseline_id": "baseline-2026-09-22-blocker-fixes-post",
+  "captured_at": "2026-09-22T19:20:13Z",
+  "code": {
+    "dirty": true,
+    "git_sha": "d20c7be0ca3d7b00bb781bdd9cb332a14fa0d685"
+  },
+  "configuration": {
+    "RC_AUDIT_RETENTION_DAYS": "90",
+    "RC_BEST_EFFORT_SPEC": "1",
+    "RC_BROKER_PORT": "8764",
+    "RC_CALIBRATION_ENABLED": "1",
+    "RC_DIFF_AUDIT": "1",
+    "RC_EMBEDDER": "mamba-130m",
+    "RC_GEN_BUDGET_MS": "2500",
+    "RC_HOST": "pi",
+    "RC_LANG_LOCK": "1",
+    "RC_MOCK_DETECTOR": "1",
+    "RC_MODE": "copilot",
+    "RC_ORACLE_BLOCK": "1",
+    "RC_PLAN_BLOCK": "1",
+    "RC_PLAN_GROUNDING": "2",
+    "RC_PLAN_QUALITY": "0",
+    "RC_PRM_GATE": "0",
+    "RC_PROJECT_INDEX": "1",
+    "RC_REASONER_BACKEND": "off",
+    "RC_RECALIBRATE_POLL_S": "60",
+    "RC_REPO": "/Users/jakubsikora/Repos/personal/reasoning-core",
+    "RC_RULE_ENGINE": "1",
+    "RC_SHADOW_MODE": "0",
+    "S2_DEVICE": "cpu",
+    "S2_FAIL_CLOSED": "1",
+    "S2_HARD_CAP_MS": "5000",
+    "S2_MEM_LIMIT_GB": "8",
+    "S2_PORT": "8765",
+    "S2_TIMEOUT": "60"
+  },
+  "configuration_hash": "8f4d5524c0fd6c16851d39a747c830e47da3f057abfdda460c608912fb482a96",
+  "embedder": {
+    "backend": "mamba-130m",
+    "revision": "default"
+  },
+  "environment": {
+    "platform": "macOS-26.6-arm64-arm-64bit-Mach-O",
+    "python": "3.14.6"
+  },
+  "guard_hashes": {
+    "src/hooks/pre_edit_guard.py": "5495a61279726d28ff1ed5cffc9f07a9360b6804eda3f46e72cc7a9b8eb7dfbd"
+  },
+  "oracle_health": {},
+  "risk_label_schema_version": 2,
+  "schema_version": 1
+}

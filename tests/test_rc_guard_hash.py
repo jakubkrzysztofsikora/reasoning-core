@@ -79,10 +79,16 @@ def test_guard_hash_returns_false_when_file_missing_from_store(fresh_rc_cli, tmp
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+    # Set HMAC key so verify doesn't return hmac_key_unavailable
+    monkeypatch.setenv("RC_HMAC_KEY", "test-hmac-key-for-guard-hash-tests")
 
-    # Store exists but does not contain this file
+    # Store exists but does not contain this file — write valid JSON + MAC
     store = state_dir / "guard_hashes.json"
-    store.write_text("{}", encoding="utf-8")
+    import hmac as _hmac, hashlib as _hashlib
+    records_json = "{}\n"
+    store.write_text(records_json, encoding="utf-8")
+    mac = _hmac.new(b"test-hmac-key-for-guard-hash-tests", records_json.encode(), _hashlib.sha256).hexdigest()
+    (state_dir / "guard_hashes.json.mac").write_text(mac + "\n", encoding="utf-8")
 
     ok, reason = fresh_rc_cli._verify_guard_hash(str(guard))
     assert ok is False
@@ -95,9 +101,12 @@ def test_guard_hash_returns_false_when_store_corrupt(fresh_rc_cli, tmp_path, mon
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     monkeypatch.setenv("RC_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("RC_HMAC_KEY", "test-hmac-key-for-guard-hash-tests")
 
     store = state_dir / "guard_hashes.json"
     store.write_text("not json", encoding="utf-8")
+    # Write a dummy MAC so we get past the tampered_store check and hit store_corrupt
+    (state_dir / "guard_hashes.json.mac").write_text("dummy_mac\n", encoding="utf-8")
 
     ok, reason = fresh_rc_cli._verify_guard_hash(str(guard))
     assert ok is False

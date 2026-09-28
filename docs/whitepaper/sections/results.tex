@@ -6,19 +6,74 @@
 % quality or cost evidence; current validation is based on labeled sessions.
 
 %% 7.1 Headline Numbers
+\paragraph{2026-09-19 retraction notice.}
+The 8-cell headline table below (Table~\ref{tab:headline_results}) was
+retracted on \texttt{audit-hostile/2026-09-19-fixes} because the
+underlying per-task data was found to contain copy-pasted rows (T5
+and T7 byte-identical) and a pre-registered-decision-rule inversion
+(P0). See Table~\ref{tab:per_task_verdicts_surviving} for the
+surviving 5 cells and Section~\ref{sec:discussion-retraction} for
+the recomputed aggregates. The figures below are preserved for
+reproducibility only and must not be cited as evidence of any
+product claim.
+
 
 \begin{table*}[t]
     \centering
-    \caption{Headline Results (means across 8 tasks, n=3 per cell)}
+    \caption{Headline Results (RETRACTED 2026-09-19; means across 8 tasks)}
     \label{tab:headline_results}
     \begin{tabular}{lccr}
         \toprule
-        Metric & Setup A (vanilla) & Setup B (reasoning-core) & Delta (B - A) \\\n        \midrule
-        Cost / task (USD) & $11.44 & $8.56 & -$2.88 (-25.1 percent) \\\n        Wall clock / task (s) & 1,656 & 1,270 & -386 (-23.3 percent) \\\n        Tokens / task (main) & 66,733 & 65,222 & -1,511 (-2.3 percent) \\\n        Impl quality (BARS 1-5) & 2.90 & 2.88 & -0.02 (flat) \\\n        Plan quality (BARS 1-5) & 2.92 & 2.50 & -0.42 (-14.4 percent) \\\n        Task wins (decision rule) & 2 / 8 & 6 / 8 & -- \\\n        \bottomrule
+        Metric & Setup A (vanilla) & Setup B (reasoning-core) & Delta (B - A) \\
+        \midrule
+        Cost / task (USD) & $11.44 & $8.56 & -$2.88 (-25.1 percent) \\
+        Wall clock / task (s) & 1,656 & 1,270 & -386 (-23.3 percent) \\
+        Tokens / task (main) & 66,733 & 65,222 & -1,511 (-2.3 percent) \\
+        Impl quality (BARS 1-5) & 2.90 & 2.88 & -0.02 (flat) \\
+        Plan quality (BARS 1-5) & 2.92 & 2.50 & -0.42 (-14.4 percent) \\
+        Task wins (decision rule) & 2 / 8 (retracted) & 6 / 8 (retracted) & -- \\
+        \bottomrule
     \end{tabular}
 \end{table*}
 
 Suite totals: Setup A spent $91.50 / 533,866 tokens across all 8 tasks; Setup B spent $68.51 / 521,772 tokens. ~$23 / 25 percent saved at the suite level.
+
+
+\paragraph{Recomputed surviving-5 aggregates.}
+Cost, tokens, and BARS quality means recomputed across the 5
+surviving cells (T1, T2, T8, T9, E1). Wall clock is withdrawn because
+per-task wall-clock was never recorded separately from the retracted
+runs and cannot be reconstructed from retraction evidence.
+
+\begin{table*}[t]
+    \centering
+    \caption{Recomputed Headline Results (post-retraction, 5 surviving cells)}
+    \label{tab:headline_results_v2}
+    \begin{tabular}{lccr}
+        \toprule
+        Metric & Setup A (vanilla) & Setup B (reasoning-core) & Delta (B - A) \\
+        \midrule
+        Cost / task (USD) & $10.35 & $5.28 & -$5.07 (-49.0 percent) \\
+        Wall clock / task (s) & withdrawn & withdrawn & -- \\
+        Tokens / task (main) & 65,820 & 46,031 & -19,789 (-30.1 percent) \\
+        Impl quality (BARS 1-5) & 3.20 & 2.80 & -0.40 (-12.5 percent) \\
+        Plan quality (BARS 1-5) & 3.40 & 2.60 & -0.80 (-23.5 percent) \\
+        Task wins (lexicographic) & 2 / 5 & 3 / 5 & -- \\
+        Task wins (with BARS gap $\geq$ 1.0) & 2 / 5 & 2 / 5 & -- \\
+        Sign-test one-sided p (B $>$ A) & -- & 0.50 & -- \\
+        Sign-test two-sided p & -- & 1.00 & -- \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+Suite totals (surviving 5 cells): Setup A spent $51.73 / 329,100
+tokens; Setup B spent $26.41 / 230,156 tokens. The exact two-sided
+sign-test p-value of 1.00 (coin flip) means the surviving 5-cell
+evidence does not establish a directional advantage for either arm
+at any conventional significance threshold; the iter-2 acceptance
+criterion ($\geq$7/8 wins with paired bootstrap 95\% CI excluding 0
+on impl quality) cannot be evaluated until additional n$\geq$3
+evidence is collected.
 
 %% 7.2 Iteration-3 Results (Latest)
 
@@ -28,8 +83,20 @@ Suite totals: Setup A spent $91.50 / 533,866 tokens across all 8 tasks; Setup B 
     \label{tab:iter3_results}
     \begin{tabular}{lccr}
         \toprule
-        Metric & A (vanilla) & B (sidecar) & Delta B-A \\\n        \midrule
-        n_runs & 24 & 24 & -- \\\n        flake_locked & 0.92 & 1.00 & +0.08 \\\n        flake_rotated & 0.90 & 1.00 & +0.10 \\\n        safety violations & 0 & 0 & -- \\\n        impl quality (BARS mean) & 3.80 & 4.00 & +0.20 \\\n        plan quality & 3.62 & 3.94 & +0.32 \\\n        main tokens (mean/run) & 623 & 568 & -55 \\\n        cache_read tokens (sum) & 20,472,284 & 18,644,190 & -1,828,094 \\\n        cache_write tokens (sum) & 2,644,397 & 2,568,617 & -75,780 \\\n        total billable tokens (sum) & 23,131,644 & 21,226,444 & -1,905,200 (-8.2 percent) \\\n        wall_clock_s (mean/run) & 547 & 645 & +98 (B slower) \\\n        \bottomrule
+        Metric & A (vanilla) & B (sidecar) & Delta B-A \\
+        \midrule
+        n_runs & 24 & 24 & -- \\
+        flake_locked & 0.92 & 1.00 & +0.08 \\
+        flake_rotated & 0.90 & 1.00 & +0.10 \\
+        safety violations & 0 & 0 & -- \\
+        impl quality (BARS mean) & 3.80 & 4.00 & +0.20 \\
+        plan quality & 3.62 & 3.94 & +0.32 \\
+        main tokens (mean/run) & 623 & 568 & -55 \\
+        cache_read tokens (sum) & 20,472,284 & 18,644,190 & -1,828,094 \\
+        cache_write tokens (sum) & 2,644,397 & 2,568,617 & -75,780 \\
+        total billable tokens (sum) & 23,131,644 & 21,226,444 & -1,905,200 (-8.2 percent) \\
+        wall_clock_s (mean/run) & 547 & 645 & +98 (B slower) \\
+        \bottomrule
     \end{tabular}
 \end{table*}
 
@@ -37,12 +104,38 @@ Suite totals: Setup A spent $91.50 / 533,866 tokens across all 8 tasks; Setup B 
 
 \begin{table*}[t]
     \centering
-    \caption{Per-Task Verdicts (Iter-3)}
+    \caption{Per-Task Verdicts (Iter-3) -- RETRACTED 2026-09-19}
     \label{tab:per_task_verdicts}
     \begin{tabular}{lccccccc}
         \toprule
-        Task & Winner & A impl_q / plan_q & B impl_q / plan_q & A tokens & B tokens & A $ & B $ \\\n        \midrule
-        T1 & A & 5.0 / 5.0 & 3.0 / 1.0 & 71,200 & 29,800 & $13.08 & $3.41 \\\n        T2 & B & 3.5 / 3.0 & 5.0 / 3.0 & 121,000 & 94,200 & $22.93 & $12.39 \\\n        T5 & B & 1.83 / 1.67 & 3.5 / 3.0 & 84,533 & 72,208 & $15.53 & $10.26 \\\n        T7 & B & 1.83 / 1.67 & 3.5 / 3.0 & 84,533 & 72,208 & $15.53 & $10.26 \\\n        T8 & B & 3.0 / 3.0 & 4.0 / 5.0 & 41,600 & 24,662 & $6.98 & $2.83 \\\n        T9 & A & 1.0 / 3.0 & 1.0 / 1.0 & 37,700 & 39,894 & $2.85 & $3.49 \\\n        E1 & B (correctness gate) & 3.5 / 3.0 & 1.0 / 1.0 & 57,600 & 41,600 & $5.89 & $4.29 \\\n        P0 & B & 3.5 / 3.0 & 2.0 / 3.0 & 35,700 & 147,200 & $8.71 & $21.58 \\\n        \bottomrule
+        Task & Winner & A impl_q / plan_q & B impl_q / plan_q & A tokens & B tokens & A $ & B $ \\
+        \midrule
+        T1 & A & 5.0 / 5.0 & 3.0 / 1.0 & 71,200 & 29,800 & $13.08 & $3.41 \\
+        T2 & B & 3.5 / 3.0 & 5.0 / 3.0 & 121,000 & 94,200 & $22.93 & $12.39 \\
+        T5 & B (\emph{retracted}) & 1.83 / 1.67 & 3.5 / 3.0 & 84,533 & 72,208 & $15.53 & $10.26 \\
+        T7 & B (\emph{retracted}) & 1.83 / 1.67 & 3.5 / 3.0 & 84,533 & 72,208 & $15.53 & $10.26 \\
+        T8 & B & 3.0 / 3.0 & 4.0 / 5.0 & 41,600 & 24,662 & $6.98 & $2.83 \\
+        T9 & A & 1.0 / 3.0 & 1.0 / 1.0 & 37,700 & 39,894 & $2.85 & $3.49 \\
+        E1 & B (correctness gate) & 3.5 / 3.0 & 1.0 / 1.0 & 57,600 & 41,600 & $5.89 & $4.29 \\
+        P0 & B (\emph{retracted}) & 3.5 / 3.0 & 2.0 / 3.0 & 35,700 & 147,200 & $8.71 & $21.58 \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\begin{table*}[t]
+    \centering
+    \caption{Per-Task Verdicts (surviving 5 cells, post-retraction)}
+    \label{tab:per_task_verdicts_surviving}
+    \begin{tabular}{lccccccc}
+        \toprule
+        Task & Winner & A impl_q / plan_q & B impl_q / plan_q & A tokens & B tokens & A $ & B $ \\
+        \midrule
+        T1 & A & 5.0 / 5.0 & 3.0 / 1.0 & 71,200 & 29,800 & $13.08 & $3.41 \\
+        T2 & B & 3.5 / 3.0 & 5.0 / 3.0 & 121,000 & 94,200 & $22.93 & $12.39 \\
+        T8 & B & 3.0 / 3.0 & 4.0 / 5.0 & 41,600 & 24,662 & $6.98 & $2.83 \\
+        T9 & A & 1.0 / 3.0 & 1.0 / 1.0 & 37,700 & 39,894 & $2.85 & $3.49 \\
+        E1 & B (correctness gate) & 3.5 / 3.0 & 1.0 / 1.0 & 57,600 & 41,600 & $5.89 & $4.29 \\
+        \bottomrule
     \end{tabular}
 \end{table*}
 
@@ -50,12 +143,21 @@ Suite totals: Setup A spent $91.50 / 533,866 tokens across all 8 tasks; Setup B 
 
 \begin{table*}[t]
     \centering
-    \caption{Per-Task Pass Rates (locked / rotated)}
+    \caption{Per-Task Pass Rates (locked / rotated) -- RETRACTED 2026-09-19}
     \label{tab:pass_rates}
     \begin{tabular}{lcccc}
         \toprule
-        Task & A locked & A rotated & B locked & B rotated \\\n        \midrule
-        P0 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T1 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T2 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T5 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        T7 & 0.33 & 0.33 & 1.00 & 1.00 \\\n        T8 & 1.00 & 0.93 & 1.00 & 0.97 \\\n        T9 & 1.00 & 1.00 & 1.00 & 1.00 \\\n        E1 & 1.00 & 0.97 & 1.00 & 1.00 \\\n        \bottomrule
+        Task & A locked & A rotated & B locked & B rotated \\
+        \midrule
+        P0 & \emph{retracted} & \emph{retracted} & \emph{retracted} & \emph{retracted} \\
+        T1 & 1.00 & 1.00 & 1.00 & 1.00 \\
+        T2 & 1.00 & 1.00 & 1.00 & 1.00 \\
+        T5 & \emph{retracted} & \emph{retracted} & \emph{retracted} & \emph{retracted} \\
+        T7 & \emph{retracted} & \emph{retracted} & \emph{retracted} & \emph{retracted} \\
+        T8 & 1.00 & 0.93 & 1.00 & 0.97 \\
+        T9 & 1.00 & 1.00 & 1.00 & 1.00 \\
+        E1 & 1.00 & 0.97 & 1.00 & 1.00 \\
+        \bottomrule
     \end{tabular}
 \end{table*}
 
@@ -67,8 +169,14 @@ Suite totals: Setup A spent $91.50 / 533,866 tokens across all 8 tasks; Setup B 
     \label{tab:rubric_breakdown}
     \begin{tabular}{lccr}
         \toprule
-        Dimension & A mean & B mean & Delta B-A \\\n        \midrule
-        cleanliness & 4.26 & 4.26 & 0.00 \\\n        correctness_determinism & 3.17 & 3.29 & +0.11 \\\n        diff_discipline & 4.09 & 4.31 & +0.23 \\\n        plan_signal & 3.63 & 3.94 & +0.31 \\\n        repo_fit & 3.71 & 4.14 & +0.43 \\\n        \bottomrule
+        Dimension & A mean & B mean & Delta B-A \\
+        \midrule
+        cleanliness & 4.26 & 4.26 & 0.00 \\
+        correctness_determinism & 3.17 & 3.29 & +0.11 \\
+        diff_discipline & 4.09 & 4.31 & +0.23 \\
+        plan_signal & 3.63 & 3.94 & +0.31 \\
+        repo_fit & 3.71 & 4.14 & +0.43 \\
+        \bottomrule
     \end{tabular}
 \end{table*}
 
@@ -80,8 +188,12 @@ Suite totals: Setup A spent $91.50 / 533,866 tokens across all 8 tasks; Setup B 
     \label{tab:judge_calibration}
     \begin{tabular}{lcccr}
         \toprule
-        Judge & A mean & B mean & n (A,B) & favors \\\n        \midrule
-        gemini & 3.33 & 3.78 & 24,24 & B (+0.45) \\\n        qwen-coder & 4.20 & 4.16 & 22,22 & A weakly (-0.04) \\\n        vibe & 3.82 & 4.03 & 24,24 & B (+0.21) \\\n        \bottomrule
+        Judge & A mean & B mean & n (A,B) & favors \\
+        \midrule
+        gemini & 3.33 & 3.78 & 24,24 & B (+0.45) \\
+        qwen-coder & 4.20 & 4.16 & 22,22 & A weakly (-0.04) \\
+        vibe & 3.82 & 4.03 & 24,24 & B (+0.21) \\
+        \bottomrule
     \end{tabular}
 \end{table*}
 

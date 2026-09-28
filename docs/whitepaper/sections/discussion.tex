@@ -1,5 +1,30 @@
 %% 8. DISCUSSION
 %% ============================================================================
+%% 8.0 Benchmark retraction (2026-09-19)
+%% ---------------------------------------------------------------------
+\label{sec:discussion-retraction}
+\paragraph{Benchmark retraction (2026-09-19).}
+The 8-cell headline aggregates (Table~\ref{tab:headline_results})
+were retracted on \texttt{audit-hostile/2026-09-19-fixes} after a
+hostile review surfaced three data-integrity issues in the
+iteration-1 draft runs: (i) the T5 and T7 rows were byte-identical
+across all recorded metrics, which is physically impossible for two
+distinct end-to-end LLM agent runs; (ii) the P0 winner was recorded
+against the pre-registered decision rule, which (gates
+$\rightarrow$ impl\_q $\rightarrow$ plan\_q $\rightarrow$ cost)
+selects Setup A on impl quality 3.5 vs 2.0, ~4$\times$ fewer tokens,
+and ~2.5$\times$ lower cost; (iii) two latency tables on the same
+page contradicted each other by 484 seconds per run. The surviving
+5-cell evidence (Table~\ref{tab:per_task_verdicts_surviving},
+Table~\ref{tab:headline_results_v2}) yields an exact two-sided
+sign-test p-value of 1.00 (coin flip); we therefore make no
+directional product claim and do not present the n=1 per cell data
+as evidence. The pre-registered iter-2 acceptance criterion
+($\geq$7/8 wins with paired bootstrap 95\% CI excluding 0 on impl
+quality) requires additional n$\geq$3 evidence before any directional
+claim can be made. The retraction commit is preserved in the audit
+trail so the original draft numbers remain reproducible.
+
 
 %% 8.1 Key Findings
 

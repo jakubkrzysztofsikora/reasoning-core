@@ -43,19 +43,26 @@ def isolated_project(tmp_path, monkeypatch):
     return project_dir, rc_cli
 
 
-def _auth_env(monkeypatch, token: str = "operator-secret-token-12345678"):
+def _auth_env(monkeypatch, token: str = "operator-secret-token-1234567890ab"):
     """Simulate authenticated operator environment with keychain match."""
+    import hashlib
     monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", token)
-    # Mock the security command to return the same token
-    def fake_security(*args, **kwargs):
-        result = subprocess.CompletedProcess(
-            args=["security"],
-            returncode=0,
-            stdout=token,
-            stderr="",
-        )
-        return result
-    monkeypatch.setattr(subprocess, "run", fake_security)
+    # On non-darwin (CI), auth requires RC_AUTH_TOKEN_HASH matching the token
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    monkeypatch.setenv("RC_AUTH_TOKEN_HASH", token_hash)
+    # Mock subprocess.run to handle both sudo check and keychain lookup
+    def fake_run(cmd, *args, **kwargs):
+        if cmd == ["sudo", "-n", "true"]:
+            return subprocess.CompletedProcess(cmd, returncode=0)
+        if isinstance(cmd, list) and "find-generic-password" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=token,
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
 
 def test_enable_enforcement_requires_authentication(isolated_project, monkeypatch):
@@ -76,16 +83,20 @@ def test_enable_enforcement_requires_long_token(isolated_project, monkeypatch):
 
 def test_enable_enforcement_rejects_wrong_token(isolated_project, monkeypatch):
     project_dir, rc_cli = isolated_project
-    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "wrong-token-but-long-enough")
-    # Mock keychain to return a different token
-    def fake_security(*args, **kwargs):
-        return subprocess.CompletedProcess(
-            args=["security"],
-            returncode=0,
-            stdout="different-stored-secret",
-            stderr="",
-        )
-    monkeypatch.setattr(subprocess, "run", fake_security)
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "wrong-token-but-long-enough-1234567890")
+    # Mock subprocess.run to handle sudo check and return different keychain token
+    def fake_run(cmd, *args, **kwargs):
+        if cmd == ["sudo", "-n", "true"]:
+            return subprocess.CompletedProcess(cmd, returncode=0)
+        if isinstance(cmd, list) and "find-generic-password" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout="different-stored-secret",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
     rc = rc_cli.main(["enable-enforcement"])
     assert rc == 1
 
@@ -159,3 +170,48 @@ def test_enable_enforcement_hard_flag(isolated_project, monkeypatch):
     assert rc == 0
     local_body = (project_dir / ".envrc.local").read_text(encoding="utf-8")
     assert "RC_PLAN_GROUNDING=2" in local_body
+
+# ---------------------------------------------------------------------------
+# Round-3 Finding: ``rc bypass-next`` is unauthenticated.
+#
+# An agent running ``python3 src/rc_cli.py bypass-next`` can arm the
+# bypass without operator authentication. The next PreToolUse hook
+# then exits 0 unconditionally, letting the agent write through the
+# guard. The bash guard already blocks the shell form
+# (``pre_bash_guard.py`` regex catches ``python3 ... rc_cli bypass-next``)
+# but the path-form (``python3 src/rc_cli.py bypass-next``) is
+# unrestricted in ``cmd_bypass_next`` itself. This test guards the fix:
+# ``rc bypass-next`` must require the same operator authentication as
+# ``rc enable-enforcement``.
+# ---------------------------------------------------------------------------
+
+
+def test_bypass_next_requires_operator_authentication(isolated_project, monkeypatch):
+    """Agent invoking ``rc bypass-next`` must fail without auth."""
+    project_dir, rc_cli = isolated_project
+    # Ensure no auth env is set
+    monkeypatch.delenv("RC_ENFORCEMENT_TOKEN", raising=False)
+    rc = rc_cli.main(["bypass-next"])
+    assert rc == 1, (
+        f"BLOCKER: rc bypass-next succeeded without operator auth; "
+        f"the next PreToolUse hook will exit 0 unconditionally."
+    )
+    # The kill-switch state must remain un-armed.
+    import _kill_switches as ks
+    importlib.reload(ks)
+    assert ks.consume_bypass_next() is False, (
+        "BLOCKER: rc bypass-next armed the kill switch without auth."
+    )
+
+
+def test_bypass_next_succeeds_with_operator_authentication(isolated_project, monkeypatch):
+    """Operator with valid auth token can arm bypass-next."""
+    project_dir, rc_cli = isolated_project
+    _auth_env(monkeypatch)
+    rc = rc_cli.main(["bypass-next"])
+    assert rc == 0, f"expected success with auth, got rc={rc}"
+    import _kill_switches as ks
+    importlib.reload(ks)
+    assert ks.consume_bypass_next() is True, (
+        "rc bypass-next with valid auth must arm the kill switch."
+    )

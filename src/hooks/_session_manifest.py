@@ -35,8 +35,9 @@ LANGUAGE_SCHEMA_VERSION = 2
 
 _LANG_FAMILY = {
     ".cs": "csharp", ".csproj": "csharp", ".sln": "csharp",
-    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".ino": "cpp",
-    ".h": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp",
+    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".c++": "cpp",
+    ".ino": "cpp", ".h": "cpp", ".hpp": "cpp", ".hh": "cpp",
+    ".hxx": "cpp", ".c": "c",
     ".py": "python", ".pyi": "python",
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
     ".ts": "javascript", ".tsx": "javascript", ".vue": "javascript",

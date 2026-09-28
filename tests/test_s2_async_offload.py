@@ -15,6 +15,9 @@ import pytest
 
 from src import s2_core
 
+_AUTH_TOKEN = "ci-test-token-for-baseline-offload-test-minimum-32-chars!!!"
+_AUTH_HEADER = {"Authorization": f"Bearer {_AUTH_TOKEN}"}
+
 
 @pytest.fixture(scope="module")
 def app():
@@ -53,6 +56,7 @@ async def test_health_responds_while_score_in_flight(app):
                         "after_src": "print('b')\n",
                         "session_id": "test",
                     },
+                    headers=_AUTH_HEADER,
                 )
             finally:
                 score_thread_done.set()

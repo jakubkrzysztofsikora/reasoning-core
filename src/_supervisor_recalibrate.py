@@ -73,7 +73,7 @@ def _build_xy(repo_root: Path, *,
     if mine_fn is None:
         from eval.calibration_corpus import mine as mine_fn  # type: ignore
     if score_fn is None:
-        from s2_core import score_change as score_fn  # type: ignore
+        from .s2_core import score_change as score_fn  # type: ignore
 
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
         out_path = Path(tf.name)
@@ -138,9 +138,9 @@ def refit_once(repo_root: Path, *,
     git, the Mamba backbone, or numpy when undesired.
     """
     if fit_fn is None:
-        from calibration import fit_per_kind as fit_fn  # type: ignore
+        from .calibration import fit_per_kind as fit_fn  # type: ignore
     if save_fn is None:
-        from calibration import save_models as save_fn  # type: ignore
+        from .calibration import save_models as save_fn  # type: ignore
 
     X, kinds = _build_xy(repo_root, mine_fn=mine_fn, score_fn=score_fn)
     if not X:

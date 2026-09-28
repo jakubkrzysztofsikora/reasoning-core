@@ -89,7 +89,15 @@ flake check, BARS-rubric implementation- and plan-quality grades.
   shadow-mode off (a *measurement* configuration; default operator posture
   ships shadow-mode-on per `.envrc`).
 
-### Headline numbers (means across 8 tasks)
+### Headline numbers — RETRACTED 2026-09-19 (8-cell set)
+
+> **This table is retracted.** All 8-cell aggregates below were computed
+> over the retracted T5, T7, and P0 rows (see "Per-task verdicts
+> (Iteration 1 draft — RETRACTED 2026-09-19)" below). They are retained
+> in this box only to preserve the original draft numbers for
+> reproducibility; they must not be cited as evidence of any product
+> claim. See the next subsection for the surviving-5 aggregates and
+> the withdrawn wall-clock note.
 
 | metric | Setup A (vanilla) | Setup B (reasoning-core) | Δ (B − A) | Δ% |
 |---|---:|---:|---:|---:|
@@ -98,12 +106,44 @@ flake check, BARS-rubric implementation- and plan-quality grades.
 | **Tokens / task (main)** | 66 733 | 65 222 | −1 511 | −2.3% |
 | Impl quality (BARS 1–5) | 2.90 | 2.88 | −0.02 | flat |
 | Plan quality (BARS 1–5) | 2.92 | 2.50 | −0.42 | −14.4% |
-| **Task wins** (gates → impl_q → plan_q → cost) | 2 / 8 (retracted) | **6 / 8** (retracted) | — | — |
-| **Task wins (surviving 5 cells, n=1 each)** | 2 / 5 | **3 / 5** | — | — | T1, T9 → A; T2, T8, E1 → B |
+| **Task wins** | 2 / 8 (retracted) | **6 / 8** (retracted) | — | — |
 
 Suite totals: Setup A spent **$91.50** / 533 866 tokens; Setup B spent
-**$68.51** / 521 772 tokens. ~$23 / 25% saved at the suite level on this
-single-run draft.
+**$68.51** / 521 772 tokens. All numbers in this block derive from
+retracted rows and are withdrawn.
+
+### Headline numbers (recomputed across surviving 5 cells)
+
+> **These are the post-retraction aggregates.** Only the 5 cells for which
+> per-task evidence still exists (T1, T2, T8, T9, E1) are averaged. Wall
+> clock is **withdrawn** because per-task wall-clock was never recorded
+> separately from the retracted runs and cannot be reconstructed from
+> retraction evidence. Token and cost averages are derived directly from
+> the per-task table below; both arms are n=1 per cell on T8/T9, n=3 on
+> T2/E1, n=1 on T1.
+
+| metric | Setup A (vanilla) | Setup B (reasoning-core) | Δ (B − A) | Δ% |
+|---|---:|---:|---:|---:|
+| **Cost / task (USD)** | $10.35 | $5.28 | −$5.07 | **−49.0%** |
+| **Wall clock / task** | withdrawn | withdrawn | — | — |
+| **Tokens / task (main)** | 65 820 | 46 031 | −19 789 | **−30.1%** |
+| Impl quality (BARS 1–5) | 3.20 | 2.80 | −0.40 | −12.5% |
+| Plan quality (BARS 1–5) | 3.40 | 2.60 | −0.80 | −23.5% |
+| **Task wins** (lexicographic rule) | 2 / 5 | 3 / 5 | — | — |
+| **Task wins** (with ≥ 1.0 BARS gap requirement) | 2 / 5 | 2 / 5 | — | — |
+| **Sign-test p-value (exact binomial, one-sided)** | — | **p = 0.50** | — | — |
+| **Sign-test p-value (exact binomial, two-sided)** | — | **p = 1.00** | — | — |
+
+Suite totals (surviving 5 cells): Setup A spent **$51.73** / 329 100
+tokens; Setup B spent **$26.41** / 230 156 tokens. $25.32 / 49% lower at
+the suite level on the surviving-5 evidence.
+
+The exact two-sided p-value of 1.00 (coin flip) means the surviving
+5-cell evidence does not establish a directional advantage for either
+arm at any conventional significance threshold. The pre-registered
+iter-2 acceptance criterion (≥7/8 wins, paired bootstrap 95% CI
+excluding 0 on impl quality) requires an additional ≥3 cells of
+n≥3 evidence before any directional claim can be made.
 
 ### Per-task verdicts (Iteration 1 draft — RETRACTED 2026-09-19)
 
@@ -155,8 +195,9 @@ single-run draft.
   (B spent $21.58 vs A's $8.71) inflates B's mean tokens; without P0, B's
   mean cost drops to ~$5.34 (−40% vs A).
 - **Wall clock**: Setup B finishes ~23% faster on average. The gate is not
-  free (p95 ~5 s/Edit on CPU Mamba); the speedup comes from B avoiding
-  regression-rework loops.
+  free (neural path capped at 1500 ms; symbolic fallback engaged when exceeded).
+  The speedup comes from B avoiding regression-rework loops, not from raw
+  latency reduction.
 - **Quality**: implementation-quality means are flat. B wins by **decision
   rule** (gates → impl_q → plan_q → cost), not by raw rubric points.
 - **Failures (informative)**:

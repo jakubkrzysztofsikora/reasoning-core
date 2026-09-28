@@ -45,6 +45,7 @@ def test_kill_switches_bypass_next_consumed():
     import importlib
     with tempfile.TemporaryDirectory() as td:
         os.environ["RC_STATE_DIR"] = td
+        os.environ["RC_HMAC_KEY"] = "test-hmac-key-for-kill-switch-tests"
         os.environ.pop("RC_BYPASS_NEXT", None)
         import _kill_switches as ks
         importlib.reload(ks)
@@ -58,6 +59,7 @@ def test_kill_switches_env_fallback():
     import importlib
     with tempfile.TemporaryDirectory() as td:
         os.environ["RC_STATE_DIR"] = td
+        os.environ["RC_HMAC_KEY"] = "test-hmac-key-for-kill-switch-tests"
         os.environ["RC_BYPASS_NEXT"] = "1"
         import _kill_switches as ks
         importlib.reload(ks)
@@ -71,6 +73,7 @@ def test_kill_switches_skip_files():
     import importlib
     with tempfile.TemporaryDirectory() as td:
         os.environ["RC_STATE_DIR"] = td
+        os.environ["RC_HMAC_KEY"] = "test-hmac-key-for-kill-switch-tests"
         import _kill_switches as ks
         importlib.reload(ks)
         ks.add_skip_file("/foo/bar.py")
@@ -113,6 +116,7 @@ def test_kill_switches_disable_until_utc():
     import _kill_switches as ks
     with tempfile.TemporaryDirectory() as td:
         os.environ["RC_STATE_DIR"] = td
+        os.environ["RC_HMAC_KEY"] = "test-hmac-key-for-kill-switch-tests"
         importlib.reload(ks)
         # Past timestamp → not disabled
         ks.set_disable_until("2000-01-01T00:00:00Z")
