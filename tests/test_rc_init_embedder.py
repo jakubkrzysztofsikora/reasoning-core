@@ -12,7 +12,6 @@ Covers the wiring added 2026-09-21:
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -66,6 +65,30 @@ def test_install_envrc_writes_autopicked_backend(tmp_path):
     assert any("embedder_tier=large" in line for line in manifest_lines)
     assert any("embedder_backend=mamba3-siso-893m" in line for line in manifest_lines)
     assert any("embedder_working_set_gb=4.475" in line for line in manifest_lines)
+
+
+def test_install_envrc_manifest_records_loadable_fallback(tmp_path):
+    manifest = tmp_path / ".reasoning-core" / "install.manifest"
+    manifest.parent.mkdir(parents=True)
+    manifest.touch()
+    decision = embedder_tier.TierDecision(
+        backend="mamba3-siso-1.5b",
+        tier="operator-pinned-unloadable",
+        estimated_working_set_gb=7.5,
+        available_ram_gb=8.0,
+        fit_margin_gb=0.5,
+        reason="loader unavailable",
+        safe_backend_for_envrc="mamba-130m",
+        pinned_unloadable=True,
+    )
+    with mock.patch.object(embedder_tier, "decide", return_value=decision):
+        _init_mod.install_envrc(
+            tmp_path, manifest,
+            substitutions={"RC_PYTHON": "/usr/bin/python3", "RC_REPO": str(tmp_path)},
+            result=_init_mod.InitResult(target=tmp_path),
+        )
+    assert "export RC_EMBEDDER=mamba-130m" in (tmp_path / ".envrc").read_text()
+    assert "embedder_backend=mamba-130m" in manifest.read_text().splitlines()
 
 
 def test_install_envrc_honours_operator_pin(tmp_path, monkeypatch):

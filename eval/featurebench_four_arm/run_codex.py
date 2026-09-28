@@ -8,9 +8,9 @@ import json
 import os
 import random
 import subprocess
-import sys
 import tarfile
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
@@ -54,7 +54,7 @@ def stage(case: dict, row: dict, source: Path, workspace: Path) -> bytes:
 
 
 def run_arm(case: dict, row: dict, arm: str, source: Path, out: Path,
-            model: str, timeout: int) -> dict:
+            model: str, timeout: int, sidecar_url: str, score_cap_ms: int) -> dict:
     arm_dir = out / case["instance_id"] / arm
     workspace = arm_dir / "workspace"
     if workspace.exists():
@@ -98,7 +98,10 @@ def run_arm(case: dict, row: dict, arm: str, source: Path, out: Path,
         env.update({"RC_PROJECT_DIR": str(workspace), "RC_AUDIT_ROOT": str(arm_dir / "audit"),
                     "RC_MODE": "copilot", "RC_PLAN_GROUNDING": "2", "RC_PLAN_BLOCK": "1",
                     "RC_RULE_ENGINE": "1", "RC_NEURAL_CORROBORATED": "1",
-                    "S2_URL": "http://127.0.0.1:8765", "S2_FAIL_CLOSED": "1"})
+                    "S2_URL": sidecar_url, "S2_FAIL_CLOSED": "1",
+                    "S2_HARD_CAP_MS": str(score_cap_ms)})
+        if os.environ.get("RC_ENFORCEMENT_TOKEN"):
+            env["RC_ENFORCEMENT_TOKEN"] = os.environ["RC_ENFORCEMENT_TOKEN"]
     started = time.monotonic()
     try:
         proc = subprocess.run(command, cwd=workspace, env=env, capture_output=True,
@@ -146,6 +149,11 @@ def main() -> int:
     parser.add_argument("--model", default="gpt-6-sol")
     parser.add_argument("--timeout", type=int, default=420)
     parser.add_argument("--seed", type=int, default=20260927)
+    parser.add_argument("--sidecar-url", default="http://127.0.0.1:8765")
+    parser.add_argument("--backend", help="Required backend reported by the sidecar")
+    parser.add_argument("--token-budget", type=int, help="Required backend input token budget")
+    parser.add_argument("--baseline-id", help="Required immutable baseline ID in the frozen cases")
+    parser.add_argument("--score-cap-ms", type=int, default=1500)
     parser.add_argument("--resume", action="store_true", help="resume an incomplete run without repeating completed arms")
     args = parser.parse_args()
     source, out = args.source.resolve(), args.out.resolve()
@@ -158,11 +166,20 @@ def main() -> int:
             or qualification.get("codex_version") != host_version
             or qualification.get("bridge_sha256") != sha256(BRIDGE.read_bytes())):
         parser.error("Codex bridge qualification is absent or stale")
-    if not _sidecar_healthy("http://127.0.0.1:8765"):
+    if not _sidecar_healthy(args.sidecar_url):
         parser.error("reasoning-core sidecar is unhealthy")
+    with urllib.request.urlopen(args.sidecar_url + "/health", timeout=5) as response:
+        sidecar_health = json.load(response)
+    if not sidecar_health.get("model_loaded") or not sidecar_health.get("enforcement_healthy"):
+        parser.error("reasoning-core sidecar is not fully ready")
+    if args.backend and sidecar_health.get("backbone", {}).get("embedder_backend") != args.backend:
+        parser.error("sidecar backend differs from requested backend")
+    if args.token_budget is not None and sidecar_health.get("backbone", {}).get("input_token_budget") != args.token_budget:
+        parser.error("sidecar token budget differs from requested budget")
     cases_data = args.cases.read_bytes()
     frozen = json.loads(cases_data)
-    if frozen["baseline_id"] != "baseline-2026-09-27-featurebench-seaborn-codex-prepilot":
+    expected_baseline = args.baseline_id or "baseline-2026-09-27-featurebench-seaborn-codex-prepilot"
+    if frozen["baseline_id"] != expected_baseline:
         parser.error("wrong frozen baseline")
     rows = [(case, task_row(case, frozen["dataset_revision"])) for case in frozen["cases"]]
     for case, _ in rows:
@@ -177,6 +194,8 @@ def main() -> int:
                 "dataset_revision": frozen["dataset_revision"], "benchmark": frozen["benchmark"],
                 "split": frozen["split"], "qualification_sha256": sha256(args.qualification.read_bytes()),
                 "model": args.model, "host_version": host_version,
+                "sidecar_url": args.sidecar_url, "sidecar_health": sidecar_health,
+                "score_cap_ms": args.score_cap_ms,
                 "runner_sha256": sha256(Path(__file__).read_bytes()), "bridge_sha256": sha256(BRIDGE.read_bytes()),
                 "seed": args.seed, "timeout_s_per_arm": args.timeout,
                 "order": [[case["instance_id"], arm] for case, _, arm in order], "results": [],
@@ -187,7 +206,9 @@ def main() -> int:
                 or previous["qualification_sha256"] != manifest["qualification_sha256"]
                 or previous["model"] != manifest["model"]
                 or previous["order"] != manifest["order"]
-                or previous["timeout_s_per_arm"] != manifest["timeout_s_per_arm"]):
+                or previous["timeout_s_per_arm"] != manifest["timeout_s_per_arm"]
+                or previous["sidecar_health"]["backbone"] != sidecar_health["backbone"]
+                or previous["score_cap_ms"] != args.score_cap_ms):
             raise RuntimeError("incompatible run manifest")
         manifest = previous
         manifest["resume_runner_sha256"] = sha256(Path(__file__).read_bytes())
@@ -197,7 +218,8 @@ def main() -> int:
             if (case["instance_id"], arm) in completed:
                 continue
             print("running", case["instance_id"], arm, flush=True)
-            result = run_arm(case, row, arm, source, out, args.model, args.timeout)
+            result = run_arm(case, row, arm, source, out, args.model, args.timeout,
+                             args.sidecar_url, args.score_cap_ms)
             manifest["results"].append({"instance_id": case["instance_id"], **result})
             print("finished", arm, result["agent_exit_code"], result["patch_bytes"], flush=True)
     finally:

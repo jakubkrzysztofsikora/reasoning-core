@@ -259,7 +259,7 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
         name="mamba3-siso-893m",
         checkpoint="state-spaces/mamba3-siso-893m",
         pooling="mean",
-        max_seq_len=16384,
+        max_seq_len=2048,
         hidden_size=1536,
         revision="main",
         license="apache-2.0",
@@ -311,58 +311,31 @@ _BACKENDS: dict[str, _EmbedderBackend] = {
 
 
 def backend_loadability_probe(backend_name: str) -> bool:
-    """Cheap ``backend_name -> bool`` probe for the auto-sizer.
+    """Screen registry entries before ``rc init`` pins them in ``.envrc``.
 
-    BLOCKER #2 fix (2026-09-22 hostile review): previously, ``rc init``
-    auto-picked ``mamba3-siso-1.5b`` on >=32GiB hosts and wrote it to
-    ``.envrc`` as an operator pin, even though the current transformers
-    stack has no ``Mamba3*`` class and the checkpoint cannot be loaded.
-    The loader then refuses fallback for operator-pinned backends, so
-    the gate 503s every score and ``S2_FAIL_CLOSED=1`` blocks every edit.
-
-    This function asks "would ``load_backbone()`` succeed for this
-    backend on this host *without* downloading weights or pulling
-    model files?". The check is purely syntactic + registry-based:
-
-    * Unknown backend name -> ``False``.
-    * Mamba-3 backends (``mamba3-*``) require the
-      ``mamba-ssm>=2.0.0`` (or equivalent) kernel package; if it is
-      not importable on this host the backend is unloadable.
-      ``load_backbone()`` would otherwise hang on the sequential
-      Python fallback and ultimately fail with a size-mismatch
-      error (the Mamba-130M class doesn't match the 1536-dim
-      Mamba-3 hidden size).
-    * All other backends are loadable *a priori*; the registry
-      entry is the source of truth. The actual download + load
-      still happens at runtime in ``load_backbone()``; this probe
-      only screens for the known-bad class of failures.
-
-    The probe is intentionally cheap: no I/O, no HF API calls, no
-    weight downloads. It runs in microseconds.
+    This avoids the earlier failure where an unavailable Mamba3 backend
+    was pinned and then refused runtime fallback. The portable SISO 893M
+    backend can be selected explicitly or with RC_MAMBA3_AUTO=1 on an MPS
+    host. The probe does not download weights or promise runtime latency.
     """
     if backend_name not in _BACKENDS:
         return False
     if backend_name.startswith("mamba3-"):
-        # Mamba-3 requires the upstream ``mamba-ssm`` kernels (or an
-        # equivalent registered backend) to load. The current
-        # transformers stack ships ``Mamba*`` for the original
-        # Mamba-130M architecture but no ``Mamba3*`` class, so the
-        # sequential Python fallback fails with a size-mismatch on
-        # the very first parameter copy. Until upstream lands a
-        # CPU fast-path or a transformers-registered Mamba3 class,
-        # any mamba3-* backend is unloadable on this host.
+        # The portable implementation is specific to the pinned SISO 893M
+        # architecture. Automatic selection remains behind an explicit
+        # experiment switch until latency and quality gates are met.
+        if backend_name != "mamba3-siso-893m":
+            return False
+        if (os.environ.get("RC_MAMBA3_AUTO") != "1"
+                and os.environ.get("RC_EMBEDDER", "").strip() != backend_name):
+            return False
         try:
-            import mamba_ssm  # noqa: F401 -- side-effect-free probe
+            import torch
+            import huggingface_hub  # noqa: F401
+            from src.mamba3_portable import load_mamba3_siso  # noqa: F401
         except ImportError:
             return False
-        # Anti-spoof: refuse to trust a sys.path-installed ``
-        # `` file (the round-2 review noted that a file named
-        # ``mamba_ssm`` placed on ``sys.path`` flips the probe). We
-        # require the package to expose at least one of the
-        # canonical kernel entry points.
-        try:
-            import mamba_ssm.ops.selective_scan_interface  # noqa: F401
-        except (ImportError, AttributeError):
+        if not torch.backends.mps.is_available():
             return False
     # RC-LOAD-PROBE-01 (round-2 Finding 3): every non-mamba3 backend
     # must have a pinned SHA in ``_PINNED_REVISIONS`` or the loader
@@ -846,21 +819,32 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
         if revision:
             load_kwargs["revision"] = revision
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            backend.checkpoint, **load_kwargs,
-        )
+        if backend.name == "mamba3-siso-893m":
+            # The checkpoint has no tokenizer files. Its model card names
+            # Llama 3.1 8B; use a public pinned mirror of that tokenizer.
+            tokenizer = AutoTokenizer.from_pretrained(
+                "unsloth/Meta-Llama-3.1-8B",
+                revision="e9a141a2091ea561b96483212645a2a05e6f99fc",
+                trust_remote_code=False,
+            )
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(
+                backend.checkpoint, **load_kwargs,
+            )
         dtype = _resolve_dtype(backend)
-        model_kwargs = dict(load_kwargs)
-        if dtype is not None:
-            model_kwargs["torch_dtype"] = dtype
-        model_kwargs["low_cpu_mem_usage"] = True
-        logger.info(
-            "Loading embedder weights dtype=%s low_cpu_mem_usage=True",
-            getattr(dtype, "__name__", None) or str(dtype) or "native",
-        )
-        model = AutoModel.from_pretrained(
-            backend.checkpoint, **model_kwargs,
-        )
+        if backend.name == "mamba3-siso-893m":
+            from src.mamba3_portable import load_mamba3_siso
+            model = load_mamba3_siso(
+                backend.checkpoint, revision, device=device,
+                dtype=None if dtype == "auto" else dtype,
+            )
+        else:
+            model_kwargs = dict(load_kwargs)
+            if dtype is not None:
+                model_kwargs["torch_dtype"] = dtype
+            model_kwargs["low_cpu_mem_usage"] = True
+            logger.info("Loading embedder weights dtype=%s", str(dtype or "native"))
+            model = AutoModel.from_pretrained(backend.checkpoint, **model_kwargs)
         model.eval()
         try:
             model.to(device)
@@ -871,7 +855,8 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
 
         hidden_size = int(getattr(model.config, "hidden_size", 0) or 0)
         if hidden_size <= 0:
-            hidden_size = int(getattr(model.config, "d_model", 0) or 0)
+            hidden_size = int(model.config.get("d_model", 0) if isinstance(model.config, dict)
+                              else getattr(model.config, "d_model", 0) or 0)
         if hidden_size <= 0:
             hidden_size = backend.hidden_size
 
@@ -894,7 +879,15 @@ def _try_load_backend(backend: _EmbedderBackend, device: str) -> Optional[_Backb
             "device": device,
             "embedder_role": "feature_extractor",
             "embedder_backend": backend.name,
+            "revision": revision,
         }
+        if backend.name == "mamba3-siso-893m":
+            budget = int(os.environ.get("RC_MAMBA3_TOKEN_BUDGET", "64"))
+            if not 1 <= budget <= backend.max_seq_len:
+                raise BackboneUnavailableError(
+                    f"RC_MAMBA3_TOKEN_BUDGET must be 1..{backend.max_seq_len}"
+                )
+            info["input_token_budget"] = budget
         return _BackboneHandle(
             model=model,
             tokenizer=tokenizer,
@@ -1282,6 +1275,16 @@ def embed(text: str) -> Any:
     if backend is not None:
         max_len = backend.max_seq_len
         pooling = backend.pooling
+        if backend.name == "mamba3-siso-893m":
+            try:
+                budget = int(os.environ.get("RC_MAMBA3_TOKEN_BUDGET", "64"))
+            except ValueError as exc:
+                raise BackboneUnavailableError("RC_MAMBA3_TOKEN_BUDGET must be an integer") from exc
+            if not 1 <= budget <= backend.max_seq_len:
+                raise BackboneUnavailableError(
+                    f"RC_MAMBA3_TOKEN_BUDGET must be 1..{backend.max_seq_len}"
+                )
+            max_len = budget
 
     text = text if text else " "
     torch.manual_seed(_EMBED_SEED)

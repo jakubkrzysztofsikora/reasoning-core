@@ -32,14 +32,13 @@ except ImportError:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 import sys
 import time
-from collections import deque
-from dataclasses import asdict, dataclass, field
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any, Optional
 
 from .grammars import (
-    EXTENSION_MAP,
     PUBLIC_LANGUAGE,
     SUPPORTED_LANGUAGES,
     UnsupportedLanguageError,
@@ -168,7 +167,6 @@ class ImpactReport:
 #   * Per-session TTL via S2_BASELINE_TTL_S (default 86400 = 24h) so a
 #     long-running daemon cannot accumulate tensor memory indefinitely.
 #     Eviction happens on read; entries older than the TTL are skipped.
-from collections import OrderedDict
 _BASELINE_MAX_SESSIONS = int(os.environ.get("S2_BASELINE_MAX_SESSIONS", "256"))
 _BASELINE_TTL_S = float(os.environ.get("S2_BASELINE_TTL_S", "86400.0"))
 # Re-audit-hostile/2026-09-19-reaudit-fixes (RC-SYS-03): per-session file cap.
@@ -388,7 +386,6 @@ def _maybe_promote_session_to_corpus(
     from src.scoring_signals import (
         fit_benign_corpus,
         loo_threshold_for_fpr,
-        mahal_anomaly_against_corpus,
     )
     mean, cov, cov_inv = fit_benign_corpus(arr)
     
@@ -980,6 +977,26 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _mamba3_edit_context(before_src: str, after_src: str) -> tuple[str, str]:
+    """Keep the changed lines and nearby context inside the portable token budget."""
+    import difflib
+
+    before_lines, after_lines = before_src.splitlines(), after_src.splitlines()
+    matcher = difflib.SequenceMatcher(None, before_lines, after_lines, autojunk=False)
+    before_parts: list[str] = []
+    after_parts: list[str] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        before_parts.extend(before_lines[max(0, i1 - 1):min(len(before_lines), i2 + 1)])
+        after_parts.extend(after_lines[max(0, j1 - 1):min(len(after_lines), j2 + 1)])
+        if len(before_parts) + len(after_parts) >= 24:
+            break
+    if not before_parts and not after_parts:
+        return before_src, after_src
+    return "\n".join(before_parts), "\n".join(after_parts)
+
+
 # Thresholds are env-overridable so the operator can tune without a code edit.
 # Defaults match the calibrated values; see .envrc § "Sidecar tuning".
 _REGRESSION_AIS_THRESHOLD = _env_float("S2_AIS_THRESHOLD", 0.4)
@@ -1232,6 +1249,8 @@ def score_change(
     # ``embed(before_tokens)/embed(after_tokens)`` flow.
     if windowed_active is None or windowed_active is False:
         try:
+            if BACKBONE_INFO.get("embedder_backend") == "mamba3-siso-893m":
+                before_tokens, after_tokens = _mamba3_edit_context(before_src, after_src)
             emb_before = embed(before_tokens)
             emb_after = embed(after_tokens)
             cos = _cosine_similarity(emb_before, emb_after)
@@ -1256,7 +1275,6 @@ def score_change(
     # Cold-start: an empty/near-empty before_src has no meaningful baseline to
     # compare against. Skip cd entirely for these cases -- the 8-dim risk_vector
     # still flags churn/cyclomatic on bad content.
-    hidden_size = _backbone_hidden_size(emb_after)
     cold_start = (not before_src.strip()) or (len(before_src) < 32)
     if cold_start:
         coherence_delta = 0.0
@@ -1759,9 +1777,12 @@ def create_app():
         return True
 
     def _get_operator_token() -> Optional[str]:
-        """Retrieve operator enforcement token from keychain (darwin) or env."""
+        """Use the process token, falling back to Keychain on macOS."""
         import subprocess as _subprocess
         import sys as _sys
+        token = os.environ.get("RC_ENFORCEMENT_TOKEN")
+        if token:
+            return token
         # Darwin: keychain
         if _sys.platform == "darwin":
             try:

@@ -430,28 +430,17 @@ def test_probe_required_at_decide_callsite():
     )
 
 
-def test_probe_anti_spoof_for_mamba3(monkeypatch):
-    """A file named mamba_ssm on sys.path must NOT flip the probe.
-
-    The round-2 review noted: ``probe is spoofable (a file named
-    mamba_ssm on sys.path flips it)``. The fix: require
-    ``mamba_ssm.ops.selective_scan_interface`` to be importable
-    (real kernel entry point), not just any module named
-    ``mamba_ssm``.
-    """
+def test_probe_only_admits_supported_mamba3_variant(monkeypatch):
     from src import ssm_backbone
-    import sys, types, importlib
+    import torch
 
-    # Simulate an attacker-installed ``mamba_ssm`` package: a top-level
-    # module with no real submodule layout.
-    class _FakeSSM:
-        pass
-
-    fake_module = types.ModuleType("mamba_ssm")
-    fake_module.__file__ = "/tmp/attacker_mamba_ssm.py"  # not a real package
-    monkeypatch.setitem(sys.modules, "mamba_ssm", fake_module)
-    # Force re-import if needed.
-    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is False, (
-        "BLOCKER #3 anti-spoof failed: probe is fooled by a bare "
-        "module named mamba_ssm on sys.path."
-    )
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    monkeypatch.delenv("RC_EMBEDDER", raising=False)
+    monkeypatch.delenv("RC_MAMBA3_AUTO", raising=False)
+    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is False
+    monkeypatch.setenv("RC_MAMBA3_AUTO", "1")
+    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is True
+    assert ssm_backbone.backend_loadability_probe("mamba3-mimo-894m") is False
+    assert ssm_backbone.backend_loadability_probe("mamba3-siso-1.5b") is False
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is False

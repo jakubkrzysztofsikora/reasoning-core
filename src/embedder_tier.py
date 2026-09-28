@@ -187,8 +187,8 @@ TIERS: list[tuple[str, str, float, float]] = [
     ("xlarge", "mamba3-mimo-894m",   24.0, 32.0),
     ("large",  "mamba3-siso-1.5b",   16.0, 24.0),
     ("large",  "mamba3-mimo-894m",   16.0, 24.0),
-    ("large",  "mamba3-siso-893m",   12.0, 16.0),
     ("medium", "mamba3-mimo-894m",    8.0, 16.0),
+    ("large",  "mamba3-siso-893m",    8.0, float("inf")),
     ("medium", "mamba3-siso-893m",    8.0, 16.0),
     ("small",  "bge-code",            4.0,  8.0),
     ("small",  "unixcoder-base",      2.0,  8.0),
@@ -380,6 +380,8 @@ def decide(
                 f"working-set={working_set:.2f} GiB <= {RAM_HEADROOM * ram:.2f} GiB "
                 f"({RAM_HEADROOM * 100:.0f}% of {ram:.2f} GiB available); "
                 f"disk={disk:.2f} GiB"
+                + (f"; skipped unloadable: {', '.join(skipped_unloadable)}"
+                   if skipped_unloadable else "")
             ),
             candidates_considered=candidates,
         )

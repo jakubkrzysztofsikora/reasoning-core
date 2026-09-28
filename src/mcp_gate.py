@@ -27,6 +27,7 @@ from typing import Any, Dict, Literal
 import httpx
 
 from src.hooks import _host_env, audit_log
+from src.sidecar_auth import score_headers
 
 SIDE_CAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDE_CAR_URL}/score"
@@ -112,7 +113,7 @@ def gate_edit(
     try:
         endpoint = _resolve_score_endpoint()
         with httpx.Client(timeout=_timeout_seconds()) as client:
-            r = client.post(endpoint, json=body)
+            r = client.post(endpoint, json=body, headers=score_headers(endpoint))
         if r.status_code == 415:
             started_audit_decision = "allowed"
             started_message = "unsupported_language"

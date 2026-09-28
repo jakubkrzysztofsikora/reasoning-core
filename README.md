@@ -319,8 +319,8 @@ statistical bug. All three are closed in commit `d20c7be`:
 * **BLOCKER #2: `rc init` bricked ≥32GiB hosts.** The picker returned
   `mamba3-siso-1.5b` on a 40GB host but the loader refused fallback for
   operator-pinned backends, so every `/score` 503'd. The fix:
-  `src/ssm_backbone.backend_loadability_probe()` returns False for any
-  `mamba3-*` backend unless `mamba-ssm>=2.0.0` is importable; `decide()`
+  `src/ssm_backbone.backend_loadability_probe()` now accepts only the
+  supported SISO 893M portable path on an MPS host; `decide()`
   walks the tier matrix past unloadable candidates; `install_envrc()`
   writes `safe_backend_for_envrc` rather than `backend` when the
   auto-pick is unloadable. End-to-end verified: simulated 40GB host,
@@ -387,10 +387,9 @@ against the round-3 fixes. All four are closed in commit
   with malicious line at scope 1900 -> `coherence_delta=0.12`,
   `coherence_delta_above_threshold` fires.
 
-**Anti-spoof:** the probe now requires the real
-`mamba_ssm.ops.selective_scan_interface` submodule to be
-importable for Mamba-3, not just any module named `mamba_ssm` on
-`sys.path` (the round-2 spoofing vector).
+**Mamba3 loadability:** the current probe checks the in-repo portable SISO
+loader, the pinned model entry, and MPS availability. MIMO and 1.5B are
+still rejected. `RC_MAMBA3_AUTO=1` is required for an automatic pick.
 
 **Probe-required:** `decide()` now warns when called without
 `loadability_probe=`, so any future caller that forgets the
@@ -499,9 +498,9 @@ left these items out-of-scope for its blockers round:
     `pip install reasoning-core` returning an unrelated project).
     **Fixed 2026-09-25:** README quick start now uses git-based install;
     warning banner added. No PyPI release yet.
-  - Pre-reg embedder eval ladder (Mamba-3 default flip blocked
-    until `mamba-ssm>=2.0.0` is installed and the pre-reg gates
-    pass).
+  - Pre-reg embedder eval ladder (Mamba-3 default flip remains blocked
+    until the quality and latency gates pass; the portable SISO loader
+    removes the earlier kernel availability blocker).
   - **RC-SEC-04: `ln -s` symlink creation passes pre_bash_guard.** The guard
     blocks writes *through* symlinks that resolve to guarded paths, but does
     not block symlink creation itself. An agent can create a symlink alias to
@@ -534,7 +533,7 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
 
 **Open research items** (deferred, not bugs):
 
-- **Embedder swap (option 3, blocked 2026-09-21).** The default stays
+- **Embedder swap (option 3, under evaluation).** The process default stays
   at `mamba-130m` until the pre-reg eval ladder passes five gates
   (AUC >= 0.70, inversion >= 0.05, anisotropy reduction >= 0.04,
   latency parity, falsifiability). The Mamba-3 candidates are
@@ -543,10 +542,10 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
   shipped (`tests/test_pre_reg_embedder_gate.py`). Model-card pulls
   succeeded (`state-spaces/mamba3-siso-893m` etc., see
   `eval/calibrated/model_cards.json` for the pinned metadata) but the
-  checkpoints cannot be loaded by the current transformers stack (no
-  `Mamba3*` class, no `mamba-ssm>=2.0.0` kernels). The gate test stays
-  in skip mode until `mamba-ssm>=2.0.0` is installed and the harness
-  re-run. Status doc: `eval/runs/PRE_REG_STATUS_2026_09_21.md`.
+  SISO 893M checkpoint now loads through a strict CPU/MPS PyTorch
+  implementation in `src/mamba3_portable.py`; MIMO and 1.5B remain
+  unavailable. A successful load is not evidence of improved scoring
+  quality or latency parity. Status doc: `eval/runs/PRE_REG_STATUS_2026_09_21.md`.
 - **Windowed diff embeddings (Phase A shipped 2026-09-21).** New
   module [`src/diff_windowing.py`](src/diff_windowing.py) provides
   `embed_windowed(text, lang, diff_hunks)` with the same vector shape as
@@ -566,16 +565,17 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
 
   | Tier    | RAM window    | Backend chosen (loadable only) | Notes |
   |---------|---------------|-------------------------------|-------|
-  | xlarge  | ≥ 32 GiB      | `mamba3-siso-1.5b` if loadable, else legacy | Refused when Mamba-3 kernel missing (BLOCKER #2 fix) |
-  | large   | 16-32 GiB     | `mamba3-siso-1.5b` or `-893m` if loadable | MIMO if RAM allows |
-  | medium  | 8-16 GiB      | `mamba3-siso-893m` if loadable, else `unixcoder-base` | Best Mamba-3 fit |
+  | xlarge  | ≥ 32 GiB      | `mamba3-siso-893m` if loadable | MIMO and 1.5B remain unavailable |
+  | large   | 16-32 GiB     | `mamba3-siso-893m` if loadable | Working-set and disk checks still apply |
+  | medium  | 8-16 GiB      | `mamba3-siso-893m` if loadable, else `unixcoder-base` | Supported Mamba-3 variant |
   | small   | 2-8 GiB       | `bge-code` or `unixcoder-base` | Mamba-3 won't fit |
   | fallback| < 2 GiB       | `mamba-130m` (legacy default) | Last resort |
 
   **Loadability probe (BLOCKER #2 fix, 2026-09-22):** every entry above
   is now gated by `src.ssm_backbone.backend_loadability_probe()`, which
-  returns False for any `mamba3-*` backend unless `mamba-ssm>=2.0.0`
-  is importable on this host. When the auto-pick is unloadable,
+  accepts only the SISO 893M portable loader on MPS hosts when explicitly
+  pinned or when `RC_MAMBA3_AUTO=1` opts into experimental selection. When the
+  auto-pick is unloadable,
   `decide()` walks the tier matrix down to the next loadable
   candidate; when no Mamba-3 variant loads, the safe fallback is
   `mamba-130m` (the legacy default), NOT an unloadable backend that
@@ -588,6 +588,19 @@ through a symlink onto a guarded path**. Tunable knobs: `S2_HEALTH_TIMEOUT_S`
   warning paths. The auto-pick decision is recorded in the immutable
   baseline manifest (`embedder_tier`, `embedder_backend`,
   `embedder_working_set_gb`).
+
+  To run the verified SISO checkpoint on this Mac, set
+  `RC_EMBEDDER=mamba3-siso-893m` and restart the sidecar. The loader uses
+  pinned BF16 weights plus a pinned public mirror of the Llama 3.1 tokenizer
+  named by the model card. Check `/health` for `model_loaded:true`,
+  `embedder_backend:mamba3-siso-893m`, and the revision SHA. The portable
+  path supports a 2,048-token context, with a 64-token operational budget
+  by default because the reference recurrence is slow. Set
+  `S2_HARD_CAP_MS=20000` for hook scoring on this backend. Existing
+  `.envrc` files are not rewritten by `rc init`, so update an older pin
+  explicitly. Neural scores remain advisory without a deterministic
+  corroborating signal. Automatic selection remains opt-in while runtime
+  and task-quality evaluation continues.
 - **Scoring-v3 (Phase C, shipped 2026-09-22).** New module
   [`src/scoring_signals.py`](src/scoring_signals.py) exposes
   `fit_benign_corpus`, `mahal_anomaly_against_corpus`, and

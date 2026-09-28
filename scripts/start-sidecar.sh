@@ -11,11 +11,12 @@
 #
 # Env knobs:
 #   S2_PORT              -- bind port (default 8765).
-#   S2_DEVICE            -- cpu|cuda (default cpu).
+#   S2_DEVICE            -- cpu|mps|cuda (default cpu).
 #   S2_SSM_CHECKPOINT    -- HF checkpoint id (legacy; default state-spaces/mamba-130m-hf).
 #   RC_EMBEDDER          -- embedder backend selection (default mamba-130m).
 #                         Supported: mamba-130m | codestral-mamba | bge-code |
-#                         unixcoder-base | random-mamba | codestral-mamba-gguf.
+#                         unixcoder-base | random-mamba | codestral-mamba-gguf |
+#                         mamba3-siso-893m (portable CPU/MPS; 2048 tokens).
 #                         codestral-mamba, bge-code, unixcoder-base require a
 #                         SHA pin via RC_<REPO_SLUG>_REVISION before they will
 #                         load (supply-chain hardening; see ssm_backbone.py).

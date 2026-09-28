@@ -159,7 +159,7 @@ def install_envrc(target: Path, manifest: Path, substitutions: dict[str, str],
         text = text + tier_line
         # Record into the manifest so rc upgrade/doctor can re-verify.
         _record(manifest, f"embedder_tier={decision.tier}")
-        _record(manifest, f"embedder_backend={decision.backend}")
+        _record(manifest, f"embedder_backend={chosen}")
         _record(manifest, f"embedder_working_set_gb={decision.estimated_working_set_gb}")
     except Exception as exc:  # noqa: BLE001 -- never let the sizer block init
         result.warned.append(f"embedder_tier auto-pick failed: {type(exc).__name__}: {exc}")

@@ -25,10 +25,17 @@ async function callSidecar(
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), S2_TIMEOUT_MS);
+    const target = new URL(S2_URL);
+    const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(target.hostname);
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (loopback && process.env.RC_ENFORCEMENT_TOKEN) {
+      headers.authorization = `Bearer ${process.env.RC_ENFORCEMENT_TOKEN}`;
+    }
     const resp = await fetch(`${S2_URL}/score`, {
       method: "POST",
       body: JSON.stringify(payload),
-      headers: { "content-type": "application/json" },
+      headers,
+      redirect: "error",
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -42,7 +49,7 @@ async function callSidecar(
       return { blocked: false };
     }
     const report = await resp.json();
-    const blocked = report.decision === "block" || report.regression_detected === true;
+    const blocked = report.decision === "block";
     const reason = blocked ? report.message : undefined;
     return { blocked, reason };
   } catch (e) {

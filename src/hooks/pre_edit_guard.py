@@ -27,6 +27,7 @@ import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,7 +43,6 @@ if _PACKAGE_ROOT not in sys.path:
 import audit_log  # type: ignore  # noqa: E402
 import _guard_paths  # type: ignore  # noqa: E402
 import _dispatch  # type: ignore  # noqa: E402
-from _block_format import format_block as _format_block  # type: ignore  # noqa: E402
 
 # Phase 2 execution-grounded oracles and cumulative patch tracker.
 try:
@@ -83,13 +83,15 @@ def _hard_cap_seconds() -> float:
     """Client-side hard cap on the /score POST.
 
     Audit 2026-06-01 §1.4: sidecar p95=58s, p99=60s. Without a cap the
-    agent can stall for a full minute per Edit. Defaults to 1500ms; never
+    agent can stall for a full minute per Edit. Defaults to 1500ms for the
+    legacy embedder and 20000ms for portable Mamba3; never
     exceeds S2_TIMEOUT (the upstream HTTP read timeout). On cap-exceeded
     the caller falls back to the symbolic gate (rule_engine + lang_lock)
     and audits reason="symbolic_fallback".
     """
     try:
-        cap_ms = int(os.getenv("S2_HARD_CAP_MS", "1500"))
+        default_ms = "20000" if os.getenv("RC_EMBEDDER", "").startswith("mamba3-") else "1500"
+        cap_ms = int(os.getenv("S2_HARD_CAP_MS", default_ms))
     except ValueError:
         cap_ms = 1500
     return cap_ms / 1000.0
@@ -253,15 +255,36 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
     if sid:
         payload["session_id"] = sid
     body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    token = os.environ.get("RC_ENFORCEMENT_TOKEN", "")
+    if not token and sys.platform == "darwin":
+        try:
+            import subprocess
+            found = subprocess.run(
+                ["security", "find-generic-password", "-s", "reasoning-core-enforcement",
+                 "-a", os.environ.get("USER", ""), "-w"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if found.returncode == 0:
+                token = found.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    target = urllib.parse.urlsplit(SCORE_ENDPOINT)
+    if token and target.scheme == "http" and target.hostname in ("127.0.0.1", "localhost", "::1"):
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(
         SCORE_ENDPOINT,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     cap_s = _effective_score_timeout()
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, newurl):
+            return None
+
     try:
-        with urllib.request.urlopen(req, timeout=cap_s) as resp:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=cap_s) as resp:
             data = resp.read()
             try:
                 parsed = json.loads(data.decode("utf-8"))
@@ -563,7 +586,6 @@ def _emit_audit(
         regression = None
         risk_vector: List[float] = []
         cumulative_drift = None
-        language = ""
         human_summary = ""
         if isinstance(report, dict):
             ais = report.get("architectural_impact_score")

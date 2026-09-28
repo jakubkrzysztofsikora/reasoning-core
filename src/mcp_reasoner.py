@@ -26,6 +26,7 @@ from typing import Any, Dict, Literal
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+from src.sidecar_auth import score_headers
 
 SIDE_CAR_URL = os.getenv("S2_URL", "http://127.0.0.1:8765")
 SCORE_ENDPOINT = f"{SIDE_CAR_URL}/score"
@@ -152,7 +153,7 @@ def reason_over_edit(
     try:
         endpoint = _resolve_score_endpoint()
         with httpx.Client(timeout=_timeout_seconds()) as client:
-            response = client.post(endpoint, json=payload)
+            response = client.post(endpoint, json=payload, headers=score_headers(endpoint))
     except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPError):
         return _sidecar_unavailable()
     except Exception:  # noqa: BLE001 - hard guard; tool must never raise.

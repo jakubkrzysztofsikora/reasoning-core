@@ -4,6 +4,9 @@ This is an exploratory, two-task host pilot. It does **not** establish a
 FeatureBench leaderboard score or a causal benefit for any arm. The same
 Claude Code 2.1.282 / `claude-sonnet-4-5` agent ran in every arm:
 
+The later bounded Mamba3 + Laya Codex pilot and its runtime limitations are
+recorded in [`../runs/MAMBA3_LAYA_PILOT_2026_09_28.md`](../runs/MAMBA3_LAYA_PILOT_2026_09_28.md).
+
 | Arm | Agent configuration |
 | --- | --- |
 | `vanilla` | Claude only |

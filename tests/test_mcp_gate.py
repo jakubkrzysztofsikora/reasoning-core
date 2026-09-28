@@ -2,8 +2,6 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
@@ -22,7 +20,7 @@ class _MockClient:
     def __exit__(self, *a):
         return False
 
-    def post(self, url, json=None):
+    def post(self, url, json=None, headers=None):
         if self._raise:
             raise self._raise
         r = type("R", (), {"status_code": self._sc, "json": lambda self_=None: self._p})()
