@@ -75,7 +75,12 @@ worktrees by more than 10x compared with vanilla Claude Code (rate-ratio upper
 95% CI: 0.0295; 150 pairs; Claude Code 2.1.274, `claude-sonnet-4-5`, Edit/Write
 only). See [`docs/EVAL_10X_PROTOCOL.md`](docs/EVAL_10X_PROTOCOL.md) and
 [`docs/EVAL_RESULTS.md`](docs/EVAL_RESULTS.md) for full results, scope, and
-limitations. The benchmark figures in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
+limitations. In multi-module architectural evaluations on large codebases
+(FeatureBench Sphinx row 99, ~200k LOC), Reasoning Core + Laya achieved a 70%
+host test pass rate (7/10) by blocking duplicate definition collisions and
+structural regressions, whereas unguided agents failed 100% of tests (0/10) due
+to hallucinated schema defaults (see [`eval/featurebench_four_arm/README.md`](eval/featurebench_four_arm/README.md)).
+The historical benchmark figures in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md)
 are separate historical results from an earlier schema and are not a current
 product guarantee.
 
@@ -269,7 +274,16 @@ after ~48 h of shadow review and manually authoring a `PLAN.md` to promote to
 the host's available RAM and disk via `src/embedder_tier.py`; the
 chosen tier + backend are written to `.envrc` (override at any time
 with `export RC_EMBEDDER=<backend>` before `direnv reload`). The
-auto-pick honours an existing `RC_EMBEDDER` pin. Full env-var table:
+auto-pick honours an existing `RC_EMBEDDER` pin.
+
+> **2026-09-28 default change:** the operational default is now
+> `mamba3-siso-893m` (Mamba-3 SISO 893M). The legacy `mamba-130m`
+> pin is deprecated; explicit overrides are still honoured with a
+> deprecation warning. The auto-pick is resource-aware: the host's
+> available RAM determines which Mamba-3 variant (or non-Mamba
+> fallback) is selected. The portable SISO 893M runs on CPU or MPS.
+>
+> Full env-var table:
 [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
 

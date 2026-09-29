@@ -33,7 +33,6 @@ from src import embedder_tier
         #   mamba3-siso-893m:  1.79 * 2.5 = 4.475 GiB (needs >=5.594 GiB)
         #   bge-code:           0.45 * 2.5 = 1.125 GiB (needs >=1.406 GiB)
         #   unixcoder-base:     0.5  * 2.5 = 1.25  GiB (needs >=1.563 GiB)
-        #   mamba-130m:         0.25 * 2.5 = 0.625 GiB (needs >=0.781 GiB)
         (64.0, 100.0, "mamba3-siso-1.5b"),   # 64 GiB >> 7.5 GiB; pick 1.5b
         (40.0, 100.0, "mamba3-siso-1.5b"),   # 40 GiB still fits 1.5b
         (24.0, 50.0,  "mamba3-mimo-894m"),   # 24 GiB in MIMO xlarge window; 1.5b needs >=32
@@ -246,11 +245,10 @@ def test_decide_skips_unloadable_tier_top_entry(monkeypatch):
     assert "mamba3-siso-1.5b" in d.reason or "unloadable" in d.reason.lower()
 
 
-def test_decide_falls_back_to_legacy_when_all_mamba3_unloadable(monkeypatch):
-    """If every Mamba-3 candidate is unloadable, decide() falls to mamba-130m."""
+def test_decide_does_not_auto_select_deprecated_mamba130m(monkeypatch):
+    """A loadability probe must never restore the deprecated auto fallback."""
 
     def _probe_nothing_works(backend: str) -> bool:
-        # Only the legacy mamba-130m loads on this host.
         return backend == "mamba-130m"
 
     d = embedder_tier.decide(
@@ -258,10 +256,7 @@ def test_decide_falls_back_to_legacy_when_all_mamba3_unloadable(monkeypatch):
         available_disk_gb_value=100.0,
         loadability_probe=_probe_nothing_works,
     )
-    assert d.backend == "mamba-130m", (
-        f"expected fallback to mamba-130m when no Mamba-3 candidate loads; "
-        f"got {d.backend!r}"
-    )
+    assert d.backend == "unixcoder-base"
 
 
 def test_decide_default_probe_accepts_pure_ram_decision(monkeypatch):
@@ -270,7 +265,7 @@ def test_decide_default_probe_accepts_pure_ram_decision(monkeypatch):
     The 8-GB tier matrix was widened in 2026-09-22 to also include
     mamba3-mimo-894m (4.5 GB working-set, fits 8 GB at 80 % headroom),
     so we accept any of the Mamba-3 / bge-code / unixcoder-base /
-    mamba-130m variants as a valid pick.
+    supported variants as a valid pick.
     """
     d = embedder_tier.decide(
         available_ram_gb_value=8.0,
@@ -282,7 +277,6 @@ def test_decide_default_probe_accepts_pure_ram_decision(monkeypatch):
         "mamba3-mimo-894m",
         "bge-code",
         "unixcoder-base",
-        "mamba-130m",
     }
 
 
@@ -311,7 +305,7 @@ def test_decide_writes_no_op_when_all_unloadable(monkeypatch, tmp_path):
     """rc init must NOT write a brick-inducing backend to .envrc.
 
     End-to-end: when no probe says any Mamba-3 candidate loads, the
-    caller (rc_cli.init) writes ``RC_EMBEDDER=mamba-130m`` to .envrc
+    caller (rc_cli.init) must avoid the deprecated Mamba-130M backend.
     rather than the auto-pick. This test verifies decide()'s
     ``safe_backend_for_envrc`` field reports the fallback candidate
     rather than the unloadable pick.
@@ -326,13 +320,11 @@ def test_decide_writes_no_op_when_all_unloadable(monkeypatch, tmp_path):
         loadability_probe=_probe_only_legacy,
     )
     # Auto-pick is mamba3-siso-1.5b on 64GB host, but unloadable.
-    # The safe backend to write to .envrc is the legacy default.
+    # The fallback candidate is reported as unsupported for this host.
     assert d.backend != "mamba3-siso-1.5b"
     # And the report carries a flag the caller can read.
     safe = getattr(d, "safe_backend_for_envrc", None)
-    assert safe == "mamba-130m", (
-        f"expected safe_backend_for_envrc=mamba-130m; got {safe!r}"
-    )
+    assert safe == "unixcoder-base"
 
 
 # ---------------------------------------------------------------------------
@@ -437,10 +429,23 @@ def test_probe_only_admits_supported_mamba3_variant(monkeypatch):
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
     monkeypatch.delenv("RC_EMBEDDER", raising=False)
     monkeypatch.delenv("RC_MAMBA3_AUTO", raising=False)
-    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is False
+    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is True
     monkeypatch.setenv("RC_MAMBA3_AUTO", "1")
     assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is True
     assert ssm_backbone.backend_loadability_probe("mamba3-mimo-894m") is False
     assert ssm_backbone.backend_loadability_probe("mamba3-siso-1.5b") is False
     monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
-    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is False
+    assert ssm_backbone.backend_loadability_probe("mamba3-siso-893m") is True
+
+
+def test_auto_pick_default_backend_with_probe_settles_on_mamba3_siso_893m(monkeypatch):
+    """BLOCKER 1 regression: on a 16+ GiB host where mamba3-siso-1.5b and mimo-894m
+    are unloadable, the auto-picker passes the loadability probe and settles on
+    the supported mamba3-siso-893m."""
+    from src import _init
+
+    monkeypatch.delenv("RC_EMBEDDER", raising=False)
+    monkeypatch.setattr(embedder_tier, "available_ram_gb", lambda: 16.0)
+    picked = _init._auto_pick_default_backend()
+    assert picked == "mamba3-siso-893m", f"expected mamba3-siso-893m, got {picked!r}"
+

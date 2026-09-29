@@ -255,6 +255,24 @@ python3 -m eval.run_suite --task fixtures/smoke --n 2
 python3 -m eval.aggregate --runs eval/runs/smoke-001
 ```
 
+---
+
+## Four-arm FeatureBench pilots (2026-09)
+
+Recent exploratory evaluations evaluate the interaction between Codex CLI, local Laya intake triage, and Reasoning Core with Mamba-3 SISO 893M across isolated host checkouts:
+
+1. **Seaborn Bounded Pilot (`mwaskom__seaborn.7001ebe7.test_bar.123ed709.lv1`)**:
+   - Evaluated isolated coordinate calculations on nonlinear scales.
+   - All patching arms (`vanilla`, `laya`, `laya_rc`) achieved 15/16 passes (93.8%), failing on the same downstream `test_auto_edgewidth` broadcasting check.
+   - Demonstrated Mamba-3 SISO 893M loopback stability (0 timeouts, 0 fallbacks, 190 ms warm forward latency).
+
+2. **Sphinx Multi-Module Architecture Pilot (`sphinx-doc__sphinx.e347e59c.test_command_line.039d53a2.lv1`)**:
+   - Evaluated multi-module architectural restoration across `sphinx/cmd/build.py` and `sphinx/cmd/make_mode.py` in a ~200k LOC codebase.
+   - **`vanilla`**: 0/10 passed (hallucinated illegal default keys, breaking all argument parsing tests).
+   - **`laya`**: 0/10 passed (fast triage, but identical hallucinated keys).
+   - **`rc`**: 0/10 passed (timed out exploring without completing patch).
+   - **`laya_rc`**: **7/10 passed (70% pass rate)**. Reasoning Core's pre-patch gates blocked duplicate definitions and surfaced Mamba-3 structural risk warnings, preventing hallucinated options and restoring compliant argument parsing.
+   - Details in [`eval/featurebench_four_arm/README.md`](../eval/featurebench_four_arm/README.md).
 
 ## See also
 
@@ -262,3 +280,4 @@ python3 -m eval.aggregate --runs eval/runs/smoke-001
   response to the 2026-09-19 hostile review that surfaced the
   T5/T7/P0 data-integrity issues. The retraction block above lives at
   commit `841211b` on branch `audit-hostile/2026-09-19-fixes`.
+

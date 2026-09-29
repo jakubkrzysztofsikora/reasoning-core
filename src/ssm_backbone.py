@@ -315,27 +315,20 @@ def backend_loadability_probe(backend_name: str) -> bool:
 
     This avoids the earlier failure where an unavailable Mamba3 backend
     was pinned and then refused runtime fallback. The portable SISO 893M
-    backend can be selected explicitly or with RC_MAMBA3_AUTO=1 on an MPS
-    host. The probe does not download weights or promise runtime latency.
+    backend runs on CPU or MPS. The probe does not download weights or
+    promise runtime latency.
     """
     if backend_name not in _BACKENDS:
         return False
     if backend_name.startswith("mamba3-"):
         # The portable implementation is specific to the pinned SISO 893M
-        # architecture. Automatic selection remains behind an explicit
-        # experiment switch until latency and quality gates are met.
+        # architecture. Other Mamba3 variants remain unavailable.
         if backend_name != "mamba3-siso-893m":
             return False
-        if (os.environ.get("RC_MAMBA3_AUTO") != "1"
-                and os.environ.get("RC_EMBEDDER", "").strip() != backend_name):
-            return False
         try:
-            import torch
             import huggingface_hub  # noqa: F401
             from src.mamba3_portable import load_mamba3_siso  # noqa: F401
         except ImportError:
-            return False
-        if not torch.backends.mps.is_available():
             return False
     # RC-LOAD-PROBE-01 (round-2 Finding 3): every non-mamba3 backend
     # must have a pinned SHA in ``_PINNED_REVISIONS`` or the loader
@@ -362,7 +355,7 @@ def backend_loadability_probe(backend_name: str) -> bool:
 # ``unixcoder-base`` carry ``revision="main"`` in the registry and are
 # fail-closed under ``_resolve_revision_for_backend`` until an operator pins
 # them (see _PINNED_REVISIONS or RC_<REPO_SLUG>_REVISION).
-_DEFAULT_BACKEND_NAME: str = "mamba-130m"
+_DEFAULT_BACKEND_NAME: str = "mamba3-siso-893m"
 
 # Legacy constants — kept for API compat; new code uses _EmbedderBackend.
 DEFAULT_CHECKPOINT = _BACKENDS["mamba-130m"].checkpoint
@@ -501,14 +494,24 @@ def _resolve_device(device: Optional[str]) -> str:
 
 
 def _resolve_backend() -> _EmbedderBackend:
-    """Select backend from RC_EMBEDDER env (default mamba-130m)."""
-    name = os.environ.get("RC_EMBEDDER", _DEFAULT_BACKEND_NAME).strip().lower()
-    if name not in _BACKENDS:
-        logger.warning(
-            "RC_EMBEDDER=%r not recognised; falling back to %s",
-            name, _DEFAULT_BACKEND_NAME,
+    """Honor an explicit pin or select a loadable backend for this host."""
+    name = os.environ.get("RC_EMBEDDER", "").strip().lower()
+    if not name:
+        from src import embedder_tier
+        decision = embedder_tier.decide(
+            loadability_probe=backend_loadability_probe,
+            legacy_fallback="unixcoder-base",
         )
-        name = _DEFAULT_BACKEND_NAME
+        if not decision.fits or not backend_loadability_probe(decision.backend):
+            raise BackboneUnavailableError(
+                f"No loadable embedder fits this host: {decision.reason}"
+            )
+        name = decision.backend
+        logger.info("Auto-selected embedder=%s: %s", name, decision.reason)
+    if name not in _BACKENDS:
+        raise BackboneUnavailableError(f"Unknown RC_EMBEDDER={name!r}")
+    if name == "mamba-130m":
+        logger.warning("mamba-130m is deprecated; use Mamba3 where resources permit")
     return _BACKENDS[name]
 
 
@@ -1008,7 +1011,7 @@ def load_backbone(
 ) -> tuple[Any, Any]:
     """Load (or return cached) embedder backbone + tokenizer.
 
-    Backend is selected via ``RC_EMBEDDER`` env (default: mamba-130m).
+    Backend is selected via ``RC_EMBEDDER`` or resource-aware auto-selection.
     The ``checkpoint`` arg is retained for backward compat but ignored
     unless ``RC_EMBEDDER`` is not set and ``S2_SSM_CHECKPOINT`` is used.
 
@@ -1077,12 +1080,11 @@ def load_backbone(
         # (download flake, revision mismatch, llama_cpp issue) silently
         # promoted the load into the 76 GB swap-thrash territory that crashed
         # the host on 2026-05-16. Strict mode short-circuits that path.
-        operator_explicit = bool(os.environ.get("RC_EMBEDDER", "").strip())
+        operator_explicit = bool(os.environ.get("RC_EMBEDDER", "").strip()) or backend.name.startswith("mamba3-")
         if operator_explicit:
             msg = (
                 f"RC_EMBEDDER={backend.name} failed to load and no fallback "
-                "is permitted when the operator pinned the backend explicitly. "
-                "Unset RC_EMBEDDER to allow registry fallback."
+                "is permitted for an explicit pin or the Mamba3 default."
             )
             _LAST_FAILURE_TS = time.monotonic()
             _LAST_FAILURE_MSG = msg
@@ -1093,15 +1095,10 @@ def load_backbone(
         # an accidental fallback from blowing up RAM. Backends larger than 1K
         # hidden (e.g. codestral-mamba 7B / GGUF) are excluded from automatic
         # fallback; use them explicitly via RC_EMBEDDER.
-        fallback_order = sorted(
-            _BACKENDS.items(),
-            key=lambda kv: 0 if kv[1].hidden_size <= 1024 else kv[1].hidden_size,
-        )
-        for name, fb_backend in fallback_order:
-            if name == backend.name:
+        for name in ("unixcoder-base", "bge-code"):
+            if name == backend.name or not backend_loadability_probe(name):
                 continue
-            if fb_backend.hidden_size > 1024:
-                continue
+            fb_backend = _BACKENDS[name]
             handle = _try_load_backend(fb_backend, device)
             if handle is not None:
                 _HANDLE = handle
@@ -1115,7 +1112,7 @@ def load_backbone(
 
         msg = (
             "No embedder backend could be loaded. "
-            "Tried RC_EMBEDDER={} and legacy fallbacks. "
+            "Tried RC_EMBEDDER={} and supported fallbacks. "
             "Set RC_EMBEDDER to one of: {}.".format(
                 os.environ.get("RC_EMBEDDER", _DEFAULT_BACKEND_NAME),
                 ", ".join(_BACKENDS.keys()),

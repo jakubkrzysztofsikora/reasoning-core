@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "benchmark": "LiberCoders/FeatureBench",
+  "dataset_revision": "76b4a4566e04f4bcc13c35125d4f301791efa736",
+  "split": "fast",
+  "baseline_id": "baseline-2026-09-27-featurebench-four-arm-prepilot",
+  "cases": [
+    {
+      "row_index": 99,
+      "instance_id": "sphinx-doc__sphinx.e347e59c.test_command_line.039d53a2.lv1",
+      "repo": "sphinx-doc/sphinx",
+      "base_commit": "e347e59ccc27a646c974526252e39a63870f6ea3",
+      "problem_sha256": "5555a562c9a9ff5adf700b755a36bd8eff11a37e42d1b816aa252f4197692e8e",
+      "fail_to_pass_files": [
+        "tests/test_command_line.py"
+      ]
+    }
+  ]
+}

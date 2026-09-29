@@ -60,3 +60,17 @@ def test_default_grace_env_override(monkeypatch):
     monkeypatch.setenv("S2_HEALTH_GRACE_S", "90.0")
     importlib.reload(supervisor)
     assert supervisor._HEALTH_GRACE_S == 90.0
+
+
+def test_stubborn_child_is_killed_after_termination_timeout():
+    import subprocess
+    from unittest.mock import Mock
+
+    proc = Mock()
+    proc.poll.return_value = None
+    proc.wait.side_effect = [subprocess.TimeoutExpired("sidecar", 0.01), -9]
+
+    assert supervisor._stop_child(proc, grace_s=0.01) is True
+    proc.terminate.assert_called_once_with()
+    proc.kill.assert_called_once_with()
+    assert proc.wait.call_count == 2

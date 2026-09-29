@@ -293,7 +293,7 @@ def test_corpus_promotion_handles_degenerate_corpus_gracefully(monkeypatch):
         )
 
 
-def test_session_baseline_accepts_explicit_corpus_after_promotion(monkeypatch):
+def test_session_baseline_accepts_explicit_corpus_after_promotion(tiny_embedder, monkeypatch):
     """Per-path baselines must still accumulate after corpus promotion.
 
     A separate-but-related fix: even after corpus promotion, callers

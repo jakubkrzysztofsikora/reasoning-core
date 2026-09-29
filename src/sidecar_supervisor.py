@@ -152,6 +152,27 @@ def _is_alive(child: _Child) -> bool:
     return child.proc is not None and child.proc.poll() is None
 
 
+def _stop_child(proc: subprocess.Popen, *, grace_s: float = 5.0) -> bool:
+    """Reap an unhealthy child, escalating if it ignores SIGTERM."""
+    if proc.poll() is not None:
+        return True
+    try:
+        proc.terminate()
+        proc.wait(timeout=grace_s)
+        return True
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("[supervisor] child ignored SIGTERM; sending SIGKILL\n")
+        try:
+            proc.kill()
+            proc.wait(timeout=grace_s)
+            return True
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            sys.stderr.write(f"[supervisor] child could not be reaped: {exc}\n")
+    except OSError as exc:
+        sys.stderr.write(f"[supervisor] child termination failed: {exc}\n")
+    return proc.poll() is not None
+
+
 def _supervise_one(child: _Child, *, stop: threading.Event,
                    extra_env: Optional[Dict[str, str]] = None) -> None:
     while not stop.is_set():
@@ -196,6 +217,7 @@ def _supervise_one(child: _Child, *, stop: threading.Event,
                 child.health_url,
                 require_model_loaded=child.requires_model_loaded,
             )
+            stale_proc = None
             with child.lock:
                 if ok:
                     child.last_ok = now
@@ -215,10 +237,9 @@ def _supervise_one(child: _Child, *, stop: threading.Event,
                         child.failures = 0
                         child.backoff_s = 1.0
                         if child.proc and child.proc.poll() is None:
-                            try:
-                                child.proc.terminate()
-                            except OSError:
-                                pass
+                            stale_proc = child.proc
+            if stale_proc is not None and not _stop_child(stale_proc):
+                sys.stderr.write(f"[supervisor] {child.name} remains alive after escalation\n")
             stop.wait(5.0)
         except Exception as exc:
             sys.stderr.write(
@@ -345,6 +366,9 @@ def main() -> int:
 
     for t in threads:
         t.join(timeout=2.0)
+    for child in children:
+        if child.proc and child.proc.poll() is None:
+            _stop_child(child.proc)
     if broker is not None:
         broker.shutdown()
     return 0

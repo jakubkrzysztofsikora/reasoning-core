@@ -612,6 +612,41 @@ MAMBA_130M_REVISION = "1e76775f628fbf1350fbe4dbb3d971ba64af25a1"
 MAMBA_130M_REPO = "state-spaces/mamba-130m-hf"
 
 
+def _auto_pick_default_backend() -> str:
+    """Return the resource-aware default backend for download_default_model.
+
+    Honours an operator-pinned RC_EMBEDDER; otherwise walks the
+    embedder_tier matrix using the SSM backend loadability probe to
+    pick the largest candidate that can actually be instantiated on
+    this host. On a 16+ GiB machine where mamba3-siso-1.5b is not
+    loadable, this correctly settles on mamba3-siso-893m rather than
+    an unloadable top-tier entry.
+
+    Returns the backend identifier (e.g. "mamba3-siso-893m",
+    "unixcoder-base"), NOT the raw repo id. Falls back to "mamba-130m"
+    on any sizing failure so init never fails closed.
+    """
+    pinned = os.environ.get("RC_EMBEDDER", "").strip()
+    if pinned:
+        return pinned
+    try:
+        from src import embedder_tier as _et  # noqa: PLC0415
+        from src import ssm_backbone as _ssm  # noqa: PLC0415
+        decision = _et.decide(
+            requested_backend=None,
+            loadability_probe=_ssm.backend_loadability_probe,
+            legacy_fallback="unixcoder-base",
+        )
+        # safe_backend_for_envrc reports the fallback candidate when the
+        # pick itself cannot be safely written; prefer it when present.
+        chosen = getattr(decision, "safe_backend_for_envrc", None) or decision.backend
+        if chosen and _ssm.backend_loadability_probe(chosen):
+            return chosen
+    except Exception:  # noqa: BLE001 -- never let the sizer block init
+        pass
+    return "mamba-130m"
+
+
 def download_default_model(result: InitResult, target_dir: Optional[Path] = None) -> bool:
     """Synchronously download the default embedder checkpoint.
 
@@ -631,13 +666,13 @@ def download_default_model(result: InitResult, target_dir: Optional[Path] = None
     # RC_EMBEDDER isn't already pinned. The picked backend lives in
     # _BACKENDS (src/ssm_backbone.py); the previous behaviour hard-coded
     # MAMBA_130M_REPO regardless of the host's tier.
-    picked = os.environ.get("RC_EMBEDDER", MAMBA_130M_REPO)
+    picked = _auto_pick_default_backend()
     try:
         from src import ssm_backbone as _ssm  # noqa: PLC0415
         try:
             backend = _ssm._BACKENDS[picked]
             repo_id = backend.checkpoint
-            revision = backend.revision or "main"
+            revision = _ssm._resolve_revision_for_backend(backend)
         except KeyError:
             # Operator-typed backend not in registry; treat the value
             # as a raw HF repo id and pin to main.
@@ -656,6 +691,22 @@ def download_default_model(result: InitResult, target_dir: Optional[Path] = None
             revision=revision,
             cache_dir=str(cache_dir),
         )
+        # 2026-09-28: mamba3-siso-893m ships no tokenizer assets of its
+        # own; runtime loading depends on unsloth/Meta-Llama-3.1-8B. Prefetch
+        # the tokenizer mirror so offline and firewalled environments can
+        # boot without hitting Hugging Face on sidecar startup.
+        if picked == "mamba3-siso-893m":
+            try:
+                snapshot_download(
+                    repo_id="unsloth/Meta-Llama-3.1-8B",
+                    revision="e9a141a2091ea561b96483212645a2a05e6f99fc",
+                    cache_dir=str(cache_dir),
+                    allow_patterns=["tokenizer*", "special_tokens_map.json"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                result.warned.append(
+                    f"tokenizer mirror prefetch failed (unsloth/Meta-Llama-3.1-8B): {exc}"
+                )
         result.model_downloaded = True
         return True
     except Exception as exc:  # noqa: BLE001 — surface any HF failure

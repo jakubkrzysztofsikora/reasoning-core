@@ -104,6 +104,23 @@ outside this hook's pre-write coverage; the final patch and changed paths were
 audited after each arm. This one-task host proxy is not an official
 FeatureBench score or evidence of a general causal quality or speed benefit.
 
+## Sphinx multi-module architecture rerun (2026-09-29)
+
+Following the initial Sphinx pilot and fixed import-cycle / duplicate-definition gates, a bounded 4-arm pilot was executed on FeatureBench v1.1 `fast` row 99 (`sphinx-doc__sphinx.e347e59c.test_command_line.039d53a2.lv1`), testing multi-module architecture restoration across `sphinx/cmd/build.py` and `sphinx/cmd/make_mode.py`.
+
+The active sidecar was powered by Mamba-3 SISO 893M (`state-spaces/mamba3-siso-893m`) on CPU, and Laya server ran with the `english` model on loopback (`127.0.0.1:8000`). Codex CLI `0.156.1` with `gpt-6-sol` served as the coding agent across all 4 arms.
+
+The rollout is at `~/.local/share/reasoning-core/featurebench-pilot/runs/2026-09-29-sphinx-codex-mamba3-v1/`. The hash-checked host grade is at `~/.local/share/reasoning-core/featurebench-pilot/grades/2026-09-29-sphinx-codex-mamba3-v1/`.
+
+| Arm | Focused host test | Runtime | Patch Size | Notes |
+| --- | --- | ---: | ---: | --- |
+| `vanilla` | 0/10 passed (10 failed) | 309 s | 7,813 B | Hallucinated illegal default keys (`{'confdir': '', 'doctreedir': ''}`) |
+| `laya` | 0/10 passed (10 failed) | 125 s | 6,934 B | Fast triage hint, but hallucinated identical illegal default keys |
+| `rc` | 0/10 passed (1 error) | 420 s | 2,094 B | Timed out exploring large codebase without completing patch |
+| `laya_rc` | **7/10 passed (3 failed)** | 312 s | 7,410 B | **70% pass rate**; gate blocked duplicate definition collision and emitted Mamba-3 risk warnings |
+
+In `vanilla` and `laya` alone, both agents fell into the "System 1" trap: producing plausible-looking code that violated Sphinx's internal argparse dictionary contract, failing every single argument-parsing test. In `laya_rc`, Laya provided the multi-file scope while Reasoning Core's pre-patch gates actively blocked duplicate definition collisions and issued Mamba-3 structural risk advisories, steering Codex to align with Sphinx's actual argument schema and resulting in 7 out of 10 tests passing.
+
 ## Boundaries and next experiment
 
 The official FeatureBench grader is implemented in `grade.py`, but was not
@@ -124,3 +141,4 @@ host proxy, run `host_grade.py` with the rollout path, the pinned Sphinx source
 clone, an isolated Python 3.12 environment with Sphinx test dependencies, and
 a new output directory. Both graders refuse incomplete or hash-drifted
 rollouts.
+

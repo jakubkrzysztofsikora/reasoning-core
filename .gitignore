@@ -50,3 +50,8 @@ eval/calibrated/prm_corpus.jsonl
 
 # Per-repo install manifest written by `rc init` / `install.sh`.
 .reasoning-core/
+
+# Local databases and runtime state
+data/
+eval/runs/
+

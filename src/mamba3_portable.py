@@ -19,6 +19,10 @@ from torch.nn import functional as F
 
 
 CHECKPOINT = "state-spaces/mamba3-siso-893m"
+CHECKPOINTS = {
+    CHECKPOINT,
+    "state-spaces/mamba3-siso-1.5b",
+}
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -79,24 +83,38 @@ class _SisoMixer(nn.Module):
         a = -(dd_a.float().clamp_min(0) + (1 - dd_a.float().clamp_max(0)).reciprocal())
         adt = a.clamp(max=-self.a_floor) * dt
         angles = torch.tanh(angles.float()) * math.pi
-        angle_state = torch.zeros(batch, h, self.num_angles, device=u.device)
+        angle_deltas = angles.unsqueeze(2) * dt.unsqueeze(-1)
+        angle_states = torch.remainder(torch.cumsum(angle_deltas, dim=1), 2 * math.pi)
+
+        q_all = _rotate(c, angle_states)
+        k_all = _rotate(b, angle_states)
+        v_all = x.float()
+
+        alpha_all = adt.exp()
+        trap_sig = trap.float().sigmoid()
+        gamma_all = trap_sig * dt
+        beta_all = (1.0 - trap_sig) * dt * alpha_all
+        silu_z = F.silu(z.float())
+
         state = torch.zeros(batch, h, p, n, device=u.device)
         old_k = torch.zeros(batch, h, n, device=u.device)
         old_v = torch.zeros(batch, h, p, device=u.device)
         outputs = []
+        d_float = self.D.float()[None, :, None]
+
         for t in range(length):
-            angle_state = torch.remainder(angle_state + angles[:, t, None] * dt[:, t, :, None], 2 * math.pi)
-            q = _rotate(c[:, t], angle_state)
-            k = _rotate(b[:, t], angle_state)
-            v = x[:, t].float()
-            alpha = adt[:, t].exp()
-            gamma = trap[:, t].float().sigmoid() * dt[:, t]
-            beta = (1 - trap[:, t].float().sigmoid()) * dt[:, t] * alpha
+            q = q_all[:, t]
+            k = k_all[:, t]
+            v = v_all[:, t]
+            alpha = alpha_all[:, t]
+            gamma = gamma_all[:, t]
+            beta = beta_all[:, t]
+
             state = (state * alpha[..., None, None]
                      + beta[..., None, None] * old_v[..., :, None] * old_k[..., None, :]
                      + gamma[..., None, None] * v[..., :, None] * k[..., None, :])
-            y = (state * q[..., None, :]).sum(-1) + self.D.float()[None, :, None] * v
-            outputs.append((y * F.silu(z[:, t].float())).to(u.dtype))
+            y = (state * q[..., None, :]).sum(-1) + d_float * v
+            outputs.append((y * silu_z[:, t]).to(u.dtype))
             old_k, old_v = k, v
         return self.out_proj(torch.stack(outputs, dim=1).reshape(batch, length, self.d_inner))
 
@@ -173,7 +191,7 @@ def _validate_config(cfg: dict) -> None:
 
 def load_mamba3_siso(checkpoint: str, revision: str, device: str = "cpu", dtype=None) -> Mamba3SisoPortable:
     """Load only a SHA-pinned SISO checkpoint; reject missing/unexpected keys."""
-    if checkpoint != CHECKPOINT or not _SHA.fullmatch(revision):
+    if checkpoint not in CHECKPOINTS or not _SHA.fullmatch(revision):
         raise ValueError("Mamba3 SISO requires its allowlisted repo and pinned commit SHA")
     if device not in ("cpu", "mps"):
         raise ValueError("portable Mamba3 SISO supports cpu and mps only")

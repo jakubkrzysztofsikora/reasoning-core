@@ -192,7 +192,12 @@ TIERS: list[tuple[str, str, float, float]] = [
     ("medium", "mamba3-siso-893m",    8.0, 16.0),
     ("small",  "bge-code",            4.0,  8.0),
     ("small",  "unixcoder-base",      2.0,  8.0),
-    ("fallback", "mamba-130m",        0.0,  4.0),
+    # 2026-09-28: mamba-130m is the legacy default; it remains the
+    # safety-net fallback for sub-1.25 GiB hosts (0.625 GiB working
+    # set) where unixcoder-base cannot fit. Auto-pickers still prefer
+    # Mamba-3 on capable hosts; the loadability probe can still
+    # refuse this backend for callers that pass one.
+    ("fallback", "mamba-130m",        0.0,  2.0),
 ]
 
 
@@ -243,7 +248,7 @@ def decide(
     available_disk_gb_value: Optional[float] = None,
     requested_backend: Optional[str] = None,
     loadability_probe: Optional["callable"] = None,
-    legacy_fallback: str = "mamba-130m",
+    legacy_fallback: str = "unixcoder-base",
 ) -> TierDecision:
     """Pick the embedder backend for this host.
 
@@ -257,7 +262,7 @@ def decide(
             provided and the auto-pick (or operator pin) returns False,
             decide() walks the tier matrix down to the next loadable
             candidate. If no Mamba-3 candidate is loadable, falls back
-            to ``legacy_fallback`` (default ``mamba-130m``) so ``rc init``
+            to ``legacy_fallback`` (default ``unixcoder-base``) so ``rc init``
             does NOT write a brick-inducing backend to .envrc.
             Post-fix for BLOCKER #2 (2026-09-22 hostile review):
             on a 40GB host, the previous code picked
@@ -389,9 +394,8 @@ def decide(
 
     # 3. Fallback: no candidate passed the (RAM + disk + loadability)
     # gates. If a probe was provided and it said every Mamba-3
-    # candidate is unloadable, the safe answer is the legacy fallback
-    # (default ``mamba-130m``) rather than ``unixcoder-base`` -- the
-    # former is guaranteed to load because it is the legacy default.
+    # candidate is unloadable, try the supported fallback. The caller
+    # must still verify loadability and fit before starting a sidecar.
     # Without a probe, we keep the previous ``unixcoder-base`` fallback
     # path (back-compat for callers that have no probe).
     probe_said_all_unloadable = (
@@ -409,8 +413,8 @@ def decide(
         fallback = legacy_fallback
         reason_extra = (
             f"no Mamba-3 candidate is loadable on this host (probe returned "
-            f"False for every Mamba-3 variant); falling back to legacy "
-            f"default {fallback} so rc init does not brick the gate."
+            f"False for every Mamba-3 variant); falling back to "
+            f"{fallback} so rc init does not brick the gate."
         )
     else:
         fallback = "unixcoder-base"

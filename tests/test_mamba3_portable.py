@@ -23,6 +23,9 @@ def _config():
 def test_tiny_sequence_is_finite_and_causal():
     torch.manual_seed(7)
     model = Mamba3SisoPortable(_config()).eval()
+    # The production loader replaces empty parameters with checkpoint weights.
+    for parameter in model.parameters():
+        torch.nn.init.uniform_(parameter, -0.1, 0.1)
     with torch.inference_mode():
         full = model(torch.tensor([[1, 2, 3]])).last_hidden_state
         prefix = model(torch.tensor([[1, 2]])).last_hidden_state

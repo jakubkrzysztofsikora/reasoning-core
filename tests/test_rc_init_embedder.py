@@ -220,7 +220,7 @@ def test_download_default_model_uses_picked_backend(tmp_path, monkeypatch):
         ok = _init_mod.download_default_model(result)
     assert ok is True
     assert calls and calls[0]["repo_id"] == "state-spaces/mamba3-siso-893m"
-    assert calls[0]["revision"] == "main"
+    assert calls[0]["revision"] == "e205b6e6d6075d089140d2e9170970aabc05c481"
     assert result.model_downloaded is True
 
 
