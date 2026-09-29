@@ -247,12 +247,54 @@ SRC_WRITE_PATTERNS: tuple[re.Pattern[str], ...] = (
 # disable hooks via core.hooksPath), remote (can push to arbitrary remotes).
 GIT_ALLOWED_SUBCOMMANDS = frozenset({
     "status", "log", "diff", "show", "branch", "rev-parse",
-    "ls-files", "ls-tree", "blame", "describe",
+    "ls-files", "ls-tree", "blame", "describe", "grep",
     "help", "version", "--version",
     # Read-only stash/worktree variants
     "stash list", "stash show",
     "worktree list",
+    # Commit flow on the current branch. Branch/worktree switching stays denied.
+    "add", "commit", "push", "fetch",
 })
+
+GIT_EXTRA_ALLOW_ENV = "RC_GIT_ALLOW"
+
+_GIT_UNSAFE_FLAGS = {
+    "commit": (frozenset({"--no-verify"}), "n"),
+    "push": (frozenset({"--force", "--force-with-lease", "--force-if-includes",
+                        "--delete", "--mirror", "--no-verify", "--prune"}), "fd"),
+}
+
+
+def _git_allowed_subcommands() -> frozenset:
+    extra = os.environ.get(GIT_EXTRA_ALLOW_ENV, "")
+    return GIT_ALLOWED_SUBCOMMANDS | {s.strip() for s in extra.split(",") if s.strip()}
+
+
+def _git_unsafe_flag(subcmd: str, args: list) -> Optional[str]:
+    """Return the first flag/refspec that would skip hooks or rewrite remote history."""
+    if subcmd not in _GIT_UNSAFE_FLAGS:
+        return None
+    long_flags, short_chars = _GIT_UNSAFE_FLAGS[subcmd]
+    for arg in args:
+        if arg.split("=", 1)[0] in long_flags:
+            return arg
+        if arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) & set(short_chars):
+            return arg
+        if subcmd == "push" and arg[:1] in ("+", ":"):
+            return arg
+    return None
+
+
+def _git_segments(cmd: str) -> list:
+    """Every git invocation in a shell chain, env-assignment prefixes stripped."""
+    out = []
+    for seg in re.split(r"&&|\|\||[;|\n]", cmd):
+        seg = seg.strip()
+        while (m := re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+", seg)):
+            seg = seg[m.end():]
+        if seg == "git" or seg.startswith("git "):
+            out.append(seg)
+    return out
 
 
 def _extract_git_subcommand(cmd: str) -> Optional[str]:
@@ -312,17 +354,25 @@ def _extract_git_subcommand(cmd: str) -> Optional[str]:
     parts = rest.split(None, 2)
     if len(parts) >= 2:
         compound = f"{parts[0]} {parts[1]}"
-        if compound in GIT_ALLOWED_SUBCOMMANDS:
+        if compound in _git_allowed_subcommands():
             return compound
     return parts[0]
 
 
-def _git_subcommand_allowed(cmd: str) -> bool:
-    """Check if git subcommand is in the allowlist."""
-    subcmd = _extract_git_subcommand(cmd)
-    if subcmd is None:
-        return True  # Not a git command, let other checks handle it
-    return subcmd in GIT_ALLOWED_SUBCOMMANDS
+def _git_denial(cmd: str) -> Optional[str]:
+    """Return a denial reason for the first disallowed git invocation, else None."""
+    allowed = _git_allowed_subcommands()
+    for seg in _git_segments(cmd):
+        subcmd = _extract_git_subcommand(seg)
+        if subcmd not in allowed:
+            return f"subcommand '{subcmd or '<unknown>'}' not allowed"
+        tokens = seg.split()
+        head = subcmd.split()[-1]
+        args = tokens[tokens.index(head) + 1:] if head in tokens else []
+        flag = _git_unsafe_flag(subcmd, args)
+        if flag:
+            return f"'{subcmd} {flag}' not allowed (force/delete/hook-skip)"
+    return None
 
 
 SAFE_LEADING_TOKENS = (
@@ -578,20 +628,19 @@ def screen_command(cmd: str) -> tuple[int, str]:
 
     # Layer A2: RC-SEC-05 git subcommand allowlist. Git commands must use an
     # allowed subcommand. Everything else denied.
-    stripped_cmd = cmd.lstrip()
-    if stripped_cmd.startswith("git"):
-        if not _git_subcommand_allowed(cmd):
-            subcmd = _extract_git_subcommand(cmd) or "<unknown>"
-            if _override_active():
-                return 0, f"[hybrid-reasoner] override: git subcommand '{subcmd}' allowed via {ALLOW_OVERRIDE_ENV}=1"
-            return 2, (
-                f"[hybrid-reasoner] BLOCKED: git subcommand not allowed.\n"
-                f"  subcommand: {subcmd}\n"
-                f"  allowed: {', '.join(sorted(GIT_ALLOWED_SUBCOMMANDS))}\n"
-                "  fix: use Edit/Write tools for working-tree changes. "
-                "Read-only inspection (status, log, diff, show, branch, etc.) "
-                "is permitted."
-            )
+    git_denial = _git_denial(cmd)
+    if git_denial:
+        if _override_active():
+            return 0, f"[hybrid-reasoner] override: git {git_denial} allowed via {ALLOW_OVERRIDE_ENV}=1"
+        return 2, (
+            f"[hybrid-reasoner] BLOCKED: git subcommand not allowed.\n"
+            f"  reason: {git_denial}\n"
+            f"  allowed: {', '.join(sorted(_git_allowed_subcommands()))}\n"
+            "  fix: stage/commit/push on the current branch is permitted. "
+            "Branch/worktree switching, history rewrites, force-push and "
+            f"hook skipping are not. Operator can extend via {GIT_EXTRA_ALLOW_ENV}="
+            "'checkout,rebase' in .envrc.local."
+        )
 
     # Layer B: shell command targeting a guarded path (regardless of operation).
     # Two triggers: substring match (existing), or symlink resolution

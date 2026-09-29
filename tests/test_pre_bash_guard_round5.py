@@ -24,8 +24,6 @@ entry is verified by a small TDD test that drives the real
 from __future__ import annotations
 
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -166,6 +164,49 @@ def test_git_allowlist_allows_inspection_subcommands(subcmd: str):
         f"BLOCKER: ``{subcmd}`` was incorrectly blocked by git allowlist; "
         f"got rc={code}, msg={msg!r}"
     )
+
+
+@pytest.mark.parametrize("cmd", [
+    "git add -A",
+    "git commit -m 'feat: x'",
+    "git add . && git commit -am 'x' && git push origin main",
+    "git push -u origin feature/x",
+    "git fetch origin",
+    "git grep -n foo",
+    "git -C /repo commit -m x",
+])
+def test_git_allows_stage_commit_push(cmd: str):
+    from src.hooks.pre_bash_guard import screen_command
+    code, msg = screen_command(cmd)
+    assert code == 0, msg
+
+
+@pytest.mark.parametrize("cmd", [
+    "git checkout main",
+    "git switch -c other",
+    "git worktree add ../wt",
+    "git status && git checkout main",
+    "git add . ; git reset --hard HEAD~1",
+    "git push --force origin main",
+    "git push -f",
+    "git push origin +main",
+    "git push origin :main",
+    "git push --delete origin main",
+    "git commit --no-verify -m x",
+    "git commit -nm x",
+    "RC_GIT_ALLOW=checkout git checkout main",
+])
+def test_git_blocks_branch_worktree_and_unsafe_writes(cmd: str):
+    from src.hooks.pre_bash_guard import screen_command
+    code, _ = screen_command(cmd)
+    assert code == 2
+
+
+def test_git_extra_allow_env(monkeypatch):
+    from src.hooks.pre_bash_guard import screen_command
+    monkeypatch.setenv("RC_GIT_ALLOW", "checkout, rebase")
+    assert screen_command("git checkout main")[0] == 0
+    assert screen_command("git switch main")[0] == 2
 
 
 # ---------------------------------------------------------------------------
