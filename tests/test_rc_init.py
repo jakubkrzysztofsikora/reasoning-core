@@ -214,5 +214,26 @@ class RcInitTest(unittest.TestCase):
         self.assertNotIn("@RC_PYTHON@", envrc)
 
 
+class SupervisorPlistTests(unittest.TestCase):
+    def test_checkout_uses_repo_template(self) -> None:
+        from src._init import _render_launchd_plist  # noqa: PLC0415
+
+        body = _render_launchd_plist("/usr/bin/python3")
+        self.assertIn(f"<string>{_REPO}/.venv/bin/python</string>", body)
+        self.assertIn(f"<string>{_REPO}:{_REPO}/src</string>", body)
+        self.assertNotIn("__REPO__", body)
+        self.assertNotIn("__HOME__", body)
+
+    def test_wheel_fallback_puts_src_on_pythonpath(self) -> None:
+        from src import _init  # noqa: PLC0415
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            _init._install_paths, "framework_root", return_value=Path(tmp)
+        ):
+            body = _init._render_launchd_plist("/opt/py")
+        self.assertIn("<string>/opt/py</string>", body)
+        self.assertIn(f"<string>{tmp}/src</string>", body)
+
+
 if __name__ == "__main__":
     unittest.main()

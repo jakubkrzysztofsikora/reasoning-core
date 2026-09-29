@@ -509,9 +509,7 @@ def _install_launchd(python: str, result: InitResult) -> bool:
     plist_dir = Path.home() / "Library" / "LaunchAgents"
     plist_dir.mkdir(parents=True, exist_ok=True)
     plist_path = plist_dir / "com.reasoning-core.supervisor.plist"
-    # Use the running interpreter; the supervisor module is part of the wheel.
-    body = LAUNCHD_PLIST_TEMPLATE.format(python=python)
-    plist_path.write_text(body)
+    plist_path.write_text(_render_launchd_plist(python))
     # Validate (silently skip if plutil missing — old Linux containers etc.)
     if shutil.which("plutil"):
         rc = subprocess.run(["plutil", "-lint", str(plist_path)], capture_output=True)
@@ -527,11 +525,21 @@ def _install_launchd(python: str, result: InitResult) -> bool:
     return True
 
 
+def _render_launchd_plist(python: str) -> str:
+    """Render the supervisor plist: the checkout's ``launchd/`` template when present, else the built-in one."""
+    root = _install_paths.framework_root()
+    repo_template = root / "launchd" / "com.reasoning-core.supervisor.plist" if root else None
+    if repo_template is not None and repo_template.is_file():
+        return repo_template.read_text().replace("__REPO__", str(root)).replace("__HOME__", str(Path.home()))
+    return LAUNCHD_PLIST_TEMPLATE.format(python=python, src=str(root / "src") if root else "")
+
+
 def _install_systemd_user(python: str, result: InitResult) -> bool:
     unit_dir = Path.home() / ".config" / "systemd" / "user"
     unit_dir.mkdir(parents=True, exist_ok=True)
     unit_path = unit_dir / "reasoning-core.service"
-    unit_path.write_text(SYSTEMD_UNIT_TEMPLATE.format(python=python))
+    root = _install_paths.framework_root()
+    unit_path.write_text(SYSTEMD_UNIT_TEMPLATE.format(python=python, src=str(root / "src") if root else ""))
     if not shutil.which("systemctl"):
         result.warned.append("systemctl not on PATH; wrote unit but did not enable")
         return False
@@ -577,6 +585,8 @@ LAUNCHD_PLIST_TEMPLATE = '''<?xml version="1.0" encoding="UTF-8"?>
     <dict>
         <key>RC_REASONER_BACKEND</key>
         <string>mlx</string>
+        <key>PYTHONPATH</key>
+        <string>{src}</string>
         <key>HF_HOME</key>
         <string>$HOME/.cache/huggingface</string>
     </dict>
@@ -593,6 +603,7 @@ After=network-online.target
 [Service]
 Type=simple
 ExecStart={python} -m src.sidecar_supervisor
+Environment=PYTHONPATH={src}
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/tmp/rc-supervisor.out.log
