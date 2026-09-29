@@ -213,6 +213,12 @@ def test_load_backbone_fallback_runs_when_rc_embedder_unset(monkeypatch):
     monkeypatch.delenv("RC_EMBEDDER", raising=False)
     monkeypatch.setattr(ssm_backbone, "_HANDLE", None)
     ssm_backbone.reset_failure_cache()
+    # Auto-selected Mamba3 defaults are strict, so pin a non-Mamba3 primary.
+    monkeypatch.setattr(
+        ssm_backbone, "_resolve_backend",
+        lambda: ssm_backbone._BACKENDS["mamba-130m"],
+    )
+    monkeypatch.setattr(ssm_backbone, "backend_loadability_probe", lambda name: True)
 
     call_log = []
 
