@@ -43,6 +43,7 @@ if _PACKAGE_ROOT not in sys.path:
 import audit_log  # type: ignore  # noqa: E402
 import _guard_paths  # type: ignore  # noqa: E402
 import _dispatch  # type: ignore  # noqa: E402
+import _git_lease  # type: ignore  # noqa: E402
 
 # Phase 2 execution-grounded oracles and cumulative patch tracker.
 try:
@@ -686,6 +687,23 @@ def main() -> None:
             2,
             "[hybrid-reasoner] BLOCKED: guard-file edits denied.\n"
             f"  file: {file_path}",
+        )
+        return  # pragma: no cover
+
+    worktree_denial = _git_lease.edit_denial(file_path)
+    if worktree_denial:
+        _emit_audit(
+            tool_name=tool_name,
+            decision="blocked",
+            file_path=file_path,
+            started=started,
+            reason="worktree_not_leased",
+        )
+        _exit(
+            2,
+            "[hybrid-reasoner] BLOCKED: edit outside home and the open worktree lease.\n"
+            f"  reason: {worktree_denial}\n"
+            f"  fix: open a worktree listed in {_git_lease.CONTRACT_REL} or edit in home.",
         )
         return  # pragma: no cover
 

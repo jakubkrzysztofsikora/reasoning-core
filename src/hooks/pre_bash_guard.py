@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 import time
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,7 @@ if _HOOKS_DIR not in sys.path:
     sys.path.insert(0, _HOOKS_DIR)
 
 import audit_log  # type: ignore  # noqa: E402
+import _git_lease  # type: ignore  # noqa: E402
 
 ALLOW_OVERRIDE_ENV = "RC_ALLOW_GUARD_EDIT"
 
@@ -53,6 +55,8 @@ GUARDED_PATH_FRAGMENTS = (
     "src/ssm_backbone.py",
     "src/mcp_reasoner.py",
     "scripts/start-sidecar.sh",
+    ".reasoning-core/git_worktrees.yaml",
+    "reasoning-core/git_lease",
 )
 
 # Process names that must not be killed via Bash.
@@ -134,6 +138,8 @@ HARD_DENY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsh\s+-c\s+.*\bgit\b"),       # sh -c "git ..."
     re.compile(r"\bbash\s+-c\s+.*\bgit\b"),     # bash -c "git ..."
     re.compile(r"\$\(.*\bgit\b"),                # $(git ...)
+    re.compile(r"\$\([^)]*\bgit\b"),              # multiline $( git ... )
+    re.compile(r"`[^`]*\bgit\b"),                 # `git ...`
     # RC-SEC-05: Individual git deny patterns removed — replaced by
     # subcommand allowlist (Layer A2 in screen_command).
     # Round-5 RC-SEC-NODE-UPPERCASE: node -E (uppercase E) is
@@ -285,15 +291,87 @@ def _git_unsafe_flag(subcmd: str, args: list) -> Optional[str]:
     return None
 
 
+_SHELL_FED = re.compile(
+    r"\b(?:ba|z|k|da|fi)?sh\b|\bsource\b|\beval\b|\bxargs\b|\bexec\b"
+    r"|\bpython[\d.]*\b|\bperl\b|\bruby\b|\bnode\b|\benv\b|(?:^|[\s;&|(])\.\s"
+)
+
+
+_COMMIT_MSG_HEREDOC = re.compile(r"\Agit commit(?: -[a-zA-Z]+)* -F - <<'(\w+)'\n")
+
+
+def _drop_data_heredocs(cmd: str) -> str:
+    """Drop the body of a lone `git commit -F - <<'X'` message heredoc.
+
+    Every other heredoc body stays in place and gets screened.
+    """
+    m = _COMMIT_MSG_HEREDOC.match(cmd)
+    if not m:
+        return cmd
+    lines = cmd[m.end():].split("\n")
+    if m.group(1) not in lines or lines.index(m.group(1)) != len(lines) - 1 - (lines[-1] == ""):
+        return cmd
+    return cmd[:m.end() - 1]
+
+
+def _shell_split(cmd: str) -> list:
+    """Split on &&, ||, ;, |, newline outside quotes; heredoc bodies dropped."""
+    return _split_with_quote(cmd)[0]
+
+
+def _split_with_quote(cmd: str) -> tuple:
+    cmd = _drop_data_heredocs(cmd)
+    out, buf, quote, i = [], [], None, 0
+    while i < len(cmd):
+        c = cmd[i]
+        if quote:
+            buf.append(c)
+            if c == quote:
+                quote = None
+            elif c == "\\" and quote == '"' and i + 1 < len(cmd):
+                buf.append(cmd[i + 1])
+                i += 1
+        elif c == "\\" and i + 1 < len(cmd):
+            buf.append(c + cmd[i + 1])
+            i += 1
+        elif c == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|("):
+            while i + 1 < len(cmd) and cmd[i + 1] != "\n":
+                i += 1
+        elif c in "'\"":
+            quote = c
+            buf.append(c)
+        elif c in ";|\n" or (c == "&" and cmd[i + 1:i + 2] != ">" and cmd[i - 1:i] not in "<>"):
+            out.append("".join(buf))
+            buf = []
+            if c in "&|" and cmd[i + 1:i + 2] == c:
+                i += 1
+        else:
+            buf.append(c)
+        i += 1
+    out.append("".join(buf))
+    return out, quote
+
+
+_ENV_ASSIGN = re.compile(r"""^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s'"\\])*\s+""")
+
+
 def _git_segments(cmd: str) -> list:
-    """Every git invocation in a shell chain, env-assignment prefixes stripped."""
-    out = []
-    for seg in re.split(r"&&|\|\||[;|\n]", cmd):
-        seg = seg.strip()
-        while (m := re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*\s+", seg)):
+    """(segment, cwd_known) per git invocation, env-assignment prefixes stripped.
+
+    cwd_known turns False once the chain changes directory.
+    """
+    out, cwd_known = [], True
+    for seg in _shell_split(cmd):
+        seg = seg.strip().lstrip("({ ").rstrip(")} ")
+        while (m := _ENV_ASSIGN.match(seg)):
             seg = seg[m.end():]
-        if seg == "git" or seg.startswith("git "):
-            out.append(seg)
+        if re.match(r"^(?:cd|pushd|popd)\b", seg):
+            cwd_known = False
+        if re.match(r"git(?:\s|$)", seg):
+            out.append((seg, cwd_known))
+        elif _SHELL_FED.search(seg):
+            for q in re.finditer(r"'([^']*)'|\"((?:\\.|[^\"\\])*)\"", seg):
+                out.extend((s, False) for s, _ in _git_segments(q.group(1) or q.group(2) or ""))
     return out
 
 
@@ -359,10 +437,83 @@ def _extract_git_subcommand(cmd: str) -> Optional[str]:
     return parts[0]
 
 
-def _git_denial(cmd: str) -> Optional[str]:
+_RISKY_GIT_MENTION = re.compile(
+    r"(?:^|[\n;&|(`]|\$\()[ \t]*git(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+(?:worktree|merge|branch|reset|checkout|switch|rebase"
+    r"|restore|clean|update-ref|symbolic-ref|tag|config|init|filter-branch|reflog|gc|stash|am|apply"
+    r"|cherry-pick|revert|pull|push|commit)\b"
+)
+
+
+_GIT_WRAPPERS = {"command", "builtin", "exec", "env", "nohup", "time", "nice", "sudo",
+                 "timeout", "stdbuf", "xargs", "caffeinate", "arch",
+                 "if", "then", "else", "elif", "do", "while", "until", "!", "{", "("}
+_SHELL_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "("}
+_REDIRECT_WORD = re.compile(r"\d*(?:[<>]|&>)")
+
+
+def _indirect_git(cmd: str) -> bool:
+    """True when a segment runs git through a wrapper, path or quoting the parser skips."""
+    for seg in _shell_split(cmd):
+        raw = seg.strip().lstrip("({ ")
+        while (m := _ENV_ASSIGN.match(raw)):
+            raw = raw[m.end():]
+        if re.match(r"git(?:\s|$)", raw):
+            continue
+        try:
+            words = shlex.split(raw)
+        except ValueError:
+            words = raw.split()
+        skip = False
+        for w in words:
+            if skip:
+                skip = False
+                continue
+            if (m := _REDIRECT_WORD.match(w)):
+                skip = m.end() == len(w)
+                continue
+            if w in _GIT_WRAPPERS and w not in _SHELL_KEYWORDS and any(
+                    os.path.basename(x) == "git" for x in words):
+                return True
+            if re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w) or w.startswith("-") or w.isdigit() or w in _GIT_WRAPPERS:
+                continue
+            if os.path.basename(w.lstrip("({")) == "git":
+                return True
+            break
+    return False
+
+
+def _git_denial(cmd: str, cwd: Optional[str] = None) -> Optional[str]:
     """Return a denial reason for the first disallowed git invocation, else None."""
     allowed = _git_allowed_subcommands()
-    for seg in _git_segments(cmd):
+    segments = _git_segments(cmd)
+    if segments and re.search(r"(?:^|[\s;&|(])GIT_[A-Z_]*=", cmd):
+        return "GIT_* environment overrides not allowed with git"
+    if re.search(r"\bgit\b", cmd) and (
+            _drop_data_heredocs(cmd).count("<<") > (_drop_data_heredocs(cmd) != cmd)
+            or _split_with_quote(cmd)[1]):
+        return "git with a heredoc or unbalanced quote cannot be screened; split the command"
+    if "\\\n" in cmd and re.search(r"\bgit\b", cmd.replace("\\\n", "")):
+        return "no backslash-newline continuations in commands that may run git"
+    if re.search(r"\bcase\b", cmd) and re.search(r"\bgit\b", cmd):
+        return "no 'case' blocks in commands that may run git"
+    if _indirect_git(cmd):
+        return "run git directly as 'git ...' (no wrapper, path or quoting)"
+    mentioned = len(_RISKY_GIT_MENTION.findall(_drop_data_heredocs(cmd)))
+    if mentioned > sum(len(_RISKY_GIT_MENTION.findall(seg)) for seg, _ in segments):
+        return "git invocation hidden from screening (quotes, heredoc or separators); split the command"
+    verbs = [(_git_lease._parse_git_argv(seg, None) or (None, []))[1][:2] for seg, _ in segments]
+    if ["worktree", "add"] in verbs and len(_shell_split(cmd)) > 1:
+        return "'git worktree add' must run as its own command"
+    if any(v[:1] in (["branch"], ["merge"], ["worktree"]) for v in verbs) and re.search(r"[(){}]", cmd):
+        return "no shell grouping around 'git branch/merge/worktree'; run it plainly"
+    if any(v[:1] == ["merge"] for v in verbs) and len(_shell_split(cmd)) > 1:
+        return "'git merge' must run as its own command"
+    for seg, cwd_known in segments:
+        verdict = _git_lease.check_git_segment(seg, (cwd or os.getcwd()) if cwd_known else None)
+        if verdict is not None:
+            if not verdict[0]:
+                return verdict[1]
+            continue
         subcmd = _extract_git_subcommand(seg)
         if subcmd not in allowed:
             return f"subcommand '{subcmd or '<unknown>'}' not allowed"
@@ -465,6 +616,59 @@ def _guarded_path_match(cmd: str) -> Optional[str]:
     for frag in GUARDED_PATH_FRAGMENTS:
         if frag in cmd:
             return frag
+    return None
+
+
+_DESTRUCTIVE_WORDS = {"rm", "rmdir", "unlink", "mv", "shred", "truncate", "ln", "tee"}
+_COPY_WORDS = {"cp", "install", "rsync"}
+_OUT_REDIRECT = re.compile(r"\d*(?:&>>?|>>?\|?|<>)")
+
+
+def _guarded_fragment_at(path: str) -> Optional[str]:
+    real = os.path.realpath(path)
+    for frag in GUARDED_PATH_FRAGMENTS:
+        parts = frag.split("/")
+        if frag in real or any(real.endswith("/" + "/".join(parts[:i])) and os.path.exists(os.path.join(real, *parts[i:]))
+                               for i in range(1, len(parts))):
+            return frag
+        # ponytail: ancestors above the fragment's own dirs only at the project root; deeper `rm -rf ..` escapes.
+        if os.path.isdir(real) and os.path.exists(os.path.join(real, frag)):
+            return frag
+    return None
+
+
+def _cwd_guarded_operand(cmd: str, cwd: Optional[str]) -> Optional[str]:
+    """Guarded fragment hit by a destructive operand resolved against cwd (and any `cd` in the chain)."""
+    heres = {cwd or os.getcwd()}
+    for seg in re.split(r"&&|\|\||[;|&\n]", cmd):
+        try:
+            words = shlex.split(seg)
+        except ValueError:
+            continue
+        while words and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+            words = words[1:]
+        if not words:
+            continue
+        if words[0] == "cd":
+            # ponytail: a cd may fail (`cd /nope || rm x`), so every directory seen stays a candidate.
+            heres |= {os.path.join(h, os.path.expanduser(words[1] if len(words) > 1 else "~")) for h in heres}
+            continue
+        head = os.path.basename(words[0])
+        destructive = head in _DESTRUCTIVE_WORDS
+        if head in _COPY_WORDS:
+            words = [words[0], words[-1]]
+            destructive = len(words) > 1
+        for i, w in enumerate(words[1:], 1):
+            redirect_target = bool(_OUT_REDIRECT.fullmatch(words[i - 1]))
+            if (m := _OUT_REDIRECT.match(w)) and m.end() < len(w):
+                w, redirect_target = w[m.end():], True
+            if head == "dd" and w.startswith("of="):
+                w, redirect_target = w[3:], True
+            if (destructive and not w.startswith("-")) or redirect_target:
+                for here in heres:
+                    hit = _guarded_fragment_at(os.path.join(here, os.path.expanduser(w)))
+                    if hit:
+                        return hit
     return None
 
 
@@ -590,8 +794,18 @@ def _manifest_disallowed_extension(cmd: str) -> Optional[str]:
     return None
 
 
-def screen_command(cmd: str) -> tuple[int, str]:
+def screen_command(cmd: str, cwd: Optional[str] = None) -> tuple[int, str]:
     """Return (exit_code, message). 0 = allow, 2 = block."""
+    with _git_lease.deferred_reservations() as pending:
+        code, msg = _screen_command(cmd, cwd)
+    if code == 0 and pending:
+        ok, why = _git_lease.reserve(pending)
+        if not ok:
+            return 2, f"[hybrid-reasoner] BLOCKED: git subcommand not allowed.\n  reason: {why}"
+    return code, msg
+
+
+def _screen_command(cmd: str, cwd: Optional[str] = None) -> tuple[int, str]:
     cmd = cmd.strip()
     if not cmd:
         return 0, ""
@@ -628,7 +842,7 @@ def screen_command(cmd: str) -> tuple[int, str]:
 
     # Layer A2: RC-SEC-05 git subcommand allowlist. Git commands must use an
     # allowed subcommand. Everything else denied.
-    git_denial = _git_denial(cmd)
+    git_denial = _git_denial(cmd, cwd)
     if git_denial:
         if _override_active():
             return 0, f"[hybrid-reasoner] override: git {git_denial} allowed via {ALLOW_OVERRIDE_ENV}=1"
@@ -637,9 +851,12 @@ def screen_command(cmd: str) -> tuple[int, str]:
             f"  reason: {git_denial}\n"
             f"  allowed: {', '.join(sorted(_git_allowed_subcommands()))}\n"
             "  fix: stage/commit/push on the current branch is permitted. "
-            "Branch/worktree switching, history rewrites, force-push and "
-            f"hook skipping are not. Operator can extend via {GIT_EXTRA_ALLOW_ENV}="
-            "'checkout,rebase' in .envrc.local."
+            "Branch switching, history rewrites, force-push and hook skipping "
+            "are not. Worktrees: open one listed in "
+            f"{_git_lease.CONTRACT_REL} (git worktree add <path> -b <branch>), "
+            "merge its branch from home, then git worktree remove <path>. "
+            f"Operator can extend via {GIT_EXTRA_ALLOW_ENV}="
+            "'checkout,rebase,abandon' in .envrc.local."
         )
 
     # Layer B: shell command targeting a guarded path (regardless of operation).
@@ -647,6 +864,14 @@ def screen_command(cmd: str) -> tuple[int, str]:
     # (RC-SEC-05 re-audit) so `ln -s src/hooks/pre_bash_guard.py /tmp/x;
     # echo > /tmp/x` trips.
     guarded = _guarded_path_match(cmd)
+    cwd_hit = _cwd_guarded_operand(cmd, cwd)
+    if cwd_hit and not _override_active():
+        return 2, (
+            "[hybrid-reasoner] BLOCKED: shell write to a guarded file.\n"
+            f"  guarded path: {cwd_hit}\n"
+            "  fix: guarded files (and their directories) cannot be removed, moved "
+            "or overwritten from a shell command, whatever the working directory or symlink used."
+        )
     symlink_resolved = False
     if guarded is None:
         guarded = _resolve_symlink_to_guarded(cmd)
@@ -674,7 +899,8 @@ def screen_command(cmd: str) -> tuple[int, str]:
                 "realpath lands on a guarded path are treated as writes "
                 "regardless of the symlink's own filename or extension."
             )
-        if _src_write_match(cmd) or any(p.search(cmd) for p in HARD_DENY_PATTERNS):
+        if (_src_write_match(cmd) or any(p.search(cmd) for p in HARD_DENY_PATTERNS)
+                or re.search(r"(?:^|[\s;&|(])(?:rm|rmdir|unlink|mv|shred|truncate|ln)\b", cmd)):
             if _override_active():
                 return 0, f"[hybrid-reasoner] override: guarded-path write allowed via {ALLOW_OVERRIDE_ENV}=1 ({guarded})"
             return 2, (
@@ -749,7 +975,8 @@ def main() -> None:
     if not isinstance(cmd, str):
         _exit(0)
 
-    code, msg = screen_command(cmd)
+    cwd = payload.get("cwd")
+    code, msg = screen_command(cmd, cwd if isinstance(cwd, str) else None)
     decision = "blocked" if code == 2 else "allowed"
     try:
         audit_log.append_event(audit_log.new_event(

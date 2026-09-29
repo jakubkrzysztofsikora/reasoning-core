@@ -56,6 +56,8 @@ _EXPLICIT_ALLOWLIST: Tuple[str, ...] = (
     # allowlist -- there is no separate ``RC_ALLOW_RULES_EDIT`` knob.
     "/.reasoning-core/rules.yaml",
     "/.reasoning-core/rules.schema.yaml",
+    "/.reasoning-core/git_worktrees.yaml",
+    "/reasoning-core/git_lease",
 )
 
 
