@@ -84,3 +84,24 @@ def test_audit_row_written_with_fsync(monkeypatch, tmp_path):
     assert jsonls, "no audit row produced"
     rows = jsonls[0].read_text().strip().splitlines()
     assert any("gate_edit" in r and "vibe" in r for r in rows)
+
+
+def test_auth_failure_is_reported_separately_from_sidecar_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path))
+    monkeypatch.setenv("RC_HOST", "vibe")
+    monkeypatch.setenv("S2_FAIL_CLOSED", "1")
+    monkeypatch.setattr(
+        mcp_gate, "httpx",
+        type("M", (), {
+            "Client": lambda *a, **kw: _MockClient(status_code=401),
+            "HTTPError": Exception,
+            "TimeoutException": Exception,
+        })(),
+    )
+
+    out = mcp_gate.gate_edit("/x.py", "before", "after")
+
+    assert out["decision"] == "blocked"
+    assert out["message"] == "sidecar_auth_failed"
+    assert out["sidecar_auth_failed"] is True
+    assert "sidecar_unavailable" not in out

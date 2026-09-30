@@ -53,6 +53,7 @@ from .ssm_backbone import (
     is_loaded,
     load_backbone,
 )
+from .sidecar_auth import operator_token
 
 logger = logging.getLogger(__name__)
 
@@ -1660,6 +1661,23 @@ def create_app():
             }
         )
 
+    @app.get("/auth")
+    async def auth(request: Request):
+        """Validate the scoring credential without invoking model scoring."""
+        expected_token = _get_operator_token()
+        if not expected_token:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "auth_unavailable", "detail": "operator token not provisioned"},
+            )
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != expected_token:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "detail": "valid bearer token required"},
+            )
+        return {"status": "ok"}
+
     @app.post("/score")
     async def score(request: Request):
         t0 = time.monotonic()
@@ -1777,25 +1795,8 @@ def create_app():
         return True
 
     def _get_operator_token() -> Optional[str]:
-        """Use the process token, falling back to Keychain on macOS."""
-        import subprocess as _subprocess
-        import sys as _sys
-        token = os.environ.get("RC_ENFORCEMENT_TOKEN")
-        if token:
-            return token
-        # Darwin: keychain
-        if _sys.platform == "darwin":
-            try:
-                r = _subprocess.run(
-                    ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if r.returncode == 0 and r.stdout.strip():
-                    return r.stdout.strip()
-            except (FileNotFoundError, Exception):
-                pass
-        # Fallback: env var (CI pre-provisioned)
-        return os.environ.get("RC_ENFORCEMENT_TOKEN")
+        """Use the shared credential resolver for score and baseline auth."""
+        return operator_token() or None
 
     @app.post("/baseline")
     async def baseline(request: Request):

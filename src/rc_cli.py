@@ -27,6 +27,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 from src import baselines  # noqa: E402
+from src.sidecar_auth import keychain_account, keychain_token, score_headers  # noqa: E402
 # Make hook helpers importable without installing the package.
 _HOOKS_DIR = Path(__file__).resolve().parent / "hooks"
 if str(_HOOKS_DIR) not in sys.path:
@@ -320,10 +321,46 @@ def _calibration_status() -> dict:
     signal_path = runs / "recalibrate.signal"
     out["recalibrate_signal"] = "PENDING" if signal_path.exists() else "none"
     return out
+def _sidecar_auth_status() -> str:
+    """Probe sidecar credentials cheaply without invoking model scoring."""
+    import urllib.error
+    import urllib.request
+
+    base_url = os.environ.get("S2_URL", f"http://127.0.0.1:{os.environ.get('S2_PORT', '8765')}")
+    endpoint = f"{base_url.rstrip('/')}/auth"
+    headers = score_headers(endpoint)
+    if not headers.get("Authorization"):
+        return "missing_token"
+    request = urllib.request.Request(
+        endpoint,
+        headers=headers,
+        method="GET",
+    )
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, response_headers, new_url):
+            return None
+
+    try:
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(request, timeout=3) as response:
+            return "ok" if response.status == 200 else f"http_{response.status}"
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            return "rejected_token"
+        if exc.code == 503:
+            return "sidecar_auth_unavailable"
+        return f"http_{exc.code}"
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return "unreachable"
+
+
 def cmd_status(_args: argparse.Namespace) -> int:
     sys.stdout.write("== reasoning-core status ==\n\nenv knobs:\n")
     for k in _KNOBS:
         _print_kv(k, os.environ.get(k, "<unset>"))
+    sys.stdout.write("\nsidecar auth:\n")
+    _print_kv("authenticated_score", _sidecar_auth_status())
     sys.stdout.write("\nkill switches:\n")
     snap = ks.snapshot()
     _print_kv("bypass_next", str(snap.get("bypass_next", False)))
@@ -556,18 +593,7 @@ def _read_auth_token_from_keychain() -> str | None:
     """
     if sys.platform != "darwin":
         return None
-    try:
-        r = subprocess.run(
-            ["security", "find-generic-password", "-s", "reasoning-core-enforcement", "-a", os.environ.get("USER", ""), "-w"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
-    return None
+    return keychain_token() or None
 def _operator_authenticated() -> bool:
     """Return True if the operator has authenticated for enforcement changes.
     
@@ -640,6 +666,7 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
     
     token = secrets.token_urlsafe(32)
     hmac_key = secrets.token_hex(32)  # 256-bit key for HMAC-SHA256
+    account = keychain_account()
     
     if sys.platform == "darwin":
         # Store enforcement token in keychain
@@ -647,7 +674,7 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
             r = subprocess.run(
                 ["security", "add-generic-password",
                  "-s", "reasoning-core-enforcement",
-                 "-a", os.environ.get("USER", ""),
+                 "-a", account,
                  "-w", token,
                  "-U"],
                 capture_output=True, text=True, timeout=5,
@@ -664,7 +691,7 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
             r = subprocess.run(
                 ["security", "add-generic-password",
                  "-s", "reasoning-core-hmac",
-                 "-a", os.environ.get("USER", ""),
+                 "-a", account,
                  "-w", hmac_key,
                  "-U"],
                 capture_output=True, text=True, timeout=5,
@@ -676,7 +703,7 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
             sys.stderr.write(f"HMAC keychain add failed: {exc}\n")
             return 1
         
-        sys.stdout.write(f"enforcement token stored in keychain for user {os.environ.get('USER','')}\n")
+        sys.stdout.write(f"enforcement token stored in keychain for user {account}\n")
         sys.stdout.write(f"HMAC key stored in keychain for kill-switch integrity\n")
         sys.stdout.write(f"enforcement token (copy now, won't be shown again): {token}\n")
         sys.stdout.write(f"HMAC key (copy now, won't be shown again): {hmac_key}\n")

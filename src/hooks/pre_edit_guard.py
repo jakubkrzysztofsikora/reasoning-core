@@ -27,7 +27,6 @@ import socket
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -39,6 +38,8 @@ if _HOOKS_DIR not in sys.path:
 _PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])
 if _PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, _PACKAGE_ROOT)
+
+from src.sidecar_auth import score_headers as _score_auth_headers  # noqa: E402
 
 import audit_log  # type: ignore  # noqa: E402
 import _guard_paths  # type: ignore  # noqa: E402
@@ -257,22 +258,7 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
         payload["session_id"] = sid
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
-    token = os.environ.get("RC_ENFORCEMENT_TOKEN", "")
-    if not token and sys.platform == "darwin":
-        try:
-            import subprocess
-            found = subprocess.run(
-                ["security", "find-generic-password", "-s", "reasoning-core-enforcement",
-                 "-a", os.environ.get("USER", ""), "-w"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if found.returncode == 0:
-                token = found.stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    target = urllib.parse.urlsplit(SCORE_ENDPOINT)
-    if token and target.scheme == "http" and target.hostname in ("127.0.0.1", "localhost", "::1"):
-        headers["Authorization"] = f"Bearer {token}"
+    headers.update(_score_auth_headers(SCORE_ENDPOINT))
     req = urllib.request.Request(
         SCORE_ENDPOINT,
         data=body,
@@ -321,7 +307,8 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
                 "reason": "unsupported_language",
                 "extension": ext,
             }
-        raise SidecarUnavailable(f"http_{exc.code}") from exc
+        reason = "auth_rejected" if exc.code == 401 else f"http_{exc.code}"
+        raise SidecarUnavailable(reason) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise SidecarUnavailable(str(exc)) from exc
 
@@ -1134,13 +1121,15 @@ def main() -> None:
             report = _post_score(file_path, before_src, after_src)
         except SidecarUnavailable as exc:
             reason_str = str(exc)
+            auth_failure = reason_str == "auth_rejected"
+            failure_label = "sidecar authentication failed" if auth_failure else "sidecar unavailable"
             # Keep deterministic policy active when neural scoring is down.
             # Explicit fail-closed still blocks non-timeout outages outright.
             shadow_active = _shadow_mode.is_active() if _shadow_mode else False
             if reason_str.startswith("hard_cap_exceeded") or not _fail_closed() or shadow_active:
                 if not reason_str.startswith("hard_cap_exceeded"):
                     sys.stderr.write(
-                        f"[hybrid-reasoner] sidecar unavailable ({exc}); "
+                        f"[hybrid-reasoner] {failure_label} ({exc}); "
                         "symbolic fallback engaged.\n"
                     )
                 fb = _apply_mode(
@@ -1224,13 +1213,14 @@ def main() -> None:
                     started=started,
                     before_src=before_src,
                     after_src=after_src,
-                    reason=f"sidecar_unavailable_fail_closed:{exc}",
+                    reason=(f"sidecar_auth_failed_fail_closed:{exc}" if auth_failure
+                            else f"sidecar_unavailable_fail_closed:{exc}"),
                     retry_after_block=is_retry,
                 )
                 audit_log.record_block(file_path)
                 _exit(
                     2,
-                    f"[hybrid-reasoner] BLOCKED: sidecar unavailable ({exc}); "
+                    f"[hybrid-reasoner] BLOCKED: {failure_label} ({exc}); "
                     "S2_FAIL_CLOSED=1 in effect.",
                 )
             _emit_audit(
@@ -1240,12 +1230,13 @@ def main() -> None:
                 started=started,
                 before_src=before_src,
                 after_src=after_src,
-                reason=f"sidecar_unavailable:{exc}",
+                reason=(f"sidecar_auth_failed:{exc}" if auth_failure
+                        else f"sidecar_unavailable:{exc}"),
                 retry_after_block=is_retry,
             )
             _exit(
                 0,
-                f"[hybrid-reasoner] sidecar unavailable ({exc}); fail-open.",
+                f"[hybrid-reasoner] {failure_label} ({exc}); fail-open.",
             )
             return  # pragma: no cover - _exit raises
 

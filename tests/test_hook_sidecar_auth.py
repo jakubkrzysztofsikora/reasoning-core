@@ -15,6 +15,9 @@ class _Response:
 
 
 def test_score_token_only_sent_to_loopback(monkeypatch):
+    import src.sidecar_auth as sidecar_auth
+
+    monkeypatch.setattr(sidecar_auth.sys, "platform", "linux")
     seen = []
 
     class _Opener:

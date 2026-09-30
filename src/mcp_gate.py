@@ -120,8 +120,12 @@ def gate_edit(
             report = {"unsupported_language": True}
         elif r.status_code != 200:
             started_audit_decision = "blocked" if _fail_closed() else "allowed"
-            started_message = f"sidecar_http_{r.status_code}"
-            report = {"sidecar_unavailable": True, "status_code": r.status_code}
+            if r.status_code == 401:
+                started_message = "sidecar_auth_failed"
+                report = {"sidecar_auth_failed": True, "status_code": r.status_code}
+            else:
+                started_message = f"sidecar_http_{r.status_code}"
+                report = {"sidecar_unavailable": True, "status_code": r.status_code}
         else:
             try:
                 report = r.json()
