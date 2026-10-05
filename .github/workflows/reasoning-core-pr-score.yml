@@ -73,7 +73,7 @@ jobs:
       RC_SCORE_POST_COMMENT: ${{ github.event_name == 'pull_request' && 'true' || (inputs.post-comment && 'true' || 'false') }}
     steps:
       - name: Checkout target repo
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
