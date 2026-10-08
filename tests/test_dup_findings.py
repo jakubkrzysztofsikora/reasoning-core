@@ -1,6 +1,7 @@
 """Tests for the dup-advisory findings ledger (src/hooks/_dup_findings.py)."""
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -95,6 +96,31 @@ def test_record_write_failure_raises_with_cause(tmp_path):
     with pytest.raises(ledger.LedgerError) as ei:
         ledger.record(blocker / "sub" / "ledger.jsonl", _finding())
     assert ei.value.__cause__ is not None
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def test_changed_files_reports_modified_and_untracked_relative_paths(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@t")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "kept.ts").write_text("a\n")
+    (tmp_path / "src" / "edited.ts").write_text("a\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "init")
+    assert ledger.changed_files(str(tmp_path)) == set()
+
+    (tmp_path / "src" / "edited.ts").write_text("b\n")
+    (tmp_path / "src" / "new.ts").write_text("c\n")
+    assert ledger.changed_files(str(tmp_path)) == {"src/edited.ts", "src/new.ts"}
+
+
+def test_changed_files_outside_git_is_unknown_and_says_so(tmp_path, capsys):
+    assert ledger.changed_files(str(tmp_path)) is None
+    assert "unknown" in capsys.readouterr().err
 
 
 def test_corrupt_line_is_reported_not_silently_dropped(tmp_path, capsys):
