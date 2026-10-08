@@ -327,3 +327,109 @@ def test_get_index_delegates_to_the_persisted_builder(monkeypatch):
         hook._INDEX_CACHE.clear()
     assert out is sentinel
     assert calls == {"persist": 1, "plain": 0}
+
+
+# --------------------------------------------------------------------------
+# TB-90: the hook records WHAT was flagged, not just how many. Each confirmed
+# hit becomes one audit event carrying the new function, the matched function
+# and its file:line -- the data `rc dup-flags` renders.
+# --------------------------------------------------------------------------
+
+
+def _dup_events(audit_root):
+    """Every dup_flag event under a tmp audit root, in file order."""
+    events = []
+    for day_dir in sorted(Path(audit_root).glob("*")):
+        for jsonl in sorted(day_dir.glob("*.jsonl")):
+            for line in jsonl.read_text().splitlines():
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                if event.get("decision") == "dup_flag":
+                    events.append(event)
+    return events
+
+
+def _audit_into(tmp_path, monkeypatch):
+    """Point audit_log at a hermetic root and pin the session id."""
+    import src.hooks.audit_log as audit_log
+
+    root = tmp_path / "events"
+    monkeypatch.setattr(audit_log, "_AUDIT_ROOT", str(root))
+    monkeypatch.setenv("RC_SESSION_ID", "audit-sess")
+    return root
+
+
+def test_main_records_one_audit_event_per_flagged_hit(tmp_path, monkeypatch):
+    root = _audit_into(tmp_path, monkeypatch)
+    (tmp_path / "a.ts").write_text("export function toSlug(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+    monkeypatch.setattr(hook, "_get_index", lambda root_: index)
+    monkeypatch.setattr(hook, "_embedder", lambda: _stub_embed)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_slug_dup_payload(tmp_path))))
+
+    with pytest.raises(SystemExit):
+        hook.main()
+
+    events = _dup_events(root)
+    assert len(events) == 1, "one confirmed hit -> exactly one record"
+    event = events[0]
+    # The new function the agent was writing...
+    assert event["new_function"] == "makeSlug"
+    assert event["new_file"].endswith("d.ts")
+    # ...and the existing one it duplicates, with a jump-to location.
+    assert event["match_function"] == "toSlug"
+    assert event["match_file"] == "a.ts"  # repo-relative, as indexed
+    assert isinstance(event["match_lineno"], int) and event["match_lineno"] >= 1
+    assert 0.0 <= event["logic_ratio"] <= 1.0
+    # Keyed so the statusline (which only knows the payload id) can find it.
+    assert event["source_session_id"] == "hook-sess"
+
+
+def test_main_records_nothing_when_no_advisory_is_emitted(tmp_path, monkeypatch, capsys):
+    root = _audit_into(tmp_path, monkeypatch)
+    (tmp_path / "a.ts").write_text("export function toSlug(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    monkeypatch.setenv("RC_DUP_ORACLE", "1")
+    monkeypatch.setattr(hook, "_get_index", lambda root_: index)
+    monkeypatch.setattr(hook, "_embedder", lambda: _stub_embed)
+    payload = {
+        "tool_input": {
+            "file_path": str(tmp_path / "d.ts"),
+            "content": (
+                "export function quicksort(arr) {\n"
+                "  if (arr.length < 2) return arr;\n"
+                "  const p = arr[0];\n"
+                "  return quicksort(arr.filter((x) => x < p));\n"
+                "}\n"
+            ),
+        },
+        "cwd": str(tmp_path),
+        "session_id": "hook-sess",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit):
+        hook.main()
+    assert capsys.readouterr().out == ""
+    assert _dup_events(root) == []
+
+
+def test_advise_detail_returns_the_hits_behind_the_text(tmp_path):
+    # The text is for the model; the records are for the list. Both come from
+    # one scan -- re-running the query to recover the hits would re-embed.
+    (tmp_path / "a.ts").write_text("export function toSlug(s) {\n  " + _SLUG_BODY.format(v="s") + "\n}\n")
+    index = build_dup_index(str(tmp_path), embed_fn=_stub_embed)
+    added = "export function makeSlug(t) {\n  " + _SLUG_BODY.format(v="t") + "\n}\n"
+    text, records = hook.advise_detail(
+        added, str(tmp_path / "d.ts"), index,
+        embed_fn=_stub_embed, repo_root=str(tmp_path),
+    )
+    assert text and "toSlug" in text
+    assert [r["match_function"] for r in records] == ["toSlug"]
+    assert records[0]["new_function"] == "makeSlug"
+    # advise() stays the text-only facade its existing callers expect.
+    assert hook.advise(
+        added, str(tmp_path / "d.ts"), index,
+        embed_fn=_stub_embed, repo_root=str(tmp_path),
+    ) == text
