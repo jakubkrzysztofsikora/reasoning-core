@@ -19,8 +19,8 @@ if str(REPO_ROOT) not in sys.path:
 
 import pytest  # noqa: E402
 
-from src.dup_index import logic_tokens  # noqa: E402
-from src.dup_oracle import FunctionRecord  # noqa: E402
+from src.duplicate_detection.index import logic_tokens  # noqa: E402
+from src.duplicate_detection.oracle import FunctionRecord  # noqa: E402
 
 _VOCAB = 64
 
@@ -59,7 +59,7 @@ def _make_repo(root: Path) -> None:
 # --------------------------------------------------------------------------
 
 def test_index_file_returns_records_and_row_aligned_vectors(tmp_path):
-    from src.dup_repo_index import _index_file
+    from src.duplicate_detection.repo_index import _index_file
 
     _make_repo(tmp_path)
     embed = CountingEmbed()
@@ -73,7 +73,7 @@ def test_index_file_returns_records_and_row_aligned_vectors(tmp_path):
 
 
 def test_index_file_skips_unsupported_language(tmp_path):
-    from src.dup_repo_index import _index_file
+    from src.duplicate_detection.repo_index import _index_file
 
     # An extension the grammar layer doesn't map at all raises
     # UnsupportedLanguageError -> skipped. (The real walk only feeds in-scope
@@ -85,7 +85,7 @@ def test_index_file_skips_unsupported_language(tmp_path):
 
 
 def test_index_file_propagates_systemic_grammar_error(tmp_path, monkeypatch):
-    import src.dup_repo_index as dri
+    import src.duplicate_detection.repo_index as dri
 
     (tmp_path / "a.ts").write_text(
         'export function keep(s) {\n  return s.toLowerCase().trim();\n}\n'
@@ -112,7 +112,7 @@ def _same_index(a, b) -> None:
 
 
 def test_second_build_reuses_cache_and_re_embeds_nothing(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -134,7 +134,7 @@ def test_second_build_reuses_cache_and_re_embeds_nothing(tmp_path):
 
 
 def test_cache_file_is_written_under_cache_dir(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -146,8 +146,8 @@ def test_cache_file_is_written_under_cache_dir(tmp_path):
 
 
 def test_reused_index_still_finds_the_planted_duplicate(tmp_path):
-    from src.dup_oracle import find_near_duplicates
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.oracle import find_near_duplicates
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -169,7 +169,7 @@ def test_reused_index_still_finds_the_planted_duplicate(tmp_path):
 # --------------------------------------------------------------------------
 
 def test_only_changed_file_re_embedded_and_deleted_file_pruned(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -202,7 +202,7 @@ def _repo_of_single_fn_files(root: Path, names: list[str]) -> None:
 
 
 def test_first_build_embedding_is_bounded_by_max_funcs(tmp_path, capsys):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -221,7 +221,7 @@ def test_first_build_embedding_is_bounded_by_max_funcs(tmp_path, capsys):
 
 
 def test_over_cap_file_is_carried_forward_not_re_embedded(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -272,7 +272,7 @@ def _rewrite_manifest(cache_path: Path, mutate) -> None:
 
 
 def test_changing_embedder_id_discards_the_cache(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -288,7 +288,7 @@ def test_changing_embedder_id_discards_the_cache(tmp_path):
 
 
 def test_bumping_cache_format_version_discards_the_cache(tmp_path, monkeypatch):
-    import src.dup_repo_index as dri
+    import src.duplicate_detection.repo_index as dri
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -304,7 +304,7 @@ def test_bumping_cache_format_version_discards_the_cache(tmp_path, monkeypatch):
 
 
 def test_dim_mismatch_in_meta_discards_the_cache(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -325,7 +325,7 @@ def test_dim_mismatch_in_meta_discards_the_cache(tmp_path):
 # --------------------------------------------------------------------------
 
 def test_garbage_cache_bytes_fall_back_to_full_build(tmp_path):
-    from src.dup_repo_index import _cache_path, load_or_build_dup_index
+    from src.duplicate_detection.repo_index import _cache_path, load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -347,7 +347,7 @@ def test_garbage_cache_bytes_fall_back_to_full_build(tmp_path):
 
 
 def test_manifest_shape_mismatch_falls_back_to_full_build(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -369,7 +369,7 @@ def test_manifest_shape_mismatch_falls_back_to_full_build(tmp_path):
 
 
 def test_write_failure_is_surfaced_and_index_still_returned(tmp_path, monkeypatch, capsys):
-    import src.dup_repo_index as dri
+    import src.duplicate_detection.repo_index as dri
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -389,7 +389,7 @@ def test_write_failure_is_surfaced_and_index_still_returned(tmp_path, monkeypatc
 
 
 def test_out_of_bounds_row_start_falls_back_to_full_build(tmp_path):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -408,7 +408,7 @@ def test_out_of_bounds_row_start_falls_back_to_full_build(tmp_path):
 
 
 def test_each_file_is_read_once_per_build(tmp_path, monkeypatch):
-    import src.dup_repo_index as dri
+    import src.duplicate_detection.repo_index as dri
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -429,7 +429,7 @@ def test_each_file_is_read_once_per_build(tmp_path, monkeypatch):
 
 
 def test_mid_build_error_propagates_and_leaves_prior_cache_intact(tmp_path, monkeypatch):
-    import src.dup_repo_index as dri
+    import src.duplicate_detection.repo_index as dri
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -460,7 +460,7 @@ def test_mid_build_error_propagates_and_leaves_prior_cache_intact(tmp_path, monk
 # --------------------------------------------------------------------------
 
 def test_first_build_does_not_warn_about_a_discarded_cache(tmp_path, capsys):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -471,7 +471,7 @@ def test_first_build_does_not_warn_about_a_discarded_cache(tmp_path, capsys):
 
 
 def test_discarding_a_corrupt_cache_emits_a_breadcrumb(tmp_path, capsys):
-    from src.dup_repo_index import _cache_path, load_or_build_dup_index
+    from src.duplicate_detection.repo_index import _cache_path, load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -486,7 +486,7 @@ def test_discarding_a_corrupt_cache_emits_a_breadcrumb(tmp_path, capsys):
 
 
 def test_discarding_an_incompatible_cache_emits_a_breadcrumb(tmp_path, capsys):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -504,7 +504,7 @@ def test_discarding_an_incompatible_cache_emits_a_breadcrumb(tmp_path, capsys):
 # --------------------------------------------------------------------------
 
 def test_cache_disabled_env_writes_nothing_and_never_reuses(tmp_path, monkeypatch):
-    from src.dup_repo_index import load_or_build_dup_index
+    from src.duplicate_detection.repo_index import load_or_build_dup_index
 
     monkeypatch.setenv("RC_DUP_ORACLE_CACHE", "0")
     repo = tmp_path / "repo"

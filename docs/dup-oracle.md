@@ -37,11 +37,11 @@ Two stages, so it stays fast and low-noise:
    across the repo, so boilerplate (identical constructors, thin wrappers)
    sinks below genuine duplication. A ranking, not a hard filter.
 
-Function embeddings are held in a `DupOracleIndex` (`src/dup_repo_index.py`).
+Function embeddings are held in a `DupOracleIndex` (`src/duplicate_detection/repo_index.py`).
 
 **Index persistence (disk cache).** The hook runs as a fresh process per edit, so
 the index is **persisted to disk** per repo (`load_or_build_dup_index` in
-`src/dup_repo_index.py`): a single atomic `.npz` (binary vectors + a small JSON
+`src/duplicate_detection/repo_index.py`): a single atomic `.npz` (binary vectors + a small JSON
 manifest) keyed per file by content hash. On each edit, unchanged files reuse
 their cached vectors and only changed/new files are embedded — so the advisory is
 a cached lookup (seconds) rather than a whole-repo re-embed, which is what makes
@@ -101,21 +101,26 @@ if that's wanted before merge.
 
 ## Modules
 
-- `src/dup_index.py` — normaliser, logic-token diff, distinctiveness ranking,
+All engine code lives in the `src/duplicate_detection/` package:
+
+- `index.py` — normaliser, logic-token diff, distinctiveness ranking,
   function extraction (pure; tree-sitter only).
-- `src/dup_oracle.py` — the two-stage query (`find_near_duplicates`).
-- `src/dup_repo_index.py` — builds the repo function+embedding index and
+- `oracle.py` — the two-stage query (`find_near_duplicates`).
+- `repo_index.py` — builds the repo function+embedding index and
   persists it to disk (`load_or_build_dup_index`; per-file content-hash cache).
-- `src/dup_embed.py` — L2-normalising wrapper over `ssm_backbone.embed`
+- `embed.py` — L2-normalising wrapper over `ssm_backbone.embed`
   (the only torch-touching module).
-- `src/hooks/pre_edit_dup_advisory.py` — the PreToolUse advisory.
+- `findings.py` — per-repo findings ledger, so findings outlive the edit.
+The hook lives with the other hooks:
+
+- `src/hooks/pre_edit_duplicate_check.py` — the PreToolUse advisory.
 
 ## Enabling
 
 Off by default. To turn it on, set `RC_DUP_ORACLE=1` and wire the hook as a
 `PreToolUse` matcher for `Edit|Write|MultiEdit` in `.claude/settings.json`:
 
-    python3 src/hooks/pre_edit_dup_advisory.py
+    python3 src/hooks/pre_edit_duplicate_check.py
 
 It reads the tool payload on stdin and, when a duplicate is found, prints a
 `hookSpecificOutput.additionalContext` blurb (exit 0, never blocks).

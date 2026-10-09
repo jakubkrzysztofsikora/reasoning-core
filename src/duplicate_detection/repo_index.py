@@ -3,7 +3,7 @@ queries.
 
 Walks the repo's source files, extracts named functions, computes their logic
 tokens + a repo token-df, and embeds each. The embedder is **injectable**
-(default: ``dup_embed.embed_function``) so the build / cap logic is unit-testable
+(default: ``embed.embed_function``) so the build / cap logic is unit-testable
 offline with a stub -- the real model is only reached when no ``embed_fn`` is
 supplied.
 
@@ -26,14 +26,14 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .dup_index import build_token_df, extract_functions, logic_tokens
-from .dup_oracle import FunctionRecord
-from .grammars import EXTENSION_MAP, UnsupportedLanguageError
-from .project_index import _iter_repo_files
+from ..grammars import EXTENSION_MAP, UnsupportedLanguageError
+from ..project_index import _iter_repo_files
+from .index import build_token_df, extract_functions, logic_tokens
+from .oracle import FunctionRecord
 
 # The oracle dedups *functions*, so index only languages the extractor AND the
 # normalizer fully handle -- currently Python / JavaScript / TypeScript. Being
-# grammar-parseable is NOT sufficient: the real gates are dup_index._FUNC_TYPES
+# grammar-parseable is NOT sufficient: the real gates are index._FUNC_TYPES
 # (which function nodes are extracted) and normalize()'s bound-name handling
 # (which params/locals are canonicalized so renamed duplicates collapse). C# and
 # SQL parse but are deliberately OUT OF SCOPE -- enabling them needs their
@@ -76,7 +76,7 @@ class DupOracleIndex:
 def _default_embed() -> Callable[[str], "np.ndarray"]:
     # Imported lazily so this module (and its offline tests) never pull torch
     # unless the real embedder is actually used.
-    from .dup_embed import embed_function
+    from .embed import embed_function
 
     return embed_function
 

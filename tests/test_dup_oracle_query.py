@@ -1,4 +1,4 @@
-"""Unit tests for the two-stage near-duplicate query (src/dup_oracle.py).
+"""Unit tests for the two-stage near-duplicate query (src/duplicate_detection/oracle.py).
 
 Pure / fast: hand-made L2-normalised vectors + logic-token lists, no model.
 Exercises Stage 1 (cosine recall), Stage 2 (logic-diff precision) and Stage 3
@@ -17,8 +17,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from collections import Counter  # noqa: E402
 
-from src.dup_index import build_token_df  # noqa: E402
-from src.dup_oracle import FunctionRecord, find_near_duplicates  # noqa: E402
+from src.duplicate_detection.index import build_token_df  # noqa: E402
+from src.duplicate_detection.oracle import FunctionRecord, find_near_duplicates  # noqa: E402
 
 
 def _unit(v) -> np.ndarray:

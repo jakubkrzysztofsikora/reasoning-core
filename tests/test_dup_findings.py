@@ -1,4 +1,4 @@
-"""Tests for the dup-advisory findings ledger (src/hooks/_dup_findings.py)."""
+"""Tests for the dup-advisory findings ledger (src/duplicate_detection/findings.py)."""
 from __future__ import annotations
 
 import subprocess
@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src import dup_findings as ledger
+from src.duplicate_detection import findings as ledger
 
 
 def _finding(name="onDocClick", **over):

@@ -21,8 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.dup_index import build_token_df, logic_tokens  # noqa: E402
-from src.dup_oracle import FunctionRecord, find_near_duplicates  # noqa: E402
+from src.duplicate_detection.index import build_token_df, logic_tokens  # noqa: E402
+from src.duplicate_detection.oracle import FunctionRecord, find_near_duplicates  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "dup_oracle"
 

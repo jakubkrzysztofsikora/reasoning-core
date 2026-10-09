@@ -1,4 +1,4 @@
-"""Unit tests for the distinctiveness primitives (src/dup_index.py).
+"""Unit tests for the distinctiveness primitives (src/duplicate_detection/index.py).
 
 These rank confirmed near-duplicates by how RARE their shared tokens are, so
 boilerplate that matches only on ubiquitous tokens sinks below genuine
@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from collections import Counter  # noqa: E402
 
-from src.dup_index import (  # noqa: E402
+from src.duplicate_detection.index import (  # noqa: E402
     build_token_df,
     distinctive_shared_tokens,
     rare_cutoff,
