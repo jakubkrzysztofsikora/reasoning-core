@@ -15,7 +15,6 @@ dist/
 .coverage
 htmlcov/
 .DS_Store
-# JetBrains IDE project settings — per-user.
 .idea/
 *.log
 .env
