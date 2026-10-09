@@ -20,7 +20,7 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
-from .grammars import get_parser, select_grammar
+from ..grammars import get_parser, select_grammar
 
 # Identifier-like leaf node types across the supported grammars.
 _IDENT_TYPES = frozenset({

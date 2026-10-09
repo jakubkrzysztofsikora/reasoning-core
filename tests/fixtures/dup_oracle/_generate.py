@@ -25,8 +25,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np  # noqa: E402
 
-from src.dup_embed import embed_function  # noqa: E402
-from src.dup_index import extract_functions  # noqa: E402
+from src.duplicate_detection.embed import embed_function  # noqa: E402
+from src.duplicate_detection.index import extract_functions  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DATE_FNS_URL = "https://github.com/date-fns/date-fns.git"

@@ -32,9 +32,9 @@ if _REPO_ROOT not in sys.path:
 
 _IMPORT_ERROR: Optional[str] = None
 try:  # a PreToolUse hook must never crash at import, even when it's disabled
-    from src.dup_index import extract_functions, logic_tokens
-    from src.dup_oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, find_near_duplicates
-    from src.dup_repo_index import (
+    from src.duplicate_detection.index import extract_functions, logic_tokens
+    from src.duplicate_detection.oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, find_near_duplicates
+    from src.duplicate_detection.repo_index import (
         DupOracleIndex,
         build_dup_index,
         load_or_build_dup_index,
@@ -165,7 +165,7 @@ def _get_index(repo_root: str) -> DupOracleIndex:
 def _embedder():
     # Lazy, monkeypatchable seam: the real embedder is imported only here, so the
     # offline hook tests substitute a stub without pulling in torch.
-    from src.dup_embed import embed_function
+    from src.duplicate_detection.embed import embed_function
 
     return embed_function
 

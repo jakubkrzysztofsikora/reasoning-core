@@ -1,4 +1,4 @@
-"""Unit tests for the advisory hook's pure pieces (src/hooks/pre_edit_dup_advisory.py).
+"""Unit tests for the advisory hook's pure pieces (src/hooks/pre_edit_duplicate_check.py).
 
 Offline: a stub embedder + a stub-built index, no torch, no stdin. Covers the
 added-source extraction and the advise() decision (flags a duplicate, silent on
@@ -18,10 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.dup_index import logic_tokens  # noqa: E402
-from src.dup_repo_index import build_dup_index  # noqa: E402
-from src.hooks import pre_edit_dup_advisory as hook  # noqa: E402
-from src.hooks.pre_edit_dup_advisory import _added_source, advise  # noqa: E402
+from src.duplicate_detection.index import logic_tokens  # noqa: E402
+from src.duplicate_detection.repo_index import build_dup_index  # noqa: E402
+from src.hooks import pre_edit_duplicate_check as hook  # noqa: E402
+from src.hooks.pre_edit_duplicate_check import _added_source, advise  # noqa: E402
 
 _VOCAB = 64
 

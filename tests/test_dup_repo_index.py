@@ -1,4 +1,4 @@
-"""Unit tests for the repo index builder (src/dup_repo_index.py).
+"""Unit tests for the repo index builder (src/duplicate_detection/repo_index.py).
 
 Offline: a deterministic stub embedder (bag of logic tokens) stands in for the
 model, so the walk / extract / token-df / cap logic and an end-to-end query over
@@ -17,9 +17,9 @@ if str(REPO_ROOT) not in sys.path:
 
 import pytest  # noqa: E402
 
-from src.dup_index import logic_tokens  # noqa: E402
-from src.dup_oracle import find_near_duplicates  # noqa: E402
-from src.dup_repo_index import build_dup_index  # noqa: E402
+from src.duplicate_detection.index import logic_tokens  # noqa: E402
+from src.duplicate_detection.oracle import find_near_duplicates  # noqa: E402
+from src.duplicate_detection.repo_index import build_dup_index  # noqa: E402
 
 _VOCAB = 64
 
@@ -115,7 +115,7 @@ def test_index_build_does_not_swallow_a_systemic_grammar_error(tmp_path, monkeyp
     # A grammar-load / ABI RuntimeError affects every file of a language. It must
     # NOT be silently turned into an empty index -- the oracle would then report
     # "no duplicates" forever with zero signal. It must surface.
-    import src.dup_repo_index as dri
+    import src.duplicate_detection.repo_index as dri
 
     (tmp_path / "a.mjs").write_text(
         "export function keep(s) {\n  return s.toLowerCase().replace(RE, '-').trim();\n}\n"

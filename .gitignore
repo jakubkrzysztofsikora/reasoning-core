@@ -15,6 +15,7 @@ dist/
 .coverage
 htmlcov/
 .DS_Store
+.idea/
 *.log
 .env
 .env.local

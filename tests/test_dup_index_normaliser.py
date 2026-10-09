@@ -1,4 +1,4 @@
-"""Unit tests for the near-duplicate logic-token normaliser (src/dup_index.py).
+"""Unit tests for the near-duplicate logic-token normaliser (src/duplicate_detection/index.py).
 
 Pure / fast: tree-sitter only, no model. These pin the Stage-2 (precision)
 behaviour -- a renamed or rewritten duplicate collapses to the same logic
@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.dup_index import (  # noqa: E402
+from src.duplicate_detection.index import (  # noqa: E402
     extract_functions,
     logic_ratio,
     logic_tokens,
