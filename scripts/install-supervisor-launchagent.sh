@@ -27,17 +27,19 @@ fi
 
 mkdir -p "${DEST_DIR}"
 
-# Substitute placeholders with actual values.
-sed -e "s|__REPO__|${REPO}|g" -e "s|__HOME__|${HOME}|g" "${SRC_PLIST}" > "${DEST_PLIST}"
-echo "installed: ${DEST_PLIST}"
+# Use the same renderer and domain-aware loader as rc init.
+PYTHONPATH="${REPO}:${REPO}/src" "${REPO}/.venv/bin/python" - <<'PY'
+import sys
+from pathlib import Path
+from src._init import InitResult, _install_launchd
 
-# Validate the rendered plist.
-plutil -lint "${DEST_PLIST}"
-
-# Reload the agent (ignore errors on first install).
-launchctl unload "${DEST_PLIST}" 2>/dev/null || true
-launchctl load -w "${DEST_PLIST}"
-echo "loaded: ${LABEL}"
+result = InitResult(target=Path.cwd())
+if not _install_launchd(sys.executable, result):
+    for warning in result.warned:
+        print(warning, file=sys.stderr)
+    raise SystemExit(1)
+print("installed and registered: com.reasoning-core.supervisor")
+PY
 
 cat <<EOF
 

@@ -509,17 +509,20 @@ def _install_launchd(python: str, result: InitResult) -> bool:
     plist_dir = Path.home() / "Library" / "LaunchAgents"
     plist_dir.mkdir(parents=True, exist_ok=True)
     plist_path = plist_dir / "com.reasoning-core.supervisor.plist"
-    plist_path.write_text(_render_launchd_plist(python))
+    from src._launchd import restartable_plist
+
+    previous = plist_path.read_text() if plist_path.exists() else None
+    plist_path.write_text(restartable_plist(_render_launchd_plist(python), previous))
     # Validate (silently skip if plutil missing — old Linux containers etc.)
     if shutil.which("plutil"):
         rc = subprocess.run(["plutil", "-lint", str(plist_path)], capture_output=True)
         if rc.returncode != 0:
             result.warned.append(f"plist failed plutil lint: {rc.stderr.decode()}")
-    # Load (ignore unload errors on first install).
-    subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
-    rc = subprocess.run(["launchctl", "load", "-w", str(plist_path)], capture_output=True)
-    if rc.returncode != 0:
-        result.warned.append(f"launchctl load failed: {rc.stderr.decode()}")
+    from src._launchd import load_supervisor
+
+    loaded, detail = load_supervisor(plist_path)
+    if not loaded:
+        result.warned.append(f"launchctl bootstrap failed: {detail}")
         return False
     result.sidecar_installed = True
     return True
@@ -527,11 +530,14 @@ def _install_launchd(python: str, result: InitResult) -> bool:
 
 def _render_launchd_plist(python: str) -> str:
     """Render the supervisor plist: the checkout's ``launchd/`` template when present, else the built-in one."""
+    from src._launchd import restartable_plist
+
     root = _install_paths.framework_root()
     repo_template = root / "launchd" / "com.reasoning-core.supervisor.plist" if root else None
     if repo_template is not None and repo_template.is_file():
-        return repo_template.read_text().replace("__REPO__", str(root)).replace("__HOME__", str(Path.home()))
-    return LAUNCHD_PLIST_TEMPLATE.format(python=python, src=str(root / "src") if root else "")
+        rendered = repo_template.read_text().replace("__REPO__", str(root)).replace("__HOME__", str(Path.home()))
+        return restartable_plist(rendered)
+    return restartable_plist(LAUNCHD_PLIST_TEMPLATE.format(python=python, src=str(root / "src") if root else ""))
 
 
 def _install_systemd_user(python: str, result: InitResult) -> bool:
