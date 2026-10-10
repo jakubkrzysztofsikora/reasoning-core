@@ -41,6 +41,7 @@ _EXPLICIT_ALLOWLIST: Tuple[str, ...] = (
     "/.omp/extensions/",
     "/.omp/reasoning-core.compatibility.json",
     "/.reasoning-core/omp-owned.json",
+    "/.reasoning-core/omp-qualification.json",
     "/src/_omp_install.py",
     "/src/_omp_doctor.py",
     "/src/data/templates/omp.",

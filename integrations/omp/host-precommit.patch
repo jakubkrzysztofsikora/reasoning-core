@@ -297,9 +297,21 @@
  /** A batch of previews for one session generation. */
  export interface EditPreviewBatch {
    /** Monotonically increasing per session. */
+@@ -3750,3 +3770,5 @@
+  * Returns UTF-16 lines with active SGR codes carried across line boundaries.
+  */
+ export declare function wrapTextWithAnsi(text: string, width: number, tabWidth: number): Array<string>
++
++export declare const nativeAddonStatus: () => { path: string; version: string | null; packageVersion: string; stale: boolean } | null;
 --- a/packages/natives/native/index.js
 +++ b/packages/natives/native/index.js
-@@ -45,6 +45,7 @@
+@@ -1,4 +1,5 @@
+ import { loadNative, missingNativeExport } from "./loader-state.js";
++export { nativeAddonStatus } from "./loader-state.js";
+ import { adaptDesktopSession } from "./desktop-adapter.js";
+ 
+ /**
+@@ -45,6 +46,7 @@
  export const VcsRepo = nativeBindings.VcsRepo;
  
  // functions
@@ -307,3 +319,82 @@
  export const __ompInstallTokioRuntime = nativeBindings.__ompInstallTokioRuntime ?? missingNativeExport("__ompInstallTokioRuntime");
  export const __ompSetGrammarDir = nativeBindings.__ompSetGrammarDir ?? missingNativeExport("__ompSetGrammarDir");
  export const __piNativesBuildVersion = nativeBindings.__piNativesBuildVersion;
+--- a/packages/coding-agent/src/cli.ts
++++ b/packages/coding-agent/src/cli.ts
+@@ -531,12 +531,19 @@
+ 	// typed during initialization stays buffered. Neither graph is needed to
+ 	// produce that frame.
+ 	const helpOrVersion =
++		resolvedArgv[0] === "--rc-native-probe" ||
+ 		resolvedArgv[0] === "--help" ||
+ 		resolvedArgv[0] === "-h" ||
+ 		resolvedArgv[0] === "--version" ||
+ 		resolvedArgv[0] === "-v" ||
+ 		resolvedArgv[0] === "help";
+ 	await Promise.all([setFullProcessName(), helpOrVersion ? Promise.resolve() : installNetworkBootstrap()]);
++
++	if (resolvedArgv[0] === "--rc-native-probe") {
++		const { runNativeProbe } = await import("./cli/rc-native-probe");
++		await runNativeProbe();
++		return;
++	}
+ 
+ 	if (resolvedArgv[0] === "--smoke-test") {
+ 		await runSmokeTest();
+--- /dev/null
++++ b/packages/coding-agent/src/cli/rc-native-probe.ts
+@@ -0,0 +1,54 @@
++import { createHash } from "node:crypto";
++import { readFileSync, realpathSync, mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++import { Database } from "bun:sqlite";
++import { buildModel } from "@oh-my-pi/pi-catalog/build";
++import { editPrecommitProtocol, nativeAddonStatus } from "@oh-my-pi/pi-natives";
++import { VERSION } from "@oh-my-pi/pi-utils/dirs";
++import { ModelRegistry } from "../config/model-registry";
++import { Settings } from "../config/settings";
++import { AuthStorage, SqliteAuthCredentialStore } from "../session/auth-storage";
++import { SessionManager } from "../session/session-manager";
++import { createAgentSession } from "../sdk";
++
++const sha = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
++export async function runNativeProbe(): Promise<void> {
++ let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
++ let auth: AuthStorage | undefined;
++ const scratch = mkdtempSync(join(tmpdir(), "omp-rc-probe-"));
++ try {
++   const raw = await Bun.stdin.text();
++   if (Buffer.byteLength(raw) > 65536) throw new Error("probe input limit");
++   const input = JSON.parse(raw);
++   const cwd = realpathSync(input.project_dir);
++   const adapter = join(cwd, ".omp/extensions/reasoning_core_gate.ts");
++   auth = new AuthStorage(new SqliteAuthCredentialStore(new Database(":memory:")));
++   const modelRegistry = new ModelRegistry(auth, join(scratch, "models.yml"));
++   const settings = await Settings.init({ cwd, inMemory: true });
++   const model = buildModel({ id: "rc-no-provider", name: "RC no-provider probe", api: "openai-completions" as const,
++     provider: "rc-qualification", baseUrl: "http://127.0.0.1:1",
++     reasoning: false, input: ["text" as const], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++     contextWindow: 8192, maxTokens: 1024 });
++   const created = await createAgentSession({
++     cwd, authStorage: auth, modelRegistry, model, settings, sessionManager: SessionManager.inMemory(cwd),
++     skills: [], contextFiles: [], promptTemplates: [], slashCommands: [], enableMCP: false,
++     enableLsp: false, skipPythonPreflight: true, rules: [], preloadedCustomToolPaths: [],
++     toolNames: ["read", "edit"], agentId: "rc-native-probe",
++   });
++   session = created.session;
++   const owned = created.extensionsResult.extensions.find(extension =>
++     extension.resolvedPath && realpathSync(extension.resolvedPath) === adapter);
++   const native = nativeAddonStatus();
++   const report = { schema_version: 1, version: VERSION, source_sha: "aafb6551616fccec65cbfb264298e7f98df8ce5f",
++     native_protocol: editPrecommitProtocol?.() ?? 0, model_invoked: false,
++     loaded: !!owned && session.hasExtensionHandlers("native_edit_prepare") && session.hasExtensionHandlers("native_edit_result"),
++     adapter_path: adapter, adapter_sha256: sha(adapter), native_sha256: native ? sha(native.path) : null };
++   console.log(JSON.stringify(report));
++ } catch {
++   console.log(JSON.stringify({ schema_version: 1, loaded: false, model_invoked: false, error: "probe_failed" }));
++   process.exitCode = 1;
++ } finally {
++   await session?.dispose(); auth?.close(); rmSync(scratch, { recursive: true, force: true });
++ }
++}

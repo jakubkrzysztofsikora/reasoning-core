@@ -4,7 +4,7 @@
   "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
   "native_protocol": 1,
   "native_patch_sha256": "e9947d54e9e0a3e259a102606772e4b808a1fb7ff1022505c9c5a95306e4adf6",
-  "host_patch_sha256": "7ec149c0497acd79bd398580280d97b5b03bb239775011316fc15bcb578f62cc",
+  "host_patch_sha256": "04bcd62e4f034904b2dd84dc1b66b4bf1945881bb886ca5c70885844db73d75f",
   "qualification": "not_qualified",
   "supported_mutation_routes": [
     "native_file_edit"

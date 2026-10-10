@@ -3,7 +3,7 @@
   "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
   "upstream_version": "18.8.8",
   "requires_native_precommit": true,
-  "patch_sha256": "7ec149c0497acd79bd398580280d97b5b03bb239775011316fc15bcb578f62cc",
+  "patch_sha256": "04bcd62e4f034904b2dd84dc1b66b4bf1945881bb886ca5c70885844db73d75f",
   "files": {
     "packages/coding-agent/src/edit/index.ts": {
       "before_sha256": "a1caabb2d515a3e1cd8cf808064538a58441f74e147f4ee14efcc76e09dfac17",
@@ -31,11 +31,19 @@
     },
     "packages/natives/native/index.d.ts": {
       "before_sha256": "4aa8a69da6afb4b425eb5db27dcf3ef48e2f4427e8fc56b4805fe707318dd679",
-      "after_sha256": "3aee0778633a4873c333ed0ac9bdc3b9a8006df18f6e7e0bec6def62e9d103ac"
+      "after_sha256": "53641ccf6bd36e69e0cce83d9c7187e061d9b0f6e9bcc9f5bca625b3ba32b8ee"
     },
     "packages/natives/native/index.js": {
       "before_sha256": "e4ee6f849c4e34a648d773c9090a84cfa5f8219c4a1db582532fba0cfc9daccb",
-      "after_sha256": "09bedce30a7fdfedfdb4e79cc64f2eb21b3f9381b9ab51c6b4a20a7cf240c33a"
+      "after_sha256": "34c00a5483143fa53910b3c3cfe75c513652b4487813349633746d04edb86683"
+    },
+    "packages/coding-agent/src/cli.ts": {
+      "before_sha256": "eca186ac945c972743d95619d5ea030b503b4326bfce6f532d5fe8a28936936a",
+      "after_sha256": "32c785dbc800bfaf82e38f46bd99d3870360a9481d12d0a348d7275ecb1f7f09"
+    },
+    "packages/coding-agent/src/cli/rc-native-probe.ts": {
+      "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after_sha256": "f53044f963e061fd2c8e4c45145932bfbc97efef4500c8cac032017e4dbb4cb8"
     }
   }
 }

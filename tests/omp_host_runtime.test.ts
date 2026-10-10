@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 const upstream = process.env.RC_OMP_SOURCE;
@@ -237,3 +237,27 @@ test("actual OS failure publishes the landed prefix through runtime filesystem r
   expect(receipt.persisted_digests[join(blockedDir, "last.py")]).toBeNull();
  } finally { chmodSync(blockedDir, 0o755); rmSync(cwd, { recursive: true, force: true }); }
 });
+
+test("normal CLI probe discovers installed guard without invoking a model", async () => {
+ const { mkdirSync } = await import("node:fs");
+ const { spawnSync } = await import("node:child_process");
+ const cwd = mkdtempSync(join(tmpdir(), "rc CLI probe "));
+ const profile = join(cwd, "profile"); mkdirSync(profile);
+ try {
+  const installed = spawnSync(join(process.cwd(), ".venv/bin/python"), ["-c",
+    "import sys; from pathlib import Path; from src._init import InitResult; from src._omp_install import install_omp; p=Path(sys.argv[1]); m=p/'.reasoning-core/install.manifest'; m.parent.mkdir(); m.touch(); install_omp(p,m,{'RC_PYTHON':sys.executable,'RC_REPO':sys.argv[2]},InitResult(p))", cwd, process.cwd()], { encoding: "utf8" });
+  expect(installed.status).toBe(0);
+  const probe = spawnSync(process.execPath, [join(upstream, "packages/coding-agent/src/cli.ts"), "--rc-native-probe"], {
+    cwd, input: JSON.stringify({ project_dir: cwd }), encoding: "utf8", timeout: 40000,
+    env: { ...process.env, PI_CODING_AGENT_DIR: profile, OMP_PROFILE: "qualification" },
+  });
+  expect(probe.status).toBe(0);
+  const result = JSON.parse(probe.stdout);
+  expect(result.loaded).toBe(true);
+  expect(result.native_protocol).toBe(1);
+  expect(result.version).toBe("18.8.8");
+  expect(result.model_invoked).toBe(false);
+  expect(result.adapter_path).toBe(join(realpathSync(cwd), ".omp/extensions/reasoning_core_gate.ts"));
+  expect(result.native_sha256).toMatch(/^[0-9a-f]{64}$/);
+ } finally { rmSync(cwd, { recursive: true, force: true }); }
+}, 45000);

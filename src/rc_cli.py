@@ -381,6 +381,9 @@ def cmd_status(_args: argparse.Namespace) -> int:
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Check agent-hook installation and evidence-pipeline prerequisites."""
     project = Path(args.project_dir or _project_dir()).expanduser().resolve()
+    if getattr(args, "host", None) == "omp":
+        from src._omp_doctor import check_omp
+        return _print_doctor(project, check_omp(project), args)
     checks: list[dict[str, object]] = []
     def check(name: str, ok: bool, detail: str) -> None:
         checks.append({"name": name, "ok": ok, "detail": detail})
@@ -443,6 +446,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         if canary_report.get("error"):
             canary_detail += f"; error={canary_report['error']}"
     check("evidence_canary", canary_ok, canary_detail)
+    return _print_doctor(project, checks, args)
+
+def _print_doctor(project: Path, checks: list[dict], args: argparse.Namespace) -> int:
     passed = sum(1 for item in checks if item["ok"])
     result = {"project_dir": str(project), "passed": passed, "total": len(checks), "checks": checks}
     if getattr(args, "json", False):
@@ -1807,7 +1813,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     sys.stdout.write("  model_downloaded  = %s\n" % result.model_downloaded)
     if args.check:
         sys.stdout.write("\nrunning rc doctor ...\n")
-        return cmd_doctor(argparse.Namespace(project_dir=str(target), json=False))
+        return cmd_doctor(argparse.Namespace(project_dir=str(target), json=False, host=getattr(args, "host", None)))
     return 0
 
 
@@ -1992,6 +1998,7 @@ def main(argv: list | None = None) -> int:
     init_cmd.add_argument("--target", default=None, help="repo directory (default: cwd)")
     init_cmd.add_argument("--no-sidecar", action="store_true", help="skip launchd/systemd install")
     init_cmd.add_argument("--no-model", action="store_true", help="skip mamba-130m download")
+    init_cmd.add_argument("--host", choices=["omp"], default=None, help="host-specific readiness checks")
     init_cmd.add_argument("--check", action="store_true", help="run rc doctor after wiring")
     init_cmd.set_defaults(func=cmd_init)
     init_uninstall = sub.add_parser(
@@ -2013,6 +2020,7 @@ def main(argv: list | None = None) -> int:
         help="verify agent-hook wiring and evidence-pipeline prerequisites",
     )
     doctor.add_argument("--project-dir", default=None)
+    doctor.add_argument("--host", choices=["omp"], default=None, help="check OMP readiness independently")
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
     baseline = sub.add_parser("baseline", help="capture and inspect immutable evaluation baselines")
