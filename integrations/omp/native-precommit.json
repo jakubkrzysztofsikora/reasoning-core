@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "https://github.com/can1357/oh-my-pi",
+  "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
+  "upstream_version": "18.8.8",
+  "upstream_archive_sha256": "f7b808277ffe18fc1940efcfd4c41c2b6d6eb8fba2e65ba8682760e95f9caa07",
+  "patch_sha256": "8a0370cc5c017b2b5eb4c8563c5a27282e3b1c22ff6de0e0e7b61743e05972a5",
+  "files": {
+    "crates/pi-edit/Cargo.toml": {
+      "before_sha256": "3caa2e47075702d088618290592c45e8bd473fda90e0db2162259e2179bd72a9",
+      "after_sha256": "c310806e57e4f3d352c4850c2a881a5cfe5929adb69087d80b5b6db65af6bcb1"
+    },
+    "crates/pi-edit/src/store.rs": {
+      "before_sha256": "ece36aaa691557e6300ce6a02a1b075e4a2f6c767c7406fb512f186e3a385f7b",
+      "after_sha256": "56eed7e045321c9a89e55deabbb2659b5c571a287365cd2df60bd71015fc8699"
+    },
+    "crates/pi-edit/src/session.rs": {
+      "before_sha256": "2801e664cf5069258bc6fd11710e10c144b479e4c72534cb3a3c3b30dbdbee13",
+      "after_sha256": "631c6dd43cba178d77365f6a8dd587fd4b3a5a485262cb0c3fc72fe80d894c1c"
+    },
+    "crates/pi-natives/src/edit.rs": {
+      "before_sha256": "eb65dd9d29185a50c9b74658a23451f27cc799c0e2061d1236b5def6c8aaee21",
+      "after_sha256": "8b0223fb35dd195d2933a1740f6ffbf166740d920592cba95f203d0b0348c2a0"
+    },
+    "Cargo.lock": {
+      "before_sha256": "d9c1d3a964c1d24694b945a64eec15f5c64b89fdee76a48d17e79c3b83e13996",
+      "after_sha256": "6b1c5b1d6eeaab299006ccefd36847677a5ead11da8712e0daea871dcae549d3"
+    }
+  },
+  "native_api": {
+    "entrypoint": "EditSession.apply",
+    "approval_argument": 3,
+    "protocol_version": 1,
+    "candidate_keys": [
+      "path",
+      "operation",
+      "beforeSrc",
+      "afterSrc",
+      "expectedBeforeSha256"
+    ],
+    "batch_keys": [
+      "finalInputSha256",
+      "candidates"
+    ],
+    "decision_keys": [
+      "allowed",
+      "finalInputSha256"
+    ],
+    "unguarded_apply_compatibility": true
+  },
+  "verification": {
+    "state": "native_component_tested",
+    "date": "2026-10-10",
+    "rust_toolchain": "nightly-2026-10-06",
+    "bun_version": "1.3.14",
+    "native_suite_passed": 349,
+    "boundary_fixtures_passed": 20,
+    "python_suite": {
+      "passed": 1401,
+      "skipped": 7,
+      "xfailed": 1
+    },
+    "addon_build": "cargo build -p pi-natives --lib (dev)",
+    "addon_sha256": "0ec38702e1f5f1a5d3cc1f3dc6910cf6563161af1244787d93c40a9133973a81",
+    "host_qualified": false,
+    "machine_activation": false,
+    "tested_modes": [
+      "hashline"
+    ]
+  },
+  "exclusions": [
+    "Non-UTF-8 source bytes fail closed, including deletion.",
+    "No filesystem lock or protection against external check-to-write races.",
+    "Concurrent mutation routes require runtime serialization/restrictions.",
+    "Native error outcomes do not themselves expose structured landed-prefix receipts.",
+    "The existing OMP EditTool does not yet invoke the third callback; runtime integration remains required."
+  ]
+}

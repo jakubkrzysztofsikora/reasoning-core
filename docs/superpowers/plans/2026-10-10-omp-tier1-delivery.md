@@ -66,21 +66,21 @@ has protocol_version=1, project_dir, session_id, agent_id, parent_agent_id,
 tool_call_id, final_input_sha256, and candidates. GateDecision has decision
 (allowed/blocked), reason, decision_id, and candidate/input digests.
 
-- [ ] Add native-boundary fixtures for multi-file hashline, persistent register paste,
+- [x] Add native-boundary fixtures for multi-file hashline, persistent register paste,
   snapshot recovery, moves/deletion, a denied final candidate, and revised arguments.
   Assert complete candidate parity with native execution and zero writes on denial.
-- [ ] Run bun test tests/omp_native_boundary.test.ts; observe failure because the
+- [x] Run bun test tests/omp_native_boundary.test.ts; observe failure because the
   complete pre-commit approval boundary is unavailable.
-- [ ] Identify a versioned public API providing the entire prepared batch before
+- [x] Identify a versioned public API providing the entire prepared batch before
   the first write. Otherwise implement the narrow patch in integrations/omp/
   native-precommit.patch against a pinned source SHA; record its digest and installation contract.
-- [ ] Define validated Python contracts in src/omp_contract.py; reject malformed
+- [x] Define validated Python contracts in src/omp_contract.py; reject malformed
   fields and paths before dispatch. Add Python schema/parity tests.
-- [ ] Require native final-input/source digest validation immediately before commit;
+- [x] Require native final-input/source digest validation immediately before commit;
   reset preparation after later argument changes. Reuse native parser/register state.
-- [ ] Re-run Bun and Python contract tests. All fixtures pass without using live-file
+- [x] Re-run Bun and Python contract tests. All fixtures pass without using live-file
   mutation to discover candidates; otherwise report the native support blocker.
-- [ ] Commit only this verified slice.
+- [x] Commit only this verified slice.
 
 ### Task 2: Shared Guard Bridge and Runtime Adapter
 

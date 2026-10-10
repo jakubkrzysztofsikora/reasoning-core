@@ -2,7 +2,7 @@
 
 Date: 2026-10-10
 Plan: docs/superpowers/plans/2026-10-10-omp-tier1-delivery.md
-Status: Python wire contracts and guard bridge implemented; native runtime pending.
+Status: Native precommit patch and Python bridge verified; OMP host runtime pending.
 
 ## Verified boundary
 
@@ -48,23 +48,67 @@ perform no writes, provide no filesystem lock, and cannot eliminate races
 between verification and commit. The native commit boundary must enforce
 source/input binding again and restrict concurrent mutation routes.
 
-## Outstanding dependency and delivery gates
+## Native contract milestone
 
-This execution session permits Python production code only. Implementing the
-required Rust native boundary and TypeScript OMP adapter is outside that
-constraint. Task 1 remains incomplete; native Tier 1 support is unqualified.
+The prior Python-only session limit is resolved. Task 1 now includes
+integrations/omp/native-precommit.patch against pinned upstream source
+aafb6551616fccec65cbfb264298e7f98df8ce5f (18.8.8). The patch extends
+EditSession.apply with a third asynchronous full-batch approval callback.
+Native staging uses an isolated store; denied or stale preparation preserves
+shared snapshots, registers, and no-op counters. Approved no-ops retain native
+loop escalation.
 
-Continue Task 1 in a session permitting those languages, using the existing
-Python contracts and red/green tests. Add native parity tests for registers,
-snapshot recovery, move/delete, final-member denial, and argument rewrites
-before implementing the native patch. Preserve native state on denial and
-audit a landed prefix on actual write failure.
+The callback receives raw persisted before/after UTF-8 bytes and SHA-256
+source/input bindings. Moves include the source-delete and destination-write,
+including an overwritten destination's prior content. Native code rechecks
+every source after approval and the current write's source and destination
+before each serial writer dispatch. Rewritten arguments during approval reject
+the old preparation and require a fresh session/approval.
 
-The remaining plan still requires the shared Python bridge, mutation-route
-restrictions, rc init lifecycle, doctor, exact-version native qualification,
-independent review, exact-commit GitHub Actions wheel build, and verification
-of that same wheel on both Macs. No package or machine activation is justified
-by the Python contract tests alone.
+The full pi-natives addon builds with Rust nightly-2026-10-06. Bun 1.3.14
+passes 20 native hashline boundary fixtures against that full addon. These cover
+batch denial, actual byte parity/CRLF, registers, snapshot recovery, move/delete
+and overwrite, stale sources and symlinks, revised arguments, callback failures,
+repeated no-op escalation, and observed OS-failure prefixes. The full pi-edit
+suite passes 349 tests. The reasoning-core Python suite passes 1401 tests,
+with 7 skipped and 1 xfailed.
+
+Independent review found source rechecks missing between writer callbacks and
+lost approved no-op counters. Both have observed RED-to-GREEN regression tests.
+Rust/patch gate_edit calls were allowed with unsupported_language; they do not
+constitute neural Rust validation. Compilation and native tests are the evidence.
+
+Pinned source/archive/patch/file/addon hashes and precise API fields are recorded
+in integrations/omp/native-precommit.json. Reproduction and installation
+requirements are in integrations/omp/README.md. Patch SHA-256:
+8a0370cc5c017b2b5eb4c8563c5a27282e3b1c22ff6de0e0e7b61743e05972a5.
+
+The existing installed OMP 18.2.11 remains unchanged. The full tested 18.8.8
+addon is a development build in /tmp/rc-omp-native-20261010/target/debug.
+The full build required installing Ninja 1.13.2. Apple Foundation Models was
+stubbed by upstream because Swift 6.4/macOS 27 SDK is unavailable; no model
+was invoked.
+
+## Outstanding runtime and delivery gates
+
+The normal upstream OMP EditTool still uses the two-argument native apply.
+Task 2 must expose the native callback through a session-scoped OMP extension
+event and invoke the Python bridge with final identity/input/candidate bindings.
+Regenerate N-API declarations and build the OMP package against the patched API.
+Applying the native patch alone does not activate reasoning-core enforcement.
+
+Only native hashline component behavior is demonstrated. Guarded deletion of
+non-UTF-8 content is refused. There is no filesystem lock or protection against
+the final check-to-write syscall race. Concurrent mutation routes still need
+runtime serialization/restrictions. Native failed outcomes return an empty
+files result; the fixtures observe writer prefixes, while correlated audit
+receipts remain a runtime responsibility.
+
+The remaining plan requires the TypeScript adapter, mutation/child restrictions,
+rc init lifecycle, doctor, exact-version real-host qualification, independent
+whole-branch review, exact-commit GitHub Actions wheel build, and verification
+of that same wheel on both Macs. No wheel build or machine activation has
+occurred. Native Tier 1 support remains unqualified.
 
 ## Python bridge milestone
 

@@ -1,0 +1,423 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -6953,6 +6953,7 @@
+  "regex",
+  "serde",
+  "serde_json",
++ "sha2 0.10.9",
+  "tempfile",
+  "thiserror 2.0.21",
+  "tokio",
+--- a/crates/pi-edit/Cargo.toml
++++ b/crates/pi-edit/Cargo.toml
+@@ -11,6 +11,7 @@
+ workspace = true
+ 
+ [dependencies]
++sha2 = "0.10"
+ async-trait.workspace = true
+ parking_lot.workspace = true
+ pi-ast.workspace = true
+--- a/crates/pi-edit/src/store.rs
++++ b/crates/pi-edit/src/store.rs
+@@ -122,6 +122,7 @@
+ 	seen
+ }
+ 
++#[derive(Clone)]
+ struct StoredSnapshot {
+ 	snapshot: Snapshot,
+ }
+@@ -145,6 +146,7 @@
+ 	}
+ }
+ 
++#[derive(Clone)]
+ struct PathHistory {
+ 	versions: Vec<StoredSnapshot>,
+ 	touched:  u64,
+@@ -162,6 +164,7 @@
+ 	}
+ }
+ 
++#[derive(Clone)]
+ struct StoreState {
+ 	histories:       HashMap<PathBuf, PathHistory>,
+ 	clipboard:       Clipboard,
+@@ -195,6 +198,25 @@
+ }
+ 
+ impl EditStore {
++	/// Publish only the no-op counter of an approved no-write outcome.
++	pub fn commit_noop_from(&self, fork: &Self, path: &Path) {
++		let counter = fork.inner.lock().noop.get(path).copied();
++		let mut state = self.inner.lock();
++		match counter {
++			Some(value) => {
++				state.noop.insert(path.to_path_buf(), value);
++			},
++			None => {
++				state.noop.remove(path);
++			},
++		}
++	}
++
++	/// Isolate preparation-time bookkeeping from the shared session store.
++	pub fn fork(&self) -> Self {
++		Self { inner: Arc::new(Mutex::new(self.inner.lock().clone())) }
++	}
++
+ 	/// Construct a store with production retention limits.
+ 	pub fn new() -> Self {
+ 		Self::default()
+--- a/crates/pi-edit/src/session.rs
++++ b/crates/pi-edit/src/session.rs
+@@ -4,9 +4,13 @@
+ //! Threading and callbacks live in the napi layer; this type is single
+ //! threaded and pure apart from file reads and the writer trait.
+ 
+-use std::path::PathBuf;
++use std::{
++	collections::HashSet,
++	path::{Path, PathBuf},
++};
+ 
+ use async_trait::async_trait;
++use sha2::{Digest, Sha256};
+ 
+ use crate::{
+ 	diff_string::{CompactDiffOptions, build_compact_diff_preview},
+@@ -68,9 +72,142 @@
+ 	pub diagnostics_json: Option<String>,
+ }
+ 
++/// Complete final native candidates passed to the host before any write.
++#[derive(Debug, Clone)]
++pub struct PreparedCandidate {
++	pub path:                   PathBuf,
++	pub operation:              String,
++	pub before_src:             Option<String>,
++	pub after_src:              Option<String>,
++	pub expected_before_sha256: Option<String>,
++	resolved:                   PathBuf,
++}
++
++#[derive(Debug, Clone)]
++pub struct PreparedEdit {
++	pub final_input_sha256: String,
++	pub candidates:         Vec<PreparedCandidate>,
++}
++
++fn sha256(text: &str) -> String {
++	format!("{:x}", Sha256::digest(text.as_bytes()))
++}
++
++// Resolve through the deepest existing ancestor, including missing parents.
++fn source_path(path: &Path) -> EditResult<PathBuf> {
++	if let Ok(resolved) = std::fs::canonicalize(path) {
++		return Ok(resolved);
++	}
++	if std::fs::symlink_metadata(path).is_ok() {
++		return Err(EditError::apply("Unresolvable prepared source"));
++	}
++	let parent = path
++		.parent()
++		.ok_or_else(|| EditError::apply("Invalid prepared path"))?;
++	let name = path
++		.file_name()
++		.ok_or_else(|| EditError::apply("Invalid prepared path"))?;
++	Ok(source_path(parent)?.join(name))
++}
++
++fn read_source(path: &Path) -> EditResult<Option<String>> {
++	match std::fs::read_to_string(path) {
++		Ok(text) => Ok(Some(text)),
++		Err(err)
++			if err.kind() == std::io::ErrorKind::NotFound
++				&& std::fs::symlink_metadata(path).is_err() =>
++		{
++			Ok(None)
++		},
++		Err(err) => Err(EditError::apply(format!("Unreadable prepared source: {err}"))),
++	}
++}
++
++impl PreparedCandidate {
++	fn new(
++		path: PathBuf,
++		before_src: Option<String>,
++		after_src: Option<String>,
++	) -> EditResult<Self> {
++		let resolved = source_path(&path)?;
++		let expected_before_sha256 = before_src.as_deref().map(sha256);
++		let candidate = Self {
++			path,
++			operation: if after_src.is_some() {
++				"write"
++			} else {
++				"delete"
++			}
++			.into(),
++			before_src,
++			after_src,
++			expected_before_sha256,
++			resolved,
++		};
++		candidate.verify()?;
++		Ok(candidate)
++	}
++
++	fn verify(&self) -> EditResult<()> {
++		if source_path(&self.path)? != self.resolved || read_source(&self.path)? != self.before_src {
++			return Err(EditError::apply("Prepared source changed before commit"));
++		}
++		Ok(())
++	}
++}
++
++impl PreparedEdit {
++	fn from_staged(input: &str, staged: &[StagedFile]) -> EditResult<Self> {
++		let mut candidates = Vec::new();
++		let mut paths = HashSet::new();
++		for file in staged {
++			if file.op == FileOp::Noop {
++				continue;
++			}
++			let after = if file.op == FileOp::Delete {
++				None
++			} else {
++				file.persisted.clone()
++			};
++			if let Some(destination) = &file.move_to {
++				candidates.push(PreparedCandidate::new(
++					file.absolute.clone(),
++					file.before_raw.clone(),
++					None,
++				)?);
++				candidates.push(PreparedCandidate::new(
++					destination.absolute.clone(),
++					read_source(&destination.absolute)?,
++					after,
++				)?);
++			} else {
++				candidates.push(PreparedCandidate::new(
++					file.absolute.clone(),
++					file.before_raw.clone(),
++					after,
++				)?);
++			}
++		}
++		for candidate in &candidates {
++			if !paths.insert(candidate.resolved.clone()) {
++				return Err(EditError::apply("Duplicate prepared destination"));
++			}
++		}
++		Ok(Self { final_input_sha256: sha256(input), candidates })
++	}
++}
++
+ /// Host-side byte owner.
+ #[async_trait]
+ pub trait EditWriter: Send + Sync {
++	fn needs_approval(&self) -> bool {
++		false
++	}
++
++	async fn approve(&self, _batch: PreparedEdit) -> EditResult<()> {
++		Err(EditError::apply("Native precommit approval is unavailable"))
++	}
++
+ 	async fn write(&self, request: WriteRequest) -> EditResult<WriteResponse>;
+ }
+ 
+@@ -295,7 +432,9 @@
+ 		if !snapshot.complete {
+ 			return Err(EditError::parse("Edit arguments were incomplete"));
+ 		}
+-		let staged = self.engine.stage(&snapshot, &mut self.files, &self.store)?;
++		let isolated_store = writer.needs_approval().then(|| self.store.fork());
++		let stage_store = isolated_store.as_ref().unwrap_or(&self.store);
++		let staged = self.engine.stage(&snapshot, &mut self.files, stage_store)?;
+ 		for file in &staged {
+ 			self.files.enforce_write(
+ 				&file.display,
+@@ -304,10 +443,36 @@
+ 			)?;
+ 		}
+ 
++		let prepared = if writer.needs_approval() {
++			let batch = PreparedEdit::from_staged(self.args.buffer(), &staged)?;
++			writer.approve(batch.clone()).await?;
++			if batch.final_input_sha256 != sha256(self.args.buffer()) {
++				return Err(EditError::apply("Final edit input changed before commit"));
++			}
++			for candidate in &batch.candidates {
++				candidate.verify()?;
++			}
++			Some(batch)
++		} else {
++			None
++		};
++
+ 		let last_write = staged.iter().rposition(|file| file.op != FileOp::Noop);
+ 		let mut files = Vec::with_capacity(staged.len());
+ 		for (index, mut file) in staged.into_iter().enumerate() {
+ 			let canonical = canonical_key(&file.absolute);
++			if let Some(batch) = &prepared {
++				for candidate in &batch.candidates {
++					if candidate.path == file.absolute
++						|| file
++							.move_to
++							.as_ref()
++							.is_some_and(|dest| candidate.path == dest.absolute)
++					{
++						candidate.verify()?;
++					}
++				}
++			}
+ 			let response = if file.op == FileOp::Noop {
+ 				WriteResponse::default()
+ 			} else {
+@@ -332,6 +497,9 @@
+ 			match file.op {
+ 				FileOp::Delete => self.store.invalidate(&canonical),
+ 				FileOp::Noop => {
++					if let Some(fork) = &isolated_store {
++						self.store.commit_noop_from(fork, &canonical);
++					}
+ 					if file.record_snapshot {
+ 						tag = Some(self.store.record(&canonical, &file.after, None));
+ 					}
+--- a/crates/pi-natives/src/edit.rs
++++ b/crates/pi-natives/src/edit.rs
+@@ -29,7 +29,7 @@
+ use async_trait::async_trait;
+ use napi::{
+ 	Status,
+-	bindgen_prelude::{Promise, Result},
++	bindgen_prelude::{Either, Null, Promise, Result},
+ 	threadsafe_function::{ThreadsafeFunction, UnknownReturnValue},
+ };
+ use napi_derive::napi;
+@@ -38,7 +38,10 @@
+ 	diff_string::{BlockContextSource, generate_diff_string},
+ 	modes::{hashline, sloppy},
+ 	path_policy::canonical_key,
+-	session::{ApplyRequest, EditWriter, PreviewBatch, SessionConfig, WriteRequest, WriteResponse},
++	session::{
++		ApplyRequest, EditWriter, PreparedEdit, PreviewBatch, SessionConfig, WriteRequest,
++		WriteResponse,
++	},
+ 	store,
+ 	stream_json::snapshot_from_text,
+ 	text::normalize_to_lf,
+@@ -355,6 +358,28 @@
+ // ═══════════════════════════════════════════════════════════════════════════
+ 
+ type PreviewCallback = ThreadsafeFunction<EditPreviewBatch, UnknownReturnValue>;
++#[napi(object)]
++pub struct EditPreparedCandidate {
++	pub path:                   String,
++	pub operation:              String,
++	pub before_src:             Either<String, Null>,
++	pub after_src:              Either<String, Null>,
++	pub expected_before_sha256: Either<String, Null>,
++}
++
++#[napi(object)]
++pub struct EditPreparedBatch {
++	pub final_input_sha256: String,
++	pub candidates:         Vec<EditPreparedCandidate>,
++}
++
++#[napi(object)]
++pub struct EditPrecommitDecision {
++	pub allowed:            bool,
++	pub final_input_sha256: String,
++}
++
++type PrecommitCallback = ThreadsafeFunction<EditPreparedBatch, Promise<EditPrecommitDecision>>;
+ type WriterCallback = ThreadsafeFunction<EditWriteRequest, Promise<EditWriteResponse>>;
+ 
+ /// Weak so a session awaiting GC never keeps the event loop alive: every call
+@@ -448,11 +473,62 @@
+ 
+ /// Bridges the host writer callback into the engine's writer trait.
+ struct TsfnWriter {
+-	tsfn: WriterCallback,
++	tsfn:      WriterCallback,
++	precommit: Option<PrecommitCallback>,
++	shared:    Arc<Shared>,
+ }
+ 
+ #[async_trait]
+ impl EditWriter for TsfnWriter {
++	fn needs_approval(&self) -> bool {
++		self.precommit.is_some()
++	}
++
++	async fn approve(&self, batch: PreparedEdit) -> EditResult<()> {
++		let callback = self
++			.precommit
++			.as_ref()
++			.ok_or_else(|| EditError::apply("Missing precommit callback"))?;
++		let digest = batch.final_input_sha256.clone();
++		let payload = EditPreparedBatch {
++			final_input_sha256: batch.final_input_sha256,
++			candidates:         batch
++				.candidates
++				.into_iter()
++				.map(|candidate| EditPreparedCandidate {
++					path:                   candidate.path.to_string_lossy().into_owned(),
++					operation:              candidate.operation,
++					before_src:             candidate
++						.before_src
++						.map(Either::A)
++						.unwrap_or(Either::B(Null)),
++					after_src:              candidate
++						.after_src
++						.map(Either::A)
++						.unwrap_or(Either::B(Null)),
++					expected_before_sha256: candidate
++						.expected_before_sha256
++						.map(Either::A)
++						.unwrap_or(Either::B(Null)),
++				})
++				.collect(),
++		};
++		let promise = callback
++			.call_async(Ok(payload))
++			.await
++			.map_err(|err| EditError::Writer(err.reason))?;
++		let decision = promise.await.map_err(|err| EditError::Writer(err.reason))?;
++		if !decision.allowed || decision.final_input_sha256 != digest {
++			return Err(EditError::apply("Native precommit approval denied or unbound"));
++		}
++		if !self.shared.queue.lock().is_empty() {
++			return Err(EditError::apply(
++				"Final edit arguments changed during approval; prepare again",
++			));
++		}
++		Ok(())
++	}
++
+ 	async fn write(&self, request: WriteRequest) -> EditResult<WriteResponse> {
+ 		let op = if request.move_to.is_some() {
+ 			"move"
+@@ -589,12 +665,15 @@
+ 		#[napi(ts_arg_type = "(error: Error | null, request: EditWriteRequest) => \
+ 		                      Promise<EditWriteResponse>")]
+ 		writer: WriterCallback,
++		#[napi(ts_arg_type = "((error: Error | null, batch: EditPreparedBatch) => \
++		                      Promise<EditPrecommitDecision>) | undefined | null")]
++		precommit: Option<PrecommitCallback>,
+ 	) -> Result<EditApplyOutcome> {
+ 		self.shared.begin_apply();
+ 		let shared = Arc::clone(&self.shared);
+ 		let mut session = shared.session.lock().await;
+ 		shared.drain_into(&mut session);
+-		let writer = TsfnWriter { tsfn: writer };
++		let writer = TsfnWriter { tsfn: writer, precommit, shared: Arc::clone(&shared) };
+ 		let request =
+ 			ApplyRequest { lsp_batch_id: request.lsp_batch_id, lsp_flush: request.lsp_flush };
+ 		// Apply never reuses preview-time answers (resolved before approval,
