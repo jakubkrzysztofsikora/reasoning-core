@@ -1,8 +1,8 @@
 # OMP Tier 1 integration through rc init
 
 Date: 2026-10-10
-Status: proposed written specification; conversational architecture approved.
-Implementation requires review of this written specification and implementation plan.
+Status: written specification and two-machine delivery scope approved.
+Implementation starts after implementation-plan review and execution-method selection.
 
 ## Intent and success criteria
 
@@ -199,6 +199,47 @@ installation and shared guard integration, qualify mutations and delegated paths
 and finally publish the evidence-backed support status. If the required native
 API cannot be established, report the blocker and present a revised scope before
 advertising native Tier 1 support.
+
+## Actions build and two-machine delivery
+
+The user approved delivery through the GitHub Actions package build and updating
+this machine plus Jakub's MacBook Pro through key-only SSH syncd-test.
+Verify remote machine identity before writing.
+
+Build the exact reviewed implementation commit with the existing wheel-build.yml.
+Require successful lint/tests, wheel/sdist validation, bundled OMP bridge/assets
+checks, and an installed-wheel rc init smoke test outside the checkout. Download
+reasoning-core-distributions from that run and record head SHA, run id, package
+version, and SHA-256 digests. Install the same verified wheel on both machines.
+workflow_dispatch artifacts suffice; a public release tag is not required.
+Never publish to PyPI, where this name belongs to another project.
+
+Inventory active rc/Python/OMP, package import paths, supervisor references, and
+project guard configuration before each update. Archive prior owned entry points
+and configuration for rollback. Use isolated versioned environments; preserve
+dirty checkouts, credentials, model caches, provider routes, and unrelated
+settings/extensions. Activate wheel-backed CLI/hook/supervisor references after
+staged verification, refresh intended wiring through installed rc init, and
+restart managed services only as needed.
+
+Verify init/re-init, doctor, actual extension loading, authenticated guard calls,
+native hashline allow/deny behavior with unchanged digests after denial,
+correlated audit receipts, and supported child-agent paths in disposable repos
+on both machines. Verify the normal user launch path and any required qualified
+OMP build. Do not select paid fallback models implicitly.
+
+Report each machine's identity, active version/import path, wheel digest, OMP
+version/build, readiness, and allow/deny results. A build, /health response,
+source-checkout success, or one-machine success is insufficient. Unreachable
+machines and failed runtime checks leave delivery incomplete; failed activation
+restores archived owned entry points/configuration.
+
+The user also requested restoration and automatic service recovery. Installation
+must support GUI and background/SSH launchd domains, restart after clean or failed
+supervisor exits, and retain child recovery with bounded backoff. Verify actual
+supervisor and child restart behavior and authenticated scoring after recovery.
+Explicit operator service unload remains an intentional stop; process recovery
+must not undermine that control.
 
 ## Evidence
 
