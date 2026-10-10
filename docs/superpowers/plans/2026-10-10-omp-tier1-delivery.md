@@ -149,17 +149,17 @@ Each check has name, ok, detail, and state; state distinguishes installed,
 loaded, authenticated, and qualified. scripts/verify-omp-install.py emits a
 JSON machine report and exits nonzero when required runtime checks fail.
 
-- [ ] Test disabled discovery, wrong version/build, healthy-but-unauthenticated
+- [x] Test disabled discovery, wrong version/build, healthy-but-unauthenticated
   sidecar, stale qualification digests, unavailable executable, and malformed check output.
-- [ ] Observe failing doctor tests; implement OMP checks in doctor/rc init --check
+- [x] Observe failing doctor tests; implement OMP checks in doctor/rc init --check
   without making another host's missing hooks fail an OMP-only check.
-- [ ] Verify the resolved interpreter/import path and actual extension load via
+- [x] Verify the resolved interpreter/import path and actual extension load via
   a bounded no-paid-model probe. Never treat /health alone as authenticated readiness.
-- [ ] Include the restored launchd behavior: Aqua/Background loading, unconditional
+- [x] Include the restored launchd behavior: Aqua/Background loading, unconditional
   KeepAlive with throttle, owned cache-path preservation, and asynchronous reload retries.
-- [ ] Verify SIGTERM/clean-exit supervisor restart, scoring-child SIGKILL recovery,
+- [x] Verify SIGTERM/clean-exit supervisor restart, scoring-child SIGKILL recovery,
   model cache accessibility, and successful authenticated score after recovery.
-- [ ] Run pytest tests/test_omp_doctor.py tests/test_supervisor_launchd.py plus the
+- [x] Run pytest tests/test_omp_doctor.py tests/test_supervisor_launchd.py plus the
   focused supervisor/auth suite; commit the verified slice.
 
 ### Task 6: Host Qualification and Package Checks
@@ -168,17 +168,17 @@ JSON machine report and exits nonzero when required runtime checks fail.
 report with OMP version/build/source SHA, adapter hashes, configuration, mutation
 coverage/exclusions, and allow/deny/receipt results. No cross-host quality inference.
 
-- [ ] Add installed-wheel tests that import bridge dependencies, resolve the
+- [x] Add installed-wheel tests that import bridge dependencies, resolve the
   canonical extension/compatibility assets, and run init outside the source checkout.
-- [ ] Observe failing package tests for missing assets/modules; update package
+- [x] Observe failing package tests for missing assets/modules; update package
   discovery/data so dependencies such as src.hooks.adapters are actually shipped.
-- [ ] Capture the OMP baseline context; run native and real-host allow/deny
+- [x] Capture the OMP baseline context; run native and real-host allow/deny
   qualification in disposable repositories with the selected model/backend explicit.
-- [ ] Run focused tests/lint, required CI-equivalent checks, and a local wheel smoke.
+- [x] Run focused tests/lint, required CI-equivalent checks, and a local wheel smoke.
   Update support docs to the demonstrated scope only; preserve unrelated dirty prose.
-- [ ] Extend wheel-build.yml with installed-wheel OMP checks and distribution
+- [x] Extend wheel-build.yml with installed-wheel OMP checks and distribution
   checksum/provenance output; retain pinned Action dependencies.
-- [ ] Commit scoped implementation and qualification/documentation changes.
+- [x] Commit scoped implementation and qualification/documentation changes.
 
 ### Task 7: GitHub Actions Build at the Reviewed Commit
 

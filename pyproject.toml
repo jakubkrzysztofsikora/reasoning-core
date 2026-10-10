@@ -87,7 +87,7 @@ rc = "src.rc_cli:main"
 # the wheel so runtime imports (`from eval.calibration_corpus import
 # mine`) resolve in installed-wheel mode. Without this the supervisor
 # hits ModuleNotFoundError on every refit cycle.
-packages = ["src", "src.hooks", "src.data", "eval"]
+packages = ["src", "src.hooks", "src.hooks.adapters", "src.data", "eval", "eval.host_enforcement_qualification"]
 # Templates and CLI scaffold assets ship inside the wheel as package data
 # so hooks and `rc init` can read them via importlib.resources.files("src.data")
 # whether the framework is running from a checkout or an installed wheel.

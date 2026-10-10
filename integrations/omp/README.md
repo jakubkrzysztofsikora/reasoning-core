@@ -79,7 +79,7 @@ qualified OMP package.
 
 `editPrecommitProtocol()` reports native protocol 1. The host extension API reads
 this from the loaded addon; an older addon reports unavailable rather than silently
-ignoring a third callback. `host-precommit.json` binds its eight host source files.
+ignoring a third callback. `host-precommit.json` binds its ten host source files.
 Apply `host-precommit.patch` after the native patch in the same pinned source tree.
 
 A production OMP build must regenerate its N-API declarations after the patch,
@@ -127,3 +127,24 @@ A real SDK child in a separate directory retains the adapter from its parent's
 prepared extensions and supplies child/parent/session identity. Task-tool merging
 is explicitly refused rather than inferred safe from that inheritance test.
 External filesystem races remain outside the in-process lock.
+
+## Readiness And Qualification
+
+Use `rc doctor --host omp --project-dir /absolute/project --json` for distinct
+installed, loaded, authenticated, and qualified states. `rc init --check --host omp`
+uses the same checks. The loaded state invokes the normal OMP CLI diagnostic,
+discovers the owned extension, and hashes the actual loaded native addon.
+No model provider is invoked.
+
+With the pinned patched OMP on PATH, run
+`python -m eval.host_enforcement_qualification.omp --project-dir /absolute/project`
+from the installed runtime. It exercises native hashline allow, complete-batch
+guard-path denial, actual persisted receipt and inherited SDK-child denial in a
+disposable directory. Restriction handlers and task merge refusal are checked.
+The immutable `.reasoning-core/omp-qualification.json` binds runtime and policy
+digests; changing them invalidates doctor qualification. Existing reports are
+never overwritten. These are containment checks, with model behavior excluded.
+
+The wheel workflow verifies bundled assets, adapter subpackage imports and init
+outside the checkout, then attaches exact source SHA and distribution checksums.
+Machine activation still requires the exact Actions artifact and local readback.

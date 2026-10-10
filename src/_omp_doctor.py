@@ -24,11 +24,11 @@ def _sha(path: Path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
-def _json_process(argv: list[str], payload: dict, timeout: float = 40) -> dict | None:
+def _json_process(argv: list[str], payload: dict, timeout: float = 40, *, env: dict | None = None) -> dict | None:
     try:
         result = subprocess.run(
             argv, input=json.dumps(payload), encoding="utf-8", capture_output=True,
-            timeout=timeout, check=False,
+            timeout=timeout, check=False, env=env,
         )
         if result.returncode or len(result.stdout) + len(result.stderr) > 1024 * 1024:
             return None

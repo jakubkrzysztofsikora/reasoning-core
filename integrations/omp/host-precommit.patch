@@ -343,9 +343,9 @@
  		await runSmokeTest();
 --- /dev/null
 +++ b/packages/coding-agent/src/cli/rc-native-probe.ts
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,110 @@
 +import { createHash } from "node:crypto";
-+import { readFileSync, realpathSync, mkdtempSync, rmSync } from "node:fs";
++import { readFileSync, realpathSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 +import { join } from "node:path";
 +import { tmpdir } from "node:os";
 +import { Database } from "bun:sqlite";
@@ -380,7 +380,7 @@
 +     cwd, authStorage: auth, modelRegistry, model, settings, sessionManager: SessionManager.inMemory(cwd),
 +     skills: [], contextFiles: [], promptTemplates: [], slashCommands: [], enableMCP: false,
 +     enableLsp: false, skipPythonPreflight: true, rules: [], preloadedCustomToolPaths: [],
-+     toolNames: ["read", "edit"], agentId: "rc-native-probe",
++     toolNames: ["read", "edit", "task"], agentId: "rc-native-probe",
 +   });
 +   session = created.session;
 +   const owned = created.extensionsResult.extensions.find(extension =>
@@ -390,6 +390,62 @@
 +     native_protocol: editPrecommitProtocol?.() ?? 0, model_invoked: false,
 +     loaded: !!owned && session.hasExtensionHandlers("native_edit_prepare") && session.hasExtensionHandlers("native_edit_result"),
 +     adapter_path: adapter, adapter_sha256: sha(adapter), native_sha256: native ? sha(native.path) : null };
++   if (input.qualify === true && report.loaded) {
++     const probeFile = join(cwd, "omp-qualification-probe.py");
++     writeFileSync(probeFile, "x = 1\n", { flag: "wx" });
++     let child: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
++     try {
++       const edit = session.getToolByName("edit")!;
++       const header = async (path: string, target = created.session) => {
++         const result = await target.getToolByName("read")!.execute("rc-read-" + path, { path });
++         const text = result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
++         const match = text.match(/\[[^\n]+#[^\]]+\]/);
++         if (!match) throw new Error("hashline read header unavailable");
++         return match[0];
++       };
++       const allowHeader = await header("omp-qualification-probe.py");
++       const allow = await edit.execute("rc-qualify-allow", { input: allowHeader + "\nPUT 1:\n+x = 2" });
++       const beforeDeny = sha(probeFile);
++       const metadata = join(cwd, ".reasoning-core/omp-owned.json");
++       const beforeGuard = sha(metadata);
++       const denyHeader = await header("omp-qualification-probe.py");
++       const guardHeader = await header(".reasoning-core/omp-owned.json");
++       const deny = await edit.execute("rc-qualify-deny", {
++         input: denyHeader + "\nPUT 1:\n+x = 3\n" + guardHeader + "\nPUT 1:\n+{}",
++       });
++       const childCwd = join(scratch, "child"); mkdirSync(join(childCwd, ".reasoning-core"), { recursive: true });
++       writeFileSync(join(childCwd, ".reasoning-core/omp-owned.json"), "{}\n");
++       ({ session: child } = await createAgentSession({
++         cwd: childCwd, authStorage: auth, modelRegistry, model, settings,
++         sessionManager: SessionManager.inMemory(childCwd), skills: [], contextFiles: [],
++         promptTemplates: [], slashCommands: [], enableMCP: false, enableLsp: false,
++         skipPythonPreflight: true, rules: [], preloadedCustomToolPaths: [],
++         toolNames: ["read", "edit"], agentId: "rc-native-child", parentAgentId: "rc-native-probe",
++         taskDepth: 1, preloadedPreparedExtensions: session.preparedExtensions,
++       }));
++       const childHeader = await header(".reasoning-core/omp-owned.json", child);
++       const childDeny = await child.getToolByName("edit")!.execute("rc-qualify-child", {
++         input: childHeader + "\nPUT 1:\n+{\"changed\": true}",
++       });
++       const handlers = owned!.handlers;
++       const restricted = ["bash", "python", "write", "ast", "lsp", "task", "custom_mutator"];
++       const restrictions = await Promise.all(restricted.map(async toolName => {
++         const results = await Promise.all((handlers.get("tool_call") ?? []).map(handler =>
++           handler({ type: "tool_call", toolName, toolCallId: "rc-restrict", input: {} } as never, {} as never)));
++         return results.some(result => result && typeof result === "object" && "block" in result && result.block === true);
++       }));
++       let taskBlocked = false;
++       try { await session.getToolByName("task")!.execute("rc-merge", { agent: "task", task: "modify file", isolated: true }); }
++       catch (error) { taskBlocked = String(error).includes("no qualified prepared-mutation boundary"); }
++       Object.assign(report, { evidence: {
++         allowed_write: allow.isError !== true && readFileSync(probeFile, "utf8") === "x = 2\n",
++         denied_unchanged: deny.isError === true && sha(probeFile) === beforeDeny && sha(metadata) === beforeGuard,
++         child_guard_retained: child.hasExtensionHandlers("native_edit_prepare") && childDeny.isError === true &&
++           readFileSync(join(childCwd, ".reasoning-core/omp-owned.json"), "utf8") === "{}\n",
++         restrictions_verified: restrictions.every(Boolean) && taskBlocked,
++       }, session_id: session.sessionId, child_session_id: child.sessionId, edit_mode: "hashline" });
++     } finally { await child?.dispose(); rmSync(probeFile, { force: true }); }
++   }
 +   console.log(JSON.stringify(report));
 + } catch {
 +   console.log(JSON.stringify({ schema_version: 1, loaded: false, model_invoked: false, error: "probe_failed" }));

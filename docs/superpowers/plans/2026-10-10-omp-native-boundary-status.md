@@ -2,7 +2,7 @@
 
 Date: 2026-10-10
 Plan: docs/superpowers/plans/2026-10-10-omp-tier1-delivery.md
-Status: Native precommit patch and Python bridge verified; OMP host runtime pending.
+Status: Tasks 1-6 implemented and tested; final review, exact Actions artifact and both-machine activation pending.
 
 ## Verified boundary
 
@@ -162,3 +162,36 @@ uses the existing authenticated override state after integrity/lease checks.
 Real EditTool/ExtensionRunner/Python allow and deterministic-deny fixtures pass;
 these do not qualify child merging, other mutation tools, installed-wheel loading,
 or either active machine. Tasks 3-9 remain in progress.
+
+## Current Delivery Status (Tasks 1-6)
+
+The earlier pending-runtime paragraphs are historical milestones. The pinned
+18.8.8 host now invokes the native complete-batch callback through session-scoped,
+bounded extension handlers. Canonical/bundled adapters use the isolated installed
+Python bridge, validate all approval bindings and publish filesystem receipts.
+The guarded writer serializes in-process project edits and disables fallback,
+LSP transformations, internal URLs and model repair.
+
+Native edit and read/grep/glob/find are the initial supported routes. Shell,
+eval/Python, plain write, AST/LSP mutation, custom tools, archive/SQLite mutation,
+automatic task spawning and isolated parent merges are refused. Operator-created
+SDK children retain the prepared guard and exact child/parent/session identity.
+
+Owned-asset init/upgrade/uninstall preserves modified or unowned assets and rejects
+symlinked paths. Doctor reports installed, loaded, authenticated and qualified
+separately. Its normal CLI probe verifies discovered adapter and loaded addon
+hashes without a model call. Qualification uses real hashline editing, whole-batch
+guard-path denial, actual audit receipt, inherited SDK child denial and route
+restrictions; the immutable report binds runtime/configuration hashes.
+
+Verification: 42 Bun native/runtime/host tests, 202 assertions; full Python suite
+1432 passed, 8 skipped, 1 xfailed. Installed-wheel smoke catches and now fixes
+missing adapter/evaluation subpackages, then runs init outside the checkout.
+Managed supervisor SIGTERM and scoring-child SIGKILL recovery are verified locally,
+with cache accessibility and authenticated post-recovery scoring.
+
+Final whole-branch review is running. A release native build, exact reviewed-SHA
+GitHub Actions wheel, and activation/readback on both Macs remain required.
+The existing active OMP runtime is unchanged. These fixtures establish bounded
+containment behavior, not model quality or protection against external syscall
+races. Tasks 7-9 are not complete.
