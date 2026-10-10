@@ -81,3 +81,20 @@ describe("session native guard adapter", () => {
     } finally { rmSync(f.cwd, { recursive: true, force: true }); }
   });
 });
+
+test("qualified adapter restricts unprepared mutation and delegated routes", async () => {
+ const { default: extension } = await import("../.omp/extensions/reasoning_core_gate");
+ const handlers = new Map<string, any>();
+ extension({ nativeEditProtocol: 1, on: (name: string, handler: any) => handlers.set(name, handler) });
+ const tool = handlers.get("tool_call");
+ for (const toolName of ["bash", "python", "eval", "write", "ast_edit", "lsp", "archive", "sqlite", "custom_mutator", "task"]) {
+  expect(tool({ toolName, input: {} })?.block).toBe(true);
+ }
+ for (const toolName of ["edit", "read", "grep", "glob", "find"]) expect(tool({ toolName, input: {} })).toBeUndefined();
+ expect(handlers.get("before_subagent_spawn")({ invocationKind: "eval" })?.block).toBe(true);
+ expect(handlers.get("user_bash")({ command: "touch escaped" })?.result.exitCode).toBe(1);
+ expect(handlers.get("user_python")({ code: "write()" })?.result.exitCode).toBe(1);
+ const oldHandlers = new Map<string, any>();
+ extension({ on: (name: string, handler: any) => oldHandlers.set(name, handler) });
+ expect(oldHandlers.get("tool_call")({ toolName: "edit" })?.block).toBe(true);
+});

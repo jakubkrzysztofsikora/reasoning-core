@@ -63,11 +63,13 @@ test.each(["allow", "deny"])("real native host and isolated Python bridge: %s", 
   const next = mode === "allow" ? "x = 2" : "def broken(:";
   const oldOracle = process.env.RC_ORACLE_BLOCK; process.env.RC_ORACLE_BLOCK = "1";
   const oldMode = process.env.RC_MODE; process.env.RC_MODE = "copilot";
+  const oldClosed = process.env.S2_FAIL_CLOSED; process.env.S2_FAIL_CLOSED = "1";
   const output = await new EditTool(session, "apply_patch").execute("bridge-call", {
     input: "*** Begin Patch\n*** Update File: hello.py\n@@\n-x = 1\n+" + next + "\n*** End Patch",
   });
   if (oldOracle === undefined) delete process.env.RC_ORACLE_BLOCK; else process.env.RC_ORACLE_BLOCK = oldOracle;
   if (oldMode === undefined) delete process.env.RC_MODE; else process.env.RC_MODE = oldMode;
+  if (oldClosed === undefined) delete process.env.S2_FAIL_CLOSED; else process.env.S2_FAIL_CLOSED = oldClosed;
   expect(output.isError === true).toBe(mode === "deny");
   expect(readFileSync(file, "utf8")).toBe(mode === "allow" ? "x = 2\n" : "x = 1\n");
  } finally {
@@ -94,4 +96,144 @@ test.each(["missing", "throw", "malformed", "stale"])("runner fails closed for %
  expect(identity.agent.parentId).toBe("parent");
  expect(identity.session).toBe("advisor-session");
  expect(manager.getSessionId()).not.toBe("advisor-session");
+});
+
+test("guarded host serializes concurrent sessions in the same project", async () => {
+ const cwd = mkdtempSync(join(tmpdir(), "rc serial "));
+ let release!: () => void; let started!: () => void;
+ const pending = new Promise<void>(resolve => { release = resolve; });
+ const ready = new Promise<void>(resolve => { started = resolve; });
+ const calls: string[] = [];
+ try {
+  writeFileSync(join(cwd, "a.py"), "x = 1\n");
+  writeFileSync(join(cwd, "b.py"), "x = 1\n");
+  const make = () => ({ cwd, hasUI: false, enableLsp: false, settings: Settings.isolated({}),
+   getSessionFile: () => null, getSessionSpawns: () => "*", getArtifactsDir: () => null,
+   getSessionId: () => crypto.randomUUID(), getPlanModeState: () => undefined,
+   hasNativeEditGuard: () => true,
+   prepareNativeEdit: async (event: any) => {
+    calls.push(event.toolCallId);
+    if (event.toolCallId === "first") { started(); await pending; }
+    return { allowed: true, finalInputSha256: event.batch.finalInputSha256 };
+   }, resultNativeEdit: async () => {},
+  });
+  const input = (file: string) => ({ input: "*** Begin Patch\n*** Update File: " + file + "\n@@\n-x = 1\n+x = 2\n*** End Patch" });
+  const first = new EditTool(make(), "apply_patch").execute("first", input("a.py"));
+  await ready;
+  const second = new EditTool(make(), "apply_patch").execute("second", input("b.py"));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  const beforeRelease = [...calls];
+  release();
+  const outputs = await Promise.all([first, second]);
+  expect(beforeRelease).toEqual(["first"]);
+  expect(outputs.every(result => !result.isError)).toBe(true);
+ } finally { release(); rmSync(cwd, { recursive: true, force: true }); }
+});
+test("guarded host refuses internal URL resolution and disables automatic model repair", async () => {
+ const cwd = mkdtempSync(join(tmpdir(), "rc routes "));
+ let repairCalls = 0; let approvals = 0;
+ try {
+  writeFileSync(join(cwd, "hello.py"), "x = 1\n");
+  const session = { cwd, hasUI: false, enableLsp: false, settings: Settings.isolated({ "edit.autoRepair.enabled": true }),
+   getSessionFile: () => null, getSessionSpawns: () => "*", getArtifactsDir: () => null,
+   getSessionId: () => "session", getPlanModeState: () => undefined,
+   hasNativeEditGuard: () => true,
+   modelRegistry: { getAvailable: () => { repairCalls++; throw Error("unqualified provider"); } },
+   prepareNativeEdit: async (event: any) => { approvals++; return { allowed: true, finalInputSha256: event.batch.finalInputSha256 }; },
+   resultNativeEdit: async () => {},
+  };
+  const tool = new EditTool(session, "apply_patch");
+  const url = await tool.execute("url", { input: "*** Begin Patch\n*** Add File: artifact://escaped.py\n+x = 1\n*** End Patch" });
+  expect(url.isError).toBe(true);
+  expect(approvals).toBe(0);
+  const invalid = await tool.execute("repair", { input: "*** Begin Patch\n*** Update File: hello.py\n@@\n-x = 1\n+def broken(:\n*** End Patch" });
+  expect(invalid.isError).not.toBe(true);
+  expect(repairCalls).toBe(0);
+ } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test("real SDK retains native gate in isolated child and restricts automatic parent merges", async () => {
+ const { createAgentSession } = await import(join(upstream, "packages/coding-agent/src/sdk.ts"));
+ const { ModelRegistry } = await import(join(upstream, "packages/coding-agent/src/config/model-registry.ts"));
+ const { createInMemoryAuthStorage } = await import(join(upstream, "packages/coding-agent/test/helpers/agent-session-setup.ts"));
+ const { default: adapter } = await import("../.omp/extensions/reasoning_core_gate");
+ const cwd = mkdtempSync(join(tmpdir(), "rc SDK parent "));
+ const childCwd = mkdtempSync(join(tmpdir(), "rc SDK isolated "));
+ const storage = createInMemoryAuthStorage();
+ const registry = new ModelRegistry(storage);
+ const captured: any[] = [];
+ const model = { id: "no-provider-call", name: "qualification", api: "openai-completions", provider: "qualification",
+   baseUrl: "http://127.0.0.1:1", identity: { class: "unknown" }, reasoning: false, input: ["text"],
+   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024 };
+ const factory = (api: any) => {
+  adapter(api, async (wire: any) => {
+   captured.push(wire);
+   if (wire.event !== "prepare") return { decision: "allowed" };
+   const { bindings } = await import("../.omp/extensions/reasoning_core_gate");
+   return { decision: "blocked", reason: "deterministic fixture", decision_id: "child-denial", ...bindings(wire.batch) };
+  });
+ };
+ const options = (root: string) => ({ cwd: root, agentDir: join(root, "agent"), authStorage: storage,
+  modelRegistry: registry, model, settings: Settings.isolated({ "tools.approvalMode": "yolo", "edit.mode": "apply_patch" }),
+  sessionManager: SessionManager.inMemory(root), disableExtensionDiscovery: true,
+  skills: [], contextFiles: [], promptTemplates: [], slashCommands: [], enableMCP: false,
+  enableLsp: false, skipPythonPreflight: true, rules: [], preloadedCustomToolPaths: [],
+  toolNames: ["read", "edit", "task"] });
+ let parent: any; let child: any;
+ try {
+  writeFileSync(join(cwd, "hello.py"), "x = 1\n"); writeFileSync(join(childCwd, "hello.py"), "x = 1\n");
+  ({ session: parent } = await createAgentSession({ ...options(cwd), agentId: "parent", extensions: [factory] }));
+  ({ session: child } = await createAgentSession({ ...options(childCwd), agentId: "child", parentAgentId: "parent",
+    taskDepth: 1, restrictToolNames: true, preloadedPreparedExtensions: parent.preparedExtensions }));
+  const edit = child.getToolByName("edit");
+  expect(edit).toBeDefined();
+  const result = await edit.execute("child-edit", { input: "*** Begin Patch\n*** Update File: hello.py\n@@\n-x = 1\n+x = 2\n*** End Patch" });
+  expect(result.isError).toBe(true);
+  const preparation = captured.find(wire => wire.event === "prepare");
+  expect(preparation.batch.agent_id).toBe("child");
+  expect(preparation.batch.parent_agent_id).toBe("parent");
+  expect(preparation.batch.session_id).toBe(child.sessionId);
+  expect(readFileSync(join(childCwd, "hello.py"), "utf8")).toBe("x = 1\n");
+  expect(readFileSync(join(cwd, "hello.py"), "utf8")).toBe("x = 1\n");
+  const task = parent.getToolByName("task");
+  expect(task).toBeDefined();
+  await expect(task.execute("merge", { agent: "task", task: "modify file", isolated: true })).rejects.toThrow("no qualified prepared-mutation boundary");
+  expect(readFileSync(join(cwd, "hello.py"), "utf8")).toBe("x = 1\n");
+ } finally {
+  await child?.dispose(); await parent?.dispose(); storage.close();
+  rmSync(cwd, { recursive: true, force: true }); rmSync(childCwd, { recursive: true, force: true });
+ }
+}, 45000);
+
+test("actual OS failure publishes the landed prefix through runtime filesystem receipt", async () => {
+ const { mkdirSync, chmodSync, existsSync } = await import("node:fs");
+ const { bindings } = await import("../.omp/extensions/reasoning_core_gate");
+ const cwd = mkdtempSync(join(tmpdir(), "rc OS prefix "));
+ const blockedDir = join(cwd, "blocked");
+ const events: any[] = [];
+ try {
+  mkdirSync(blockedDir); writeFileSync(join(cwd, "first.py"), "x = 1\n");
+  const gate = createGate(async wire => {
+   events.push(wire);
+   return wire.event === "prepare" ? { decision: "allowed", reason: "fixture", decision_id: "approved", ...bindings(wire.batch) }
+     : { decision: "allowed" };
+  });
+  const ctx = { cwd, agent: { id: "agent" }, sessionManager: { getSessionId: () => "session" } };
+  const session = { cwd, hasUI: false, enableLsp: true, settings: Settings.isolated({}),
+   getSessionFile: () => null, getSessionSpawns: () => "*", getArtifactsDir: () => null,
+   getSessionId: () => "session", getPlanModeState: () => undefined, hasNativeEditGuard: () => true,
+   prepareNativeEdit: (event: any) => gate.prepare(event, ctx),
+   resultNativeEdit: (event: any) => gate.result(event, ctx),
+   bumpFileMutationVersion: (file: string) => { if (file === join(cwd, "first.py")) chmodSync(blockedDir, 0o555); },
+  };
+  const output = await new EditTool(session, "apply_patch").execute("prefix", {
+   input: "*** Begin Patch\n*** Update File: first.py\n@@\n-x = 1\n+x = 2\n*** Add File: blocked/last.py\n+y = 3\n*** End Patch" });
+  expect(output.isError).toBe(true);
+  expect(readFileSync(join(cwd, "first.py"), "utf8")).toBe("x = 2\n");
+  expect(existsSync(join(blockedDir, "last.py"))).toBe(false);
+  const receipt = events.find(wire => wire.event === "result");
+  expect(receipt.success).toBe(false);
+  expect(receipt.persisted_digests[join(cwd, "first.py")]).toBe(new Bun.CryptoHasher("sha256").update("x = 2\n").digest("hex"));
+  expect(receipt.persisted_digests[join(blockedDir, "last.py")]).toBeNull();
+ } finally { chmodSync(blockedDir, 0o755); rmSync(cwd, { recursive: true, force: true }); }
 });

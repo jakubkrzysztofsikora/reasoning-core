@@ -108,3 +108,22 @@ bun test tests/omp_runtime.test.ts
 The host fixtures exercise actual EditTool and ExtensionRunner calls, the real
 isolated Python bridge, deterministic denial without mutation, allow with a
 persisted receipt, and advisor identity. They invoke no model provider.
+
+## Guarded runtime coverage
+
+The initial profile allows native file editing and the built-in read/grep/glob/find
+tools. It refuses arbitrary shell/eval/Python, plain write, AST/LSP mutation,
+archive/SQLite mutation, custom tools, task/eval spawning and automatic isolated
+merges. User bash/Python execution events receive a refused result. An operator
+can launch an unguarded OMP session; coding tools cannot change this policy.
+
+Guarded EditTool applies complete native batches under a lock keyed by resolved
+project directory across in-process sessions. Its writer uses direct filesystem
+operations, with internal-URL resolution, fallback handlers, LSP transformations
+and automatic repair disabled. An OS write failure still permits an approved
+landed prefix, recorded from all candidate paths in the receipt.
+
+A real SDK child in a separate directory retains the adapter from its parent's
+prepared extensions and supplies child/parent/session identity. Task-tool merging
+is explicitly refused rather than inferred safe from that inheritance test.
+External filesystem races remain outside the in-process lock.

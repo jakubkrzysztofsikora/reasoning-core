@@ -128,14 +128,23 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
   };
 }
 
-export default function reasoningCoreGate(api: any) {
-  const gate = createGate();
+export default function reasoningCoreGate(api: any, bridge: (event: any) => Promise<any> = runBridge) {
+  const gate = createGate(bridge);
   api.on("native_edit_prepare", (event: any, ctx: any) => gate.prepare(event, ctx));
   api.on("native_edit_result", (event: any, ctx: any) => gate.result(event, ctx));
   api.on("session_start", (_event: any, ctx: any) => gate.lifecycle("session_start", ctx));
   api.on("session_shutdown", (_event: any, ctx: any) => gate.lifecycle("session_stop", ctx));
+  const restriction = "reasoning-core: this route has no qualified prepared-mutation boundary";
   api.on("tool_call", (event: any) => {
+    if (!["edit", "read", "grep", "glob", "find"].includes(event.toolName))
+      return { block: true, reason: restriction };
     if (event.toolName === "edit" && api.nativeEditProtocol !== 1)
       return { block: true, reason: "reasoning-core requires the qualified native precommit build" };
   });
+  api.on("before_subagent_spawn", () => ({ block: true, reason: restriction }));
+  const refusedExecution = () => ({ result: { output: restriction, exitCode: 1, cancelled: false,
+    truncated: false, totalLines: 1, totalBytes: Buffer.byteLength(restriction),
+    outputLines: 1, outputBytes: Buffer.byteLength(restriction), displayOutputs: [] } });
+  api.on("user_bash", refusedExecution);
+  api.on("user_python", refusedExecution);
 }

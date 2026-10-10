@@ -1,10 +1,45 @@
 --- a/packages/coding-agent/src/edit/index.ts
 +++ b/packages/coding-agent/src/edit/index.ts
-@@ -486,15 +486,29 @@
+@@ -1,4 +1,5 @@
+-import { mkdir } from "node:fs/promises";
++import { realpathSync } from "node:fs";
++import { mkdir, unlink, writeFile } from "node:fs/promises";
+ import * as os from "node:os";
+ import * as path from "node:path";
+ import type {
+@@ -166,6 +167,23 @@
+ 	return prompt.render(source);
+ }
+ 
++const projectEditQueues = new Map<string, Promise<void>>();
++async function acquireProjectEditLock(cwd: string, signal?: AbortSignal): Promise<() => void> {
++ const key = realpathSync(cwd);
++ const previous = projectEditQueues.get(key) ?? Promise.resolve();
++ let unlock!: () => void;
++ const held = new Promise<void>(resolve => { unlock = resolve; });
++ const queued = previous.then(() => held);
++ projectEditQueues.set(key, queued);
++ await previous;
++ const release = () => {
++   unlock();
++   if (projectEditQueues.get(key) === queued) projectEditQueues.delete(key);
++ };
++ if (signal?.aborted) { release(); throw new Error("Native edit cancelled while queued"); }
++ return release;
++}
++
+ /** Builds the LSP writethrough from the current `lsp.*` settings; called per write so changes apply immediately. */
+ function createEditWritethrough(session: ToolSession): WritethroughCallback {
+ 	const enableLsp = session.enableLsp ?? true;
+@@ -484,21 +502,37 @@
+ 			open.native.finish();
+ 		}
  		const editSession = open.native;
- 		const batch = getLspBatchRequest(context?.toolCall);
+-		const batch = getLspBatchRequest(context?.toolCall);
++		const guarded = this.session.hasNativeEditGuard?.() === true;
++		const batch = guarded ? undefined : getLspBatchRequest(context?.toolCall);
  		let outcome;
-+   const guarded = this.session.hasNativeEditGuard?.() === true;
++   let release = () => {};
 +   let receiptSent = false;
 +   const sendReceipt = async (success: boolean, error: string | null) => {
 +     if (!guarded || receiptSent) return;
@@ -13,9 +48,11 @@
 +     await this.session.resultNativeEdit({ type: "native_edit_result", toolCallId, success, error });
 +   };
  		try {
++			if (guarded) release = await acquireProjectEditLock(this.session.cwd, signal);
  			outcome = await editSession.apply(
  				{ lspBatchId: batch?.id, lspFlush: batch?.flush ?? false },
- 				(_error, request) => this.#write(request, signal),
+-				(_error, request) => this.#write(request, signal),
++				(_error, request) => this.#write(request, signal, guarded),
 +       guarded ? async (error, batch) => {
 +         if (error || !this.session.prepareNativeEdit) return { allowed: false, finalInputSha256: batch.finalInputSha256 };
 +         return this.session.prepareNativeEdit({ type: "native_edit_prepare", toolCallId, batch }, signal);
@@ -30,6 +67,57 @@
  			if (batch?.flush) await flushLspWritethroughBatch(batch.id, this.session.cwd, signal);
  			throw error;
  		} finally {
+-			editSession.close();
++			try { editSession.close(); } finally { release(); }
+ 			if (this.#sessions.get(toolCallId) === open) this.#sessions.delete(toolCallId);
+ 			this.#streamedArgs.delete(toolCallId);
+ 		}
+@@ -515,6 +549,7 @@
+ 		const record = createEditBlackboxRecorder(this.session, this.mode, params);
+ 		const notes: string[] = [];
+ 		for (const file of outcome.files) {
++			if (guarded) continue;
+ 			if (!file.parseRegressed || file.oldText === undefined || file.newText === undefined) continue;
+ 			const snapshot: AppliedEditSnapshot = {
+ 				path: file.moveTo ?? file.path,
+@@ -620,6 +655,7 @@
+ 	 * address whole files.
+ 	 */
+ 	async #resolveUrl(url: string, context: ResolveContext): Promise<EditUrlResolution> {
++		if (this.session.hasNativeEditGuard?.()) return { error: "Internal URL edits are not qualified", planWritable: false };
+ 		const router = InternalUrlRouter.instance();
+ 		try {
+ 			const target = router.peelWriteSelector(url, "edit");
+@@ -637,7 +673,28 @@
+ 		}
+ 	}
+ 
+-	async #write(request: EditWriteRequest, signal?: AbortSignal): Promise<EditWriteResponse> {
++	async #write(request: EditWriteRequest, signal?: AbortSignal, guarded = false): Promise<EditWriteResponse> {
++   if (guarded) {
++     if (signal?.aborted) throw new Error("Native edit cancelled");
++     if (request.op === "delete") {
++       await unlink(request.path);
++       invalidateFsScanAfterDelete(request.path);
++       this.session.bumpFileMutationVersion?.(request.path);
++       return { written: "" };
++     }
++     if (request.content === undefined) throw new Error("Native edit content missing");
++     const destination = request.op === "move" ? request.moveTo : request.path;
++     if (!destination) throw new Error("Native edit destination missing");
++     await mkdir(path.dirname(destination), { recursive: true });
++     await writeFile(destination, request.content, "utf8");
++     if (request.op === "move") {
++       await unlink(request.path);
++       invalidateFsScanAfterRename(request.path, destination);
++       this.session.bumpFileMutationVersion?.(request.path);
++     } else invalidateFsScanAfterWrite(destination);
++     this.session.bumpFileMutationVersion?.(destination);
++     return { written: request.content };
++   }
+ 		if (request.op === "delete") {
+ 			await deleteFileWithFallback(request.path, Bun.file(request.path));
+ 			if (this.session.enableLsp ?? true) {
 --- a/packages/coding-agent/src/tools/index.ts
 +++ b/packages/coding-agent/src/tools/index.ts
 @@ -206,6 +206,11 @@

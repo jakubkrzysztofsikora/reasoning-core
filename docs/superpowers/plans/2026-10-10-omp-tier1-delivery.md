@@ -108,19 +108,19 @@ tool_call_id, decision_id, persisted digests, and success/error.
 **Interfaces:** Every supported mutation produces Task 1 candidates; every
 unsupported mutation produces an explicit restriction in the qualification profile.
 
-- [ ] Add denial fixtures for protected extension/settings, symlink escape,
+- [x] Add denial fixtures for protected extension/settings, symlink escape,
   move-overwrite, internal URL dispatch, archive/SQLite writes, shell/eval writes,
   auto-repair/format changes, AST/LSP edits, and custom tool delegation.
-- [ ] Add isolated-child and parent-merge cases proving the runtime gate stays
+- [x] Add isolated-child and parent-merge cases proving the runtime gate stays
   loaded and no denied candidate reaches the parent filesystem.
-- [ ] Observe failing escape/coverage tests before implementing restrictions.
-- [ ] Route exact candidates through the bridge; restrict unqualified execution
+- [x] Observe failing escape/coverage tests before implementing restrictions.
+- [x] Route exact candidates through the bridge; restrict unqualified execution
   routes. Arbitrary Python/shell cannot be certified by regex matching alone.
-- [ ] Protect OMP guard assets through _guard_paths and the applicable runtime
+- [x] Protect OMP guard assets through _guard_paths and the applicable runtime
   execution boundary. Avoid granting tools operator authority to disable the guard.
-- [ ] Run all native/runtime tests; require all-file nonmutation on policy denial
+- [x] Run all native/runtime tests; require all-file nonmutation on policy denial
   and accurate landed-prefix receipts on actual OS write failure.
-- [ ] Commit the verified coverage slice and document precise exclusions.
+- [x] Commit the verified coverage slice and document precise exclusions.
 
 ### Task 4: rc init and Owned-File Lifecycle
 

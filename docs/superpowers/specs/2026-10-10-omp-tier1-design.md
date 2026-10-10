@@ -139,6 +139,15 @@ Child sessions must load or retain the approved adapter, including isolated
 workspaces and parent application of their changes. Qualification must verify
 this directly rather than assume extension inheritance from upstream docs.
 
+Initial qualified mutation coverage is native file editing only. Shell/eval/Python,
+write, AST/LSP mutation, archive/SQLite mutation, custom tools, task spawning, and
+automatic isolated merges are refused. Direct SDK child sessions retain the same
+adapter through prepared extension inheritance; child edit decisions remain
+independent. Expanding task/merge support requires exact prepared parent candidates
+and a fresh qualification. Native host writes serialize by resolved project across
+in-process sessions and use direct filesystem operations; formatting, repair,
+internal-URL writes, and fallback write handlers are disabled while guarded.
+
 ## Readiness and user feedback
 
 Add host-aware doctor checks, reached through rc init --check, for:
