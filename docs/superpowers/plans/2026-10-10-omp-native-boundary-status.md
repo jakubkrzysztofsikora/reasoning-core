@@ -150,3 +150,15 @@ bridge through the native batch approval boundary. Operator bypass-next
 integration, native shell/eval/delegation restrictions, real child inheritance,
 rc init ownership/lifecycle, doctor, packaging, independent whole-branch review,
 Actions build, and both-machine activation remain required before delivery.
+
+## Runtime continuation
+
+Task 2 now has canonical and bundled TypeScript adapters plus a pinned host patch.
+EditTool supplies whole native batches through bounded session-scoped extension
+handlers. Decisions bind input, candidates, and resolved project/path hashes;
+receipts read the filesystem even after native failure. The loaded native addon
+reports protocol 1; old addons do not pass capability checks. Operator bypass-next
+uses the existing authenticated override state after integrity/lease checks.
+Real EditTool/ExtensionRunner/Python allow and deterministic-deny fixtures pass;
+these do not qualify child merging, other mutation tools, installed-wheel loading,
+or either active machine. Tasks 3-9 remain in progress.

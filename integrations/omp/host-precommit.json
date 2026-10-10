@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
+  "upstream_version": "18.8.8",
+  "requires_native_precommit": true,
+  "patch_sha256": "4d87a31ce371ed4f7b36707ccb299f40d49a9f64013158715575db5b7e4fd846",
+  "files": {
+    "packages/coding-agent/src/edit/index.ts": {
+      "before_sha256": "a1caabb2d515a3e1cd8cf808064538a58441f74e147f4ee14efcc76e09dfac17",
+      "after_sha256": "a8c025bf2bc1aff020ca463ce33cda7936d774be00bb4a419bd395fc9db1562d"
+    },
+    "packages/coding-agent/src/tools/index.ts": {
+      "before_sha256": "6e8aaf6523c0cfcc041aacfe5004d9c08aff9a9b86fd65251f7eb7972b6ce828",
+      "after_sha256": "eb3ceb86a19851a4112fdc88b71f2e69d9144d06ed3c0153f3fe8330653d7b8e"
+    },
+    "packages/coding-agent/src/sdk.ts": {
+      "before_sha256": "4b9f9aa2a62deacfbe36fa0ea0e262b2c4d753fb724de0dea8a0e379bf60f8c8",
+      "after_sha256": "852961f24b66e084e099dc896c5ebef3de965e2bfb83b8513e35e286bf6e0547"
+    },
+    "packages/coding-agent/src/extensibility/extensions/types.ts": {
+      "before_sha256": "c0b78c9414ec34ead5617b14a48b4750df0e1d2204eca002a9032c558b20c0ba",
+      "after_sha256": "988e8b9d669a622c37315cc85ace57824ce08e1f891782b65a7263a5236b8dec"
+    },
+    "packages/coding-agent/src/extensibility/extensions/runner.ts": {
+      "before_sha256": "cdf3f8b2d80da336a443c6cbd5616f84859624b8d73fd5b8347b5572fed5f28c",
+      "after_sha256": "84417512e7456bc2174cde08a24c805ce5f670a80c1ed0afa5a8818ec2a597cd"
+    },
+    "packages/coding-agent/src/extensibility/extensions/loader.ts": {
+      "before_sha256": "6ce3fcecb30caca84738683af80677638a9b6aa51b285709f32f5fad56bcd2c2",
+      "after_sha256": "e7f1442943d91a47a8cebe37c8d925eedc0aa6f83cfea1f3c8ef34b64ee54912"
+    },
+    "packages/natives/native/index.d.ts": {
+      "before_sha256": "4aa8a69da6afb4b425eb5db27dcf3ef48e2f4427e8fc56b4805fe707318dd679",
+      "after_sha256": "3aee0778633a4873c333ed0ac9bdc3b9a8006df18f6e7e0bec6def62e9d103ac"
+    },
+    "packages/natives/native/index.js": {
+      "before_sha256": "e4ee6f849c4e34a648d773c9090a84cfa5f8219c4a1db582532fba0cfc9daccb",
+      "after_sha256": "09bedce30a7fdfedfdb4e79cc64f2eb21b3f9381b9ab51c6b4a20a7cf240c33a"
+    }
+  }
+}

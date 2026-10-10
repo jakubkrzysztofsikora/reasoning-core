@@ -1,2 +1,3 @@
 # Unified-diff context prefixes intentionally precede tabs and blank lines.
 integrations/omp/native-precommit.patch whitespace=-blank-at-eol,-space-before-tab
+integrations/omp/host-precommit.patch whitespace=-blank-at-eol,-space-before-tab

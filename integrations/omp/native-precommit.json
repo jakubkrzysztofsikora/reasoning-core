@@ -4,7 +4,7 @@
   "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
   "upstream_version": "18.8.8",
   "upstream_archive_sha256": "f7b808277ffe18fc1940efcfd4c41c2b6d6eb8fba2e65ba8682760e95f9caa07",
-  "patch_sha256": "8a0370cc5c017b2b5eb4c8563c5a27282e3b1c22ff6de0e0e7b61743e05972a5",
+  "patch_sha256": "e9947d54e9e0a3e259a102606772e4b808a1fb7ff1022505c9c5a95306e4adf6",
   "files": {
     "crates/pi-edit/Cargo.toml": {
       "before_sha256": "3caa2e47075702d088618290592c45e8bd473fda90e0db2162259e2179bd72a9",
@@ -20,7 +20,7 @@
     },
     "crates/pi-natives/src/edit.rs": {
       "before_sha256": "eb65dd9d29185a50c9b74658a23451f27cc799c0e2061d1236b5def6c8aaee21",
-      "after_sha256": "8b0223fb35dd195d2933a1740f6ffbf166740d920592cba95f203d0b0348c2a0"
+      "after_sha256": "203dd5351d8689d19b12c64a9eaa68446057c66b9d027e4d8db6b8cbbf817e1d"
     },
     "Cargo.lock": {
       "before_sha256": "d9c1d3a964c1d24694b945a64eec15f5c64b89fdee76a48d17e79c3b83e13996",
@@ -46,7 +46,8 @@
       "allowed",
       "finalInputSha256"
     ],
-    "unguarded_apply_compatibility": true
+    "unguarded_apply_compatibility": true,
+    "capability": "editPrecommitProtocol() == 1"
   },
   "verification": {
     "state": "native_component_tested",
@@ -60,8 +61,8 @@
       "skipped": 7,
       "xfailed": 1
     },
-    "addon_build": "cargo build -p pi-natives --lib (dev)",
-    "addon_sha256": "0ec38702e1f5f1a5d3cc1f3dc6910cf6563161af1244787d93c40a9133973a81",
+    "addon_build": "napi build --profile debug; Rust nightly-2026-10-06",
+    "addon_sha256": "7dcc7e00bd594fc4eb44e14de5e2956cc1fe8c124a2139e803927f5f29578887",
     "host_qualified": false,
     "machine_activation": false,
     "tested_modes": [

@@ -89,18 +89,18 @@ and main() -> int. Events are prepare, result, session_start, and session_stop;
 prepare consumes Task 1's PreparedBatch and returns GateDecision. Result references
 tool_call_id, decision_id, persisted digests, and success/error.
 
-- [ ] Add bridge/runtime tests asserting forbidden imports block, valid edits pass,
+- [x] Add bridge/runtime tests asserting forbidden imports block, valid edits pass,
   neural-only regressions stay advisory, authentication uses the shared resolver,
   and missing/invalid bridge output does not allow a hard-enforcement mutation.
-- [ ] Run pytest tests/test_omp_bridge.py and bun test tests/omp_runtime.test.ts;
+- [x] Run pytest tests/test_omp_bridge.py and bun test tests/omp_runtime.test.ts;
   verify the new adapter is missing.
-- [ ] Implement normalized subprocess JSON stdin/stdout with fixed argv, bounded
+- [x] Implement normalized subprocess JSON stdin/stdout with fixed argv, bounded
   timeout, and no shell interpolation. Use context cwd/session/agent identity.
-- [ ] Reuse shared deterministic guard decisions and existing authenticated scoring;
+- [x] Reuse shared deterministic guard decisions and existing authenticated scoring;
   keep diagnostic stdout separate from the protocol and keep secrets out of it.
-- [ ] Add omp identity to _host_env; pass identity per invocation without mutating
+- [x] Add omp identity to _host_env; pass identity per invocation without mutating
   the shared OMP process environment. Correlate pre-decisions and post-receipts.
-- [ ] Run bridge/runtime/host-environment tests and existing auth regressions;
+- [x] Run bridge/runtime/host-environment tests and existing auth regressions;
   commit the verified slice.
 
 ### Task 3: Close Mutation and Delegation Escapes

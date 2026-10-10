@@ -163,6 +163,19 @@ def _prepare(event: dict) -> dict:
                 return _decision(event, batch, "blocked", "envrc_local_locked")
         if guard._git_lease.edit_denial(path):
             return _decision(event, batch, "blocked", "worktree_not_leased")
+    from src.hooks import _kill_switches
+
+    # Integrity and lease checks precede every operator scoring/policy override.
+    override = _kill_switches.is_disabled_globally() or _kill_switches.consume_bypass_next()
+    skipped = [_kill_switches.is_file_skipped(item.path) for item in batch.candidates]
+    if override or all(skipped):
+        return _decision(event, batch, "allowed", "operator_override")
+
+    for index, candidate in enumerate(batch.candidates):
+        if skipped[index]:
+            continue
+        path = candidate.path
+        before, after = candidate.before_src or "", candidate.after_src or ""
         outcomes = [
             guard._dispatch.gate_lang_lock(
                 file_path=path, read_before_src=lambda _path: before,
@@ -219,7 +232,9 @@ def _prepare(event: dict) -> dict:
                 )
 
     failure = None
-    for candidate in batch.candidates:
+    for index, candidate in enumerate(batch.candidates):
+        if skipped[index]:
+            continue
         score_failure = None
         report = {}
         try:

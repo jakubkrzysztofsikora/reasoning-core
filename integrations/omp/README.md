@@ -7,9 +7,11 @@ It is tested against source `aafb6551616fccec65cbfb264298e7f98df8ce5f`
 development-addon digests.
 
 The complete native `pi-natives` addon was built and exercised. This is
-component verification. The normal OMP EditTool currently supplies only its
-writer callback; Task 2 must wire approval through the extension runtime.
-Applying this patch alone does not activate reasoning-core enforcement.
+component verification. The companion `host-precommit.patch` wires the third
+callback through session-scoped `native_edit_prepare` and `native_edit_result`
+extension events, including isolated interpreter dispatch and filesystem receipts.
+Both patches and the reasoning-core extension are required. Active installations
+remain unchanged until mutation-route qualification and delivery are complete.
 
 ## Native API
 
@@ -75,6 +77,11 @@ stubs Apple Foundation Models because Swift 6.4/macOS 27 SDK is unavailable.
 No model was invoked. Do not substitute this development addon for a delivered,
 qualified OMP package.
 
+`editPrecommitProtocol()` reports native protocol 1. The host extension API reads
+this from the loaded addon; an older addon reports unavailable rather than silently
+ignoring a third callback. `host-precommit.json` binds its eight host source files.
+Apply `host-precommit.patch` after the native patch in the same pinned source tree.
+
 A production OMP build must regenerate its N-API declarations after the patch,
 build its JavaScript package against those declarations, wire the extension
 approval event, and record the resulting runtime/asset hashes before activation.
@@ -90,3 +97,14 @@ syscall. Runtime serialization and restrictions on concurrent/unqualified
 mutation routes remain mandatory. Guard retention in children, shell/eval and
 formatter/LSP/AST routes, installer/doctor, installed-wheel qualification, Actions
 provenance, and both-machine activation remain in the delivery plan.
+
+Runtime verification from the reasoning-core checkout:
+
+```sh
+RC_OMP_SOURCE=/absolute/upstream/tree bun test tests/omp_host_runtime.test.ts
+bun test tests/omp_runtime.test.ts
+```
+
+The host fixtures exercise actual EditTool and ExtensionRunner calls, the real
+isolated Python bridge, deterministic denial without mutation, allow with a
+persisted receipt, and advisor identity. They invoke no model provider.

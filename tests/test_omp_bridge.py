@@ -468,3 +468,23 @@ def test_score_metadata_cannot_claim_independent_corroboration(
     result = bridge().handle_event(prepared(tmp_path))
     assert result["decision"] == "allowed"
     assert not any(row.get("decision") == "blocked" for row in events(isolated_env))
+
+def test_operator_bypass_is_batch_scoped_but_cannot_edit_guards(
+    tmp_path, isolated_env, score_server, monkeypatch,
+):
+    monkeypatch.setenv("RC_BYPASS_NEXT", "1")
+    event = prepared(tmp_path)
+    event["batch"]["candidates"][0]["after_src"] = "def broken(:\n"
+    result = bridge().handle_event(event)
+    assert result["decision"] == "allowed"
+    assert result["reason"] == "operator_override"
+    assert not score_server["requests"]
+
+    guarded = tmp_path / ".omp" / "extensions" / "reasoning_core_gate.ts"
+    guarded.parent.mkdir(parents=True)
+    guarded.write_text("guard\n")
+    event["batch"]["candidates"][0].update(
+        path=str(guarded), before_src="guard\n", after_src="disabled\n",
+        expected_before_sha256=hashlib.sha256(b"guard\n").hexdigest(),
+    )
+    assert bridge().handle_event(event)["reason"] == "guard_file_locked"
