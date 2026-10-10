@@ -462,6 +462,8 @@ _GITIGNORE_ENTRIES = [
     ".gemini/settings.json",
     ".kimi/settings.json",
     ".pi/settings.json",
+    ".omp/extensions/reasoning_core_gate.ts",
+    ".omp/reasoning-core.compatibility.json",
     ".vibe/config.toml",
     ".reasoning-core/",
 ]
@@ -475,7 +477,18 @@ def update_gitignore(target: Path, result: InitResult) -> None:
         created = True
     text = gitignore.read_text()
     if _GITIGNORE_BEGIN in text:
-        result.skipped.append(".gitignore")
+        if _GITIGNORE_END not in text:
+            result.warned.append("incomplete reasoning-core gitignore block preserved")
+            return
+        start = text.index(_GITIGNORE_BEGIN)
+        end = text.index(_GITIGNORE_END, start)
+        existing = text[start:end].splitlines()
+        missing = [entry for entry in _GITIGNORE_ENTRIES if entry not in existing]
+        if missing:
+            gitignore.write_text(text[:end] + "\n".join(missing) + "\n" + text[end:])
+            result.wrote.append(".gitignore")
+        else:
+            result.skipped.append(".gitignore")
         return
     addition = "\n" + _GITIGNORE_BEGIN + "\n" + "\n".join(_GITIGNORE_ENTRIES) + "\n" + _GITIGNORE_END + "\n"
     gitignore.write_text(text + addition)
@@ -766,6 +779,8 @@ def init(target: Path,
     install_kimi(target, manifest, substitutions, result)
     install_vibe(target, manifest, substitutions, result)
     install_pi(target, manifest, substitutions, result)
+    from src._omp_install import install_omp
+    install_omp(target, manifest, substitutions, result)
     update_gitignore(target, result)
 
     if install_sidecar:
@@ -788,12 +803,16 @@ def uninstall(target: Path) -> dict:
     """
     target = target.resolve()
     manifest = target / _MANIFEST_REL
-    removed: list[str] = []
-    refused: list[str] = []
+    from src._omp_install import OWNERSHIP, uninstall_omp
+    omp_result = uninstall_omp(target)
+    removed: list[str] = omp_result["removed"]
+    refused: list[str] = omp_result["refused"]
     if not manifest.exists():
         return {"target": str(target), "removed": [], "refused": [], "warning": "no manifest"}
 
     for entry in (line.strip() for line in manifest.read_text().splitlines() if line.strip()):
+        if entry == OWNERSHIP:
+            continue
         abs_path = (target / entry).resolve()
         # Refuse out-of-tree paths. Anchors under target.
         try:

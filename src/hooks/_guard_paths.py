@@ -39,6 +39,11 @@ _EXPLICIT_ALLOWLIST: Tuple[str, ...] = (
     "/.claude/settings.local.json",
     "/.omp/settings.json",
     "/.omp/extensions/",
+    "/.omp/reasoning-core.compatibility.json",
+    "/.reasoning-core/omp-owned.json",
+    "/src/_omp_install.py",
+    "/src/_omp_doctor.py",
+    "/src/data/templates/omp.",
     "/.omp/agent/settings.json",
     "/.omp/agent/extensions/",
     # Sidecar + supervisor + generative client

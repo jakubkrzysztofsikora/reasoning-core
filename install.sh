@@ -514,6 +514,24 @@ install_pi() {
 # ---------------------------------------------------------------------------
 # 7. .gitignore
 # ---------------------------------------------------------------------------
+install_omp() {
+  local bootstrap_python=python3
+  [[ -x "$RC_PYTHON" ]] && bootstrap_python="$RC_PYTHON"
+  "$bootstrap_python" -I -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from src._init import InitResult, update_gitignore
+from src._omp_install import install_omp
+target = Path(sys.argv[2]).resolve()
+result = InitResult(target)
+install_omp(target, Path(sys.argv[3]), {"RC_REPO": sys.argv[1], "RC_PYTHON": sys.argv[4]}, result)
+update_gitignore(target, result)
+for path in result.wrote: print("  wrote " + path)
+for message in result.warned: print("  " + message)
+' "$RC_REPO" "$TARGET_REPO" "$MANIFEST" "$RC_PYTHON"
+}
+
 update_gitignore() {
   local created=0
   if [[ ! -f .gitignore ]]; then
@@ -534,6 +552,8 @@ update_gitignore() {
 .gemini/settings.json
 .kimi/settings.json
 .pi/settings.json
+.omp/extensions/reasoning_core_gate.ts
+.omp/reasoning-core.compatibility.json
 .vibe/config.toml
 .reasoning-core/
 # <<< reasoning-core <<<
@@ -586,6 +606,7 @@ install_kimi
 install_vibe
 install_pi
 update_gitignore
+install_omp
 direnv_allow
 
 cat <<EOF

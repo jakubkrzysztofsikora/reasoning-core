@@ -14,6 +14,7 @@
 set -euo pipefail
 
 TARGET_REPO="$(pwd)"
+RC_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST=".reasoning-core/install.manifest"
 
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -34,6 +35,16 @@ printf '\nreasoning-core uninstall\n  TARGET_REPO = %s\n\n' "$TARGET_REPO"
 #    Refuses anything that resolves outside TARGET_REPO — defends against
 #    a tampered/corrupt manifest.
 # ---------------------------------------------------------------------------
+python3 -I -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from src._omp_install import uninstall_omp
+outcome = uninstall_omp(Path(sys.argv[2]))
+for path in outcome["removed"]: print("  removed " + path)
+for path in outcome["refused"]: print("  preserved modified/refused OMP asset: " + path)
+' "$RC_REPO" "$TARGET_REPO"
+
 TARGET_REPO="$TARGET_REPO" MANIFEST="$MANIFEST" python3 <<'PYEOF'
 import os, shutil, sys
 target = os.path.realpath(os.environ["TARGET_REPO"])
@@ -44,6 +55,8 @@ with open(manifest) as fh:
 GREEN = "\033[32m"; YELLOW = "\033[33m"; RED = "\033[31m"; RESET = "\033[0m"
 
 for entry in entries:
+    if entry == ".reasoning-core/omp-owned.json":
+        continue
     abs_path = os.path.realpath(os.path.join(target, entry))
     # Anchor under TARGET_REPO. commonpath rejects absolute-elsewhere AND
     # any `..` escape.
@@ -162,8 +175,12 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Manifest dir
 # ---------------------------------------------------------------------------
-rm -rf .reasoning-core
-ok "removed .reasoning-core/"
+rm -f "$MANIFEST"
+if rmdir .reasoning-core 2>/dev/null; then
+  ok "removed empty .reasoning-core/"
+else
+  skip "preserved nonempty .reasoning-core/ (owned metadata or user configuration)"
+fi
 
 cat <<EOF
 

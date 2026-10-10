@@ -129,18 +129,18 @@ substitutions, result) -> None, called by the default src/_init.py init path.
 Ownership metadata records path and installed SHA-256; uninstall/upgrade operate
 only on unchanged owned files.
 
-- [ ] Test fresh init, re-init, paths containing spaces, wheel resource loading,
+- [x] Test fresh init, re-init, paths containing spaces, wheel resource loading,
   absent OMP binary, existing unrelated settings/extensions, changed owned files,
   upgrade, and uninstall. Assert user modifications survive.
-- [ ] Run pytest tests/test_omp_install.py tests/test_rc_init.py; observe missing
+- [x] Run pytest tests/test_omp_install.py tests/test_rc_init.py; observe missing
   OMP integration failures.
-- [ ] Install .omp/extensions/reasoning_core_gate.ts from the bundled asset with
+- [x] Install .omp/extensions/reasoning_core_gate.ts from the bundled asset with
   resolved Python/framework paths. Preserve settings arrays and MCP/profile files.
-- [ ] Wire default rc init, upgrade, uninstall, manifest entries and gitignore
+- [x] Wire default rc init, upgrade, uninstall, manifest entries and gitignore
   handling. Preserve current unrelated host semantics; do not require a separate manual installer.
-- [ ] If the shell installer remains supported, make it use the same assets and
+- [x] If the shell installer remains supported, make it use the same assets and
   ownership rules. Pin any required OMP patch/build in compatibility metadata.
-- [ ] Run lifecycle and existing installer regressions; commit the verified slice.
+- [x] Run lifecycle and existing installer regressions; commit the verified slice.
 
 ### Task 5: Readiness and Service Recovery
 
