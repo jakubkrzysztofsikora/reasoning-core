@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import uuid
 from pathlib import Path
 
 _HOST_ENVS = {
@@ -38,6 +37,7 @@ _HOST_ENVS = {
     "copilot": ("COPILOT_PROJECT_DIR", "COPILOT_SESSION_ID"),
     "gemini": ("GEMINI_PROJECT_DIR", "GEMINI_SESSION_ID"),
     "kimi": ("KIMI_PROJECT_DIR", "KIMI_SESSION_ID"),
+    "omp": ("OMP_PROJECT_DIR", "OMP_SESSION_ID"),
     "vibe": ("VIBE_PROJECT_DIR", "VIBE_SESSION_ID"),
 }
 

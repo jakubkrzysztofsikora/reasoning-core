@@ -72,35 +72,62 @@ def _python_definitions(src: str) -> list[tuple[str, int, str]]:
     return definitions
 
 
-def find_duplicate_definitions(repo_root: str, file_path: str, after_src: str) -> list[dict[str, Any]]:
-    """Find exact-name and same-body duplicates introduced by a proposed write."""
-    proposed = _python_definitions(after_src) if file_path.endswith(".py") else []
+def _python_source_views(
+    repo_root: str, file_path: str, after_src: str,
+    candidate_sources: dict[str, str | None] | None,
+) -> tuple[dict[str, str], dict[str, str], str]:
+    """Build before/after project views without persisting staged candidates."""
+    root = Path(repo_root).resolve()
+    target = Path(file_path)
+    target_rel = str(target.resolve().relative_to(root)) if target.is_absolute() else str(target)
+    before = {
+        rel: (root / rel).read_text(encoding="utf-8", errors="replace")
+        for rel in iter_repo_files(repo_root) if rel.endswith(".py")
+    }
+    proposed: dict[str, str | None] = {}
+    for path, source in (candidate_sources or {}).items():
+        absolute = Path(path)
+        if not absolute.is_absolute():
+            absolute = root / absolute
+        rel = str(absolute.resolve().relative_to(root))
+        if rel.endswith(".py"):
+            proposed[rel] = source
+    if target_rel.endswith(".py"):
+        proposed.setdefault(target_rel, after_src)
+    after = dict(before)
+    for rel, source in proposed.items():
+        if source is None:
+            after.pop(rel, None)
+        else:
+            after[rel] = source
+    return before, after, target_rel
+
+
+def find_duplicate_definitions(
+    repo_root: str, file_path: str, after_src: str, *,
+    candidate_sources: dict[str, str | None] | None = None,
+) -> list[dict[str, Any]]:
+    """Find duplicates introduced by a write, including staged sibling changes."""
+    if not file_path.endswith(".py"):
+        return []
+    before_sources, after_sources, target_rel = _python_source_views(
+        repo_root, file_path, after_src, candidate_sources,
+    )
+    proposed = _python_definitions(after_sources.get(target_rel, ""))
     if not proposed:
         return []
-    root = Path(repo_root)
-    target = Path(file_path)
-    try:
-        target_rel = str(target.resolve().relative_to(root.resolve())) if target.is_absolute() else str(target)
-    except ValueError:
-        target_rel = str(target)
-    try:
-        before = _python_definitions((root / target_rel).read_text(encoding="utf-8", errors="replace"))
-    except OSError:
-        before = []
-    other_definitions: list[tuple[str, list[tuple[str, int, str]]]] = []
-    for rel_path in iter_repo_files(repo_root):
-        if not rel_path.endswith(".py") or rel_path == target_rel:
-            continue
-        try:
-            existing = _python_definitions((root / rel_path).read_text(encoding="utf-8", errors="replace"))
-        except OSError:
-            continue
-        other_definitions.append((rel_path, existing))
+    before = _python_definitions(before_sources.get(target_rel, ""))
 
-    def findings_for(definitions: list[tuple[str, int, str]]) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
+    def findings_for(
+        definitions: list[tuple[str, int, str]], sources: dict[str, str],
+    ) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
+        others = [
+            (rel, _python_definitions(source))
+            for rel, source in sources.items() if rel != target_rel
+        ]
         findings: list[tuple[tuple[str, ...], dict[str, Any]]] = []
         for new_name, _, new_body in definitions:
-            for rel_path, existing in other_definitions:
+            for rel_path, existing in others:
                 for old_name, old_line, old_body in existing:
                     kind = "exact_name" if new_name == old_name else "semantic_body"
                     if kind == "exact_name" or new_body == old_body:
@@ -116,9 +143,9 @@ def find_duplicate_definitions(repo_root: str, file_path: str, after_src: str) -
                                            "path": target_rel, "line": old_line}))
         return findings
 
-    old_counts = Counter(key for key, _ in findings_for(before))
+    old_counts = Counter(key for key, _ in findings_for(before, before_sources))
     new_findings: list[dict[str, Any]] = []
-    for key, finding in findings_for(proposed):
+    for key, finding in findings_for(proposed, after_sources):
         if old_counts[key]:
             old_counts[key] -= 1
         else:
@@ -165,29 +192,24 @@ def _local_imports(src: str, rel_path: str, known: set[str]) -> set[str]:
     return edges
 
 
-def find_import_cycle(repo_root: str, file_path: str, after_src: str) -> list[str] | None:
-    """Return one newly present local import cycle, including its closing node."""
-    root = Path(repo_root)
-    files = [path for path in iter_repo_files(repo_root) if path.endswith(".py")]
-    try:
-        target_rel = str(Path(file_path).resolve().relative_to(root.resolve())) if Path(file_path).is_absolute() else str(Path(file_path))
-    except ValueError:
-        target_rel = str(Path(file_path))
-    before_known = {_module_for_path(path) for path in files}
-    after_known = before_known | {_module_for_path(target_rel)}
-    before_graph: dict[str, set[str]] = {}
-    after_graph: dict[str, set[str]] = {}
-    for rel in files:
-        source = (root / rel).read_text(encoding="utf-8", errors="replace")
-        module = _module_for_path(rel)
-        before_graph[module] = _local_imports(source, rel, before_known)
-        after_graph[module] = _local_imports(
-            after_src if rel == target_rel else source, rel, after_known
-        )
-    if target_rel not in files:
-        after_graph[_module_for_path(target_rel)] = _local_imports(
-            after_src, target_rel, after_known
-        )
+def find_import_cycle(
+    repo_root: str, file_path: str, after_src: str, *,
+    candidate_sources: dict[str, str | None] | None = None,
+) -> list[str] | None:
+    """Return a newly present local import cycle across the complete staged view."""
+    before_sources, after_sources, _ = _python_source_views(
+        repo_root, file_path, after_src, candidate_sources,
+    )
+    before_known = {_module_for_path(path) for path in before_sources}
+    after_known = {_module_for_path(path) for path in after_sources}
+    before_graph = {
+        _module_for_path(rel): _local_imports(source, rel, before_known)
+        for rel, source in before_sources.items()
+    }
+    after_graph = {
+        _module_for_path(rel): _local_imports(source, rel, after_known)
+        for rel, source in after_sources.items()
+    }
 
     def path_to(start: str, destination: str) -> list[str] | None:
         paths = [[start]]
@@ -458,5 +480,5 @@ __all__ = [
     "clear_all_indices",
     "clear_index",
     "get_or_build_index",
-    "iter_repo_files"
+    "iter_repo_files",
 ]

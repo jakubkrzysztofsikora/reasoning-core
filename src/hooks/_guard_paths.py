@@ -37,6 +37,10 @@ from typing import Iterable, Tuple
 _EXPLICIT_ALLOWLIST: Tuple[str, ...] = (
     "/.claude/settings.json",
     "/.claude/settings.local.json",
+    "/.omp/settings.json",
+    "/.omp/extensions/",
+    "/.omp/agent/settings.json",
+    "/.omp/agent/extensions/",
     # Sidecar + supervisor + generative client
     "/src/sidecar_supervisor.py",
     "/src/_supervisor_env.py",

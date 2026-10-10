@@ -78,6 +78,13 @@ def _fail_closed() -> bool:
     return os.getenv("S2_FAIL_CLOSED", "0") == "1"
 
 
+def request_score(payload: Dict[str, Any]) -> httpx.Response:
+    """Use the shared authenticated transport without issuing a policy verdict."""
+    endpoint = _resolve_score_endpoint()
+    with httpx.Client(timeout=_timeout_seconds()) as client:
+        return client.post(endpoint, json=payload, headers=score_headers(endpoint))
+
+
 def gate_edit(
     file_path: str,
     before_src: str,
@@ -111,9 +118,7 @@ def gate_edit(
     started_message: str
     report: Dict[str, Any] = {}
     try:
-        endpoint = _resolve_score_endpoint()
-        with httpx.Client(timeout=_timeout_seconds()) as client:
-            r = client.post(endpoint, json=body, headers=score_headers(endpoint))
+        r = request_score(body)
         if r.status_code == 415:
             started_audit_decision = "allowed"
             started_message = "unsupported_language"
@@ -189,4 +194,4 @@ def _session_id() -> str:
         return ""
 
 
-__all__ = ["gate_edit", "SCORE_ENDPOINT"]
+__all__ = ["gate_edit", "request_score", "SCORE_ENDPOINT"]
