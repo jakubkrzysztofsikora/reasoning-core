@@ -115,12 +115,15 @@ def _message(extract: list[dict[str, Any]], notes: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def stop_decision(repo_root: str, ledger_file: Path, *, max_blocks: int = MAX_BLOCKS) -> StopDecision:
+def stop_decision(
+    repo_root: str, ledger_file: Path, *, max_blocks: int = MAX_BLOCKS, count_blocks: bool = True
+) -> StopDecision:
     """Re-check the ledger and decide whether to block the stop.
 
     Resolved findings are marked in the ledger. Each block of an EXTRACT
     finding is counted on its row; past ``max_blocks`` it is escalated (the
-    stop is let through) instead of blocking forever.
+    stop is let through) instead of blocking forever. ``count_blocks=False``
+    (advise mode: nothing is actually blocked) leaves the counts untouched.
     """
     rows = [r for r in ledger.load(ledger_file).values() if r["status"] in _LIVE]
     decision = StopDecision(block=False)
@@ -142,7 +145,8 @@ def stop_decision(repo_root: str, ledger_file: Path, *, max_blocks: int = MAX_BL
             if now.get("blocks", 0) >= max_blocks:
                 decision.escalated.append(now["id"])
             else:
-                now = dict(now, blocks=now.get("blocks", 0) + 1)
+                if count_blocks:
+                    now = dict(now, blocks=now.get("blocks", 0) + 1)
                 decision.extract.append(now)
         else:
             decision.notes.append(now)
