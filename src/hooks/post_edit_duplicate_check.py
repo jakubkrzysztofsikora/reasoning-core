@@ -36,10 +36,10 @@ try:  # a hook must never crash at import, even when it's disabled
     from src.duplicate_detection.check import check_edit
     from src.duplicate_detection.repo_index import DupOracleIndex, load_or_build_dup_index
     from src.grammars import UnsupportedLanguageError
-except Exception as exc:  # noqa: BLE001 - hook must never crash
+except Exception as import_error:  # noqa: BLE001 - hook must never crash
     # Capture WHY so that, when the feature is enabled but a dependency is
     # missing, main() says so instead of silently checking nothing.
-    _IMPORT_ERROR = repr(exc)
+    _IMPORT_ERROR = repr(import_error)
     ledger = check_edit = load_or_build_dup_index = None  # type: ignore
     DupOracleIndex = UnsupportedLanguageError = None  # type: ignore
 
@@ -49,7 +49,9 @@ _INDEX_CACHE: Dict[str, Any] = {}
 def _read_payload() -> Dict[str, Any]:
     try:
         return json.loads(sys.stdin.read() or "{}")
-    except Exception:
+    except (OSError, ValueError) as err:
+        # Unreadable or non-JSON stdin: nothing to check, but say so.
+        _warn_stderr(f"could not read the hook payload ({err!r})")
         return {}
 
 
@@ -80,7 +82,7 @@ def _warn_stderr(msg: str) -> None:
     """Best-effort one-liner to stderr; never raises (fail-open hook)."""
     try:
         print(f"dup-oracle: {msg}", file=sys.stderr)
-    except Exception:  # noqa: BLE001
+    except (OSError, ValueError):  # silent-ok: stderr itself is unavailable; nowhere left to report
         pass
 
 
@@ -108,7 +110,7 @@ def main() -> None:
         sys.exit(0)  # feature off -> silent, do nothing
     started = time.monotonic()
     payload: Dict[str, Any] = {}
-    if check_edit is None:
+    if check_edit is None or ledger is None or load_or_build_dup_index is None:
         msg = f"enabled (RC_DUP_ORACLE=1) but inactive — import failed: {_IMPORT_ERROR}"
         _warn_stderr(msg)
         _audit(payload, "fail-open", started, error=msg)
