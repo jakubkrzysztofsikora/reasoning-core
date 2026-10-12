@@ -49,9 +49,9 @@ def _function(repo_root: str, rel: str, name: str) -> Optional[tuple[int, list[s
         return None
     except OSError as exc:
         raise _Unverifiable(f"{rel}: {exc}") from exc
-    for fname, line, fsrc in extract_functions(path, src):
-        if fname == name:
-            return line, logic_tokens(path, fsrc)
+    for func_name, line, func_source in extract_functions(path, src):
+        if func_name == name:
+            return line, logic_tokens(path, func_source)
     return None
 
 

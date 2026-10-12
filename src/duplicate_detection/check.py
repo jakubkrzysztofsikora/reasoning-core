@@ -61,16 +61,18 @@ def load_test_texts(repo_root: str) -> dict[str, str]:
     hidden directories. An unreadable test file is reported on stderr and
     skipped: one bad file must not hide coverage for the rest."""
     texts: dict[str, str] = {}
-    for dirpath, dirnames, filenames in os.walk(repo_root):
-        dirnames[:] = sorted(
-            d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")
+    for directory, subdirs, files in os.walk(repo_root):
+        # Pruning subdirs in place stops os.walk descending into them.
+        subdirs[:] = sorted(
+            d for d in subdirs if d not in _SKIP_DIRS and not d.startswith(".")
         )
-        for fn in sorted(filenames):
-            rel = os.path.relpath(os.path.join(dirpath, fn), repo_root).replace(os.sep, "/")
+        for file_name in sorted(files):
+            full_path = os.path.join(directory, file_name)
+            rel = os.path.relpath(full_path, repo_root).replace(os.sep, "/")
             if not is_test_file(rel):
                 continue
             try:
-                with open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace") as fh:
+                with open(full_path, encoding="utf-8", errors="replace") as fh:
                     texts[rel] = fh.read()
             except OSError as exc:
                 print(f"dup-oracle: cannot read test file {rel}: {exc}", file=sys.stderr)
@@ -155,12 +157,12 @@ def check_edit(
         (r.name, r.lineno): i for i, r in enumerate(index.records) if r.path == rel
     }
     blocks = []
-    for name, line, fsrc in extract_functions(file_path, source):
-        tokens = logic_tokens(file_path, fsrc)
+    for name, line, func_source in extract_functions(file_path, source):
+        tokens = logic_tokens(file_path, func_source)
         if not tokens:
             continue
         row = indexed.get((name, line))
-        vec = index.embeddings[row] if row is not None else embed_fn(fsrc)
+        vec = index.embeddings[row] if row is not None else embed_fn(func_source)
         hits = find_near_duplicates(
             vec, tokens, index.records, index.embeddings, index.token_df,
             recall=recall, confirm=confirm,
