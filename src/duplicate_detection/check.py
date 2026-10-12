@@ -9,7 +9,12 @@ import os
 import re
 import sys
 
-from .oracle import DupHit
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from . import findings as ledger
+from .index import extract_functions, logic_tokens
+from .oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, DupHit, find_near_duplicates
 
 EXTRACT = "extract"
 NOTE = "note"
@@ -88,3 +93,91 @@ def verdict(*, sites: int, n_tokens: int, covered: bool) -> str:
     if sites >= EXTRACT_MIN_SITES and n_tokens >= MIN_LOGIC_TOKENS and covered:
         return EXTRACT
     return NOTE
+
+
+def _match(h: DupHit) -> dict[str, Any]:
+    return {"path": h.path, "name": h.name, "lineno": h.lineno, "logic": round(h.logic_ratio, 3)}
+
+
+def _format_inline(name: str, rel: str, finding: dict[str, Any]) -> str:
+    lines = [f"  `{name}` ({rel}) duplicates:"]
+    for m in finding["matches"]:
+        lines.append(f"    - {m['name']}  {m['path']}:{m['lineno']}  (logic {m['logic']:.2f})")
+    cover = "test-covered" if finding["test_covered"] else "not test-covered"
+    lines.append(f"  {finding['sites']} sites, {cover} (a test names the function or its file).")
+    if finding["verdict"] == EXTRACT:
+        lines.append(
+            f"  RULE: >= {EXTRACT_MIN_SITES} sites + non-trivial + test-covered -> EXTRACT "
+            "a shared function now. The session will not end while this is open."
+        )
+    else:
+        lines.append("  Reuse one copy while you are in this file; recorded for the session-end review.")
+    return "\n".join(lines)
+
+
+def check_edit(
+    file_path: str,
+    source: str,
+    index: Any,
+    *,
+    embed_fn: Callable[[str], Any],
+    repo_root: str,
+    changed: set[str] | None,
+    ledger_file: Path,
+    test_texts: Optional[dict[str, str]] = None,
+    recall: float = RECALL_DEFAULT,
+    confirm: float = CONFIRM_DEFAULT,
+    top_k: int = 3,
+) -> Optional[str]:
+    """Check every function in the edited file, record each duplicate in the
+    ledger, and return the inline message (or ``None``).
+
+    Routing: a match in another file of the working diff is a likely move
+    (recorded, silent); matches only in untouched files are a tracked follow-up
+    (recorded, silent, shown at Stop); a match in the edited file itself is
+    shown inline, once per finding. Ledger write failures raise ``LedgerError``.
+    """
+    if not source or index is None or len(index) == 0:
+        return None
+    rel = os.path.relpath(file_path, repo_root).replace(os.sep, "/")
+    other_changed = None if changed is None else changed - {rel}
+    seen = set(ledger.load(ledger_file))
+    blocks = []
+    for name, _line, fsrc in extract_functions(file_path, source):
+        tokens = logic_tokens(file_path, fsrc)
+        if not tokens:
+            continue
+        hits = find_near_duplicates(
+            embed_fn(fsrc), tokens, index.records, index.embeddings, index.token_df,
+            recall=recall, confirm=confirm,
+            skip=lambda i, rec, nm=name: rec.path == rel and rec.name == nm,
+        )
+        if not hits:
+            continue
+        real, moves = split_moves(hits, other_changed)
+        if real:
+            if test_texts is None:
+                test_texts = load_test_texts(repo_root)
+            covered = all(site_is_covered(p, n, test_texts) for p, n in
+                          [(rel, name)] + [(h.path, h.name) for h in real])
+            finding = ledger.make_finding(
+                added_path=rel, added_name=name, matches=[_match(h) for h in real],
+                verdict=verdict(sites=1 + len(real), n_tokens=len(tokens), covered=covered),
+                in_diff=any(h.path == rel for h in real), likely_move=False,
+                test_covered=covered,
+            )
+        else:
+            finding = ledger.make_finding(
+                added_path=rel, added_name=name, matches=[_match(h) for h in moves],
+                verdict=NOTE, in_diff=False, likely_move=True, test_covered=False,
+            )
+        ledger.record(ledger_file, finding)
+        if finding["in_diff"] and finding["id"] not in seen:
+            finding["matches"] = finding["matches"][:top_k]
+            blocks.append(_format_inline(name, rel, finding))
+    if not blocks:
+        return None
+    return (
+        "[reasoning-core] DUPLICATE CHECK -- code in the file you just edited is duplicated:\n\n"
+        + "\n\n".join(blocks)
+    )

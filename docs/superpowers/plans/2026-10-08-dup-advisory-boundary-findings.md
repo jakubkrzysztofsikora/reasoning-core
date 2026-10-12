@@ -95,8 +95,10 @@ The per-edit duplicate check fired PreToolUse, mid-increment, and ended with
   + Escape = 23, trivial helpers 4–8; coverage = a test names the function or
   the site file's stem): `onDocClick` → EXTRACT "3 sites,
   test-covered"; `setUrl` / `renderApp` → note-only; no "otherwise proceed". → B4
-- [ ] **5. Routing + ledger write**: engine `check_edit()` returns inline text +
-  findings; in-diff → inline, outside → ledger only. Operator switches the hook
+- [x] **5. Routing + ledger write**: engine `check_edit()` returns inline text +
+  findings; in-diff (same file) → inline once, other changed file → likely move,
+  untouched files → ledger only.
+- [ ] **5b. Hook switch** (operator): Operator switches the hook
   to PostToolUse and to call `check_edit()`. → B1, B5
 - [ ] **6a. Baseline** capture + README row.
 - [ ] **6b. `rc dup-defer`** (rc_cli.py is guarded → operator applies). → B3
