@@ -42,22 +42,24 @@ _IMPORT_ERROR: Optional[str] = None
 try:  # a hook must never crash at import
     from src.duplicate_detection import findings as ledger
     from src.duplicate_detection.review import stop_decision
-except Exception as exc:  # noqa: BLE001 - hook must never crash
-    _IMPORT_ERROR = repr(exc)
+except Exception as import_error:  # noqa: BLE001 - hook must never crash
+    _IMPORT_ERROR = repr(import_error)
     ledger = stop_decision = None  # type: ignore
 
 
 def _read_payload() -> Dict[str, Any]:
     try:
         return json.loads(sys.stdin.read() or "{}")
-    except Exception:
+    except (OSError, ValueError) as err:
+        # Unreadable or non-JSON stdin: fall back to the current directory, but say so.
+        _warn_stderr(f"could not read the hook payload ({err!r}); using the current directory")
         return {}
 
 
 def _warn_stderr(msg: str) -> None:
     try:
         print(f"dup-oracle: {msg}", file=sys.stderr)
-    except Exception:  # noqa: BLE001
+    except (OSError, ValueError):  # silent-ok: stderr itself is unavailable; nowhere left to report
         pass
 
 
@@ -84,7 +86,7 @@ def main() -> None:
         sys.exit(0)
     started = time.monotonic()
     payload: Dict[str, Any] = {}
-    if stop_decision is None:
+    if stop_decision is None or ledger is None:
         msg = f"enabled (RC_DUP_ORACLE=1) but inactive — import failed: {_IMPORT_ERROR}"
         _warn_stderr(msg)
         _audit(payload, "fail-open", started, error=msg)
