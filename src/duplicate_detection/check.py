@@ -15,7 +15,7 @@ from typing import Any, Callable
 from . import findings as ledger
 from .index import extract_functions, logic_tokens
 from ..grammars import UnsupportedLanguageError
-from .repo_index import _DUP_SRC_EXTS
+from .repo_index import _DUP_SOURCE_EXTENSIONS
 from .oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, DupHit, find_near_duplicates
 
 EXTRACT = "extract"
@@ -154,7 +154,7 @@ def check_edit(
     shown inline, once per finding. Ledger write failures raise ``LedgerError``.
     """
     ext = os.path.splitext(file_path)[1].lower()
-    if ext not in _DUP_SRC_EXTS:
+    if ext not in _DUP_SOURCE_EXTENSIONS:
         # Parseable is not enough: only these languages are indexed, so any
         # other file would wrongly read as "checked, no duplicates".
         raise UnsupportedLanguageError(ext)

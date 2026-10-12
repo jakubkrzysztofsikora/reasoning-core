@@ -47,12 +47,12 @@ def _collect(core: Path) -> list[dict]:
     for f in files:
         src = Path(f).read_text(encoding="utf-8", errors="replace")
         rel = os.path.relpath(f, core)
-        for name, line, fsrc in extract_functions(f, src):
-            key = fsrc.strip()
+        for name, line, func_source in extract_functions(f, src):
+            key = func_source.strip()
             if key in seen:
                 continue
             seen.add(key)
-            records.append({"path": rel, "name": name, "line": line, "source": fsrc})
+            records.append({"path": rel, "name": name, "line": line, "source": func_source})
     return records
 
 

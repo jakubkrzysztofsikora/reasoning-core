@@ -32,16 +32,16 @@ from .index import build_token_df, extract_functions, logic_tokens
 from .oracle import FunctionRecord
 
 # The oracle dedups *functions*, so index only languages the extractor AND the
-# normalizer fully handle -- currently Python / JavaScript / TypeScript. Being
+# normaliser fully handle -- currently Python / JavaScript / TypeScript. Being
 # grammar-parseable is NOT sufficient: the real gates are index._FUNC_TYPES
 # (which function nodes are extracted) and normalize()'s bound-name handling
 # (which params/locals are canonicalized so renamed duplicates collapse). C# and
 # SQL parse but are deliberately OUT OF SCOPE -- enabling them needs their
 # function node types in _FUNC_TYPES and their param containers in the
-# normalizer, not just a wider walk. Explicit allowlist by design; yields
+# normaliser, not just a wider walk. Explicit allowlist by design; yields
 # {.py, .js, .mjs, .cjs, .ts, .tsx}.
 _CODE_LANGUAGES = frozenset({"python", "javascript", "typescript", "tsx"})
-_DUP_SRC_EXTS = frozenset(
+_DUP_SOURCE_EXTENSIONS = frozenset(
     ext for ext, lang in EXTENSION_MAP.items() if lang in _CODE_LANGUAGES
 )
 
@@ -118,9 +118,9 @@ def _index_file(
         return [], []
     records: list[FunctionRecord] = []
     vecs: list["np.ndarray"] = []
-    for name, line, fsrc in funcs:
-        records.append(FunctionRecord(rel, name, line, logic_tokens(rel, fsrc)))
-        vecs.append(embed_fn(fsrc))
+    for name, line, func_source in funcs:
+        records.append(FunctionRecord(rel, name, line, logic_tokens(rel, func_source)))
+        vecs.append(embed_fn(func_source))
     return records, vecs
 
 
@@ -155,11 +155,11 @@ def build_dup_index(
 
     records: list[FunctionRecord] = []
     vecs: list["np.ndarray"] = []
-    for rel in _iter_repo_files(repo_root, _DUP_SRC_EXTS):
+    for rel in _iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS):
         if len(records) >= max_funcs:
             break
-        frecords, fvecs = _index_file(repo_root, rel, embed_fn)
-        for rec, vec in zip(frecords, fvecs):
+        file_records, file_vectors = _index_file(repo_root, rel, embed_fn)
+        for rec, vec in zip(file_records, file_vectors):
             records.append(rec)
             vecs.append(vec)
             if len(records) >= max_funcs:
@@ -385,10 +385,11 @@ def load_or_build_dup_index(
             "dup-oracle: cache discarded (corrupt or incompatible) — rebuilding index",
             file=sys.stderr,
         )
-    old_manifest, old_vectors = loaded if loaded else (None, None)
-    old_files: dict = old_manifest["files"] if old_manifest else {}
+    # No usable cache = no entries to reuse, so the vectors are never read.
+    old_files: dict[str, dict] = loaded[0]["files"] if loaded else {}
+    old_vectors = loaded[1] if loaded else np.empty((0, 0), dtype=np.float32)
 
-    files_on_disk = _iter_repo_files(repo_root, _DUP_SRC_EXTS)  # sorted, stable
+    files_on_disk = _iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS)  # sorted, stable
     disk_set = set(files_on_disk)
 
     walked: list[str] = []  # files processed this run, in sorted order
@@ -407,9 +408,9 @@ def load_or_build_dup_index(
         read = _read_source(repo_root, rel)
         if read is None:
             continue  # unreadable -- skip, don't cache
-        fhash, src_text = read
+        file_hash, src_text = read
         entry = old_files.get(rel)
-        if entry is not None and entry.get("hash") == fhash and old_vectors is not None:
+        if entry is not None and entry.get("hash") == file_hash:
             recs, vecs = _reuse_entry(rel, entry, old_vectors)
         else:
             # Changed/new file: re-embed from the text we just read. May raise a
@@ -419,7 +420,7 @@ def load_or_build_dup_index(
         walked.append(rel)
         walked_records[rel] = recs
         walked_vecs[rel] = vecs
-        walked_hash[rel] = fhash
+        walked_hash[rel] = file_hash
         embedded_funcs += len(recs)
 
     partial = stopped_early or embedded_funcs > max_funcs
@@ -435,7 +436,7 @@ def load_or_build_dup_index(
     # that is merely outside the cap this run). Prune only disk-deleted files.
     carried = [
         rel for rel in old_files
-        if rel not in walked_records and rel in disk_set and old_vectors is not None
+        if rel not in walked_records and rel in disk_set
     ]
     out_files: dict = {}
     out_vecs: list["np.ndarray"] = []

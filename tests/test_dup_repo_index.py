@@ -96,7 +96,7 @@ def test_index_covers_mjs_and_cjs(tmp_path):
 
 
 def test_index_ignores_out_of_scope_languages(tmp_path):
-    # C# parses but is deliberately out of scope (the extractor/normalizer don't
+    # C# parses but is deliberately out of scope (the extractor/normaliser don't
     # handle it), so .cs files are not walked and never indexed, while in-scope
     # .mjs is. Locks the narrowed scope so a future re-add is a deliberate act.
     (tmp_path / "a.mjs").write_text(
