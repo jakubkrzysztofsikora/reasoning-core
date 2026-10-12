@@ -117,6 +117,20 @@ def test_missing_file_is_logged_as_skipped(env, monkeypatch, capsys):
     assert event["decision"] == "skipped"
 
 
+def test_unsupported_language_is_logged_as_skipped(env, monkeypatch, capsys):
+    repo, audit = env
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    (repo / "notes.md").write_text("# notes\nfunction-looking text\n")
+    index = build_dup_index(str(repo), embed_fn=_stub_embed)
+    monkeypatch.setattr(hook, "_get_index", lambda root: index)
+    assert _run(monkeypatch, _payload(repo, "notes.md")) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and "fail-open" not in captured.err
+    [event] = _events(audit)
+    assert event["decision"] == "skipped"
+    assert event["reason"] == "unsupported language"
+
+
 def test_garbage_payload_is_logged_as_skipped(env, monkeypatch, capsys):
     _, audit = env
     assert _run(monkeypatch, "not json at all") == 0

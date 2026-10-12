@@ -116,6 +116,19 @@ def test_three_covered_nontrivial_sites_are_recorded_as_extract(tmp_path):
     assert row["verdict"] == EXTRACT
 
 
+def test_file_outside_the_indexed_languages_is_unsupported(tmp_path):
+    # Parseable but not indexed (e.g. Markdown): must not pass as "checked, clean".
+    import pytest
+
+    from src.grammars import UnsupportedLanguageError
+
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    (repo / "notes.md").write_text("# notes\n")
+    with pytest.raises(UnsupportedLanguageError):
+        _check(repo, "notes.md", {"notes.md"}, tmp_path)
+
+
 def test_novel_function_records_nothing(tmp_path):
     repo = _repo(tmp_path)
     (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
