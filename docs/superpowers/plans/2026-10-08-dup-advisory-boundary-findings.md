@@ -67,6 +67,20 @@ The per-edit duplicate check fired PreToolUse, mid-increment, and ended with
    (difflib confirm, counts, test reference) → allowed by AGENTS.md.
    `stop_hook_active` and `RC_MODE=advise` always approve.
 
+## Decisions (confirmed with the operator 2026-10-12; flagged in the PR)
+
+1. **Block mode:** the Stop block applies whenever `RC_DUP_ORACLE=1`, not only
+   in `RC_MODE=copilot` (unlike `stop_reconcile.py`; `RC_MODE` defaults to
+   `advise`, which would bring the skip problem back). An explicit
+   `RC_MODE=advise` disables blocking.
+2. **Persistence:** keep blocking an open EXTRACT finding even when
+   `stop_hook_active` is set, capped at 3 blocks per finding; then approve and
+   write an `escalated` audit event. `rc dup-defer` is always an exit.
+3. **Notes / follow-ups:** never force a turn; they ride along in an EXTRACT
+   block, otherwise ledger + audit log only.
+4. **Re-validation** at Stop is deterministic (tree-sitter + logic ratio, no
+   model): finding resolved when the added copy or all matched copies are gone.
+
 ## Safe-by-default
 
 - Feature stays opt-in (`RC_DUP_ORACLE=1`). Per-edit hook never blocks. The Stop
