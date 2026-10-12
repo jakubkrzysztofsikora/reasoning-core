@@ -26,6 +26,8 @@ node_modules/
 
 # direnv local overrides — secrets + personal toggles, never committed.
 .envrc.local
+# Dependencies are managed with pip + requirements.txt; `uv run` creates this.
+uv.lock
 # direnv state cache, per-machine.
 .direnv/
 
