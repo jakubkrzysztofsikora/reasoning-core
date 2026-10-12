@@ -113,14 +113,14 @@ All engine code lives in the `src/duplicate_detection/` package:
 - `findings.py` — per-repo findings ledger, so findings outlive the edit.
 The hook lives with the other hooks:
 
-- `src/hooks/pre_edit_duplicate_check.py` — the PreToolUse advisory.
+- `src/hooks/post_edit_duplicate_check.py` — the per-edit advisory.
 
 ## Enabling
 
 Off by default. To turn it on, set `RC_DUP_ORACLE=1` and wire the hook as a
 `PreToolUse` matcher for `Edit|Write|MultiEdit` in `.claude/settings.json`:
 
-    python3 src/hooks/pre_edit_duplicate_check.py
+    python3 src/hooks/post_edit_duplicate_check.py
 
 It reads the tool payload on stdin and, when a duplicate is found, prints a
 `hookSpecificOutput.additionalContext` blurb (exit 0, never blocks).

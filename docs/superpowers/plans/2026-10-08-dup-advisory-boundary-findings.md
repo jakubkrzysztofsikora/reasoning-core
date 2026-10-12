@@ -6,134 +6,105 @@
 
 ## Problem
 
-`src/hooks/pre_edit_dup_advisory.py` fires PreToolUse, mid-increment, and ends with
+The per-edit duplicate check fired PreToolUse, mid-increment, and ended with
 "advisory only -- reuse or extend if it fits, otherwise proceed." Two failure modes:
 
 1. **Skipped under momentum.** Genuine multi-site duplications (e.g. the same
    click-outside handler in 3 components) are waved through and never come back;
    the hook is stateless, so a skipped finding evaporates.
 2. **False alarms on moves.** When a function is moved from file A to new file B,
-   the Write to B sees A's copy (not yet deleted) and reports `logic 1.00`. The end
+   the write to B sees A's copy (not yet deleted) and reports `logic 1.00`. The end
    state has one copy. False alarms train the agent to discount the tool.
 
 ## Context (current code)
 
-- Hook: `pre_edit_dup_advisory.py` — `advise()` (pure core, `:90-137`), `main()`
-  (`:181-207`), opt-in `RC_DUP_ORACLE=1`, fail-open, never blocks. Not wired in
-  `.claude/settings.json` / `install.sh`; documented in `docs/dup-oracle.md`.
-- Matching: `src/dup_oracle.py` (cos ≥ 0.80 shortlist → logic-token ratio ≥ 0.97
-  confirm → rank by distinctive shared tokens). `TOP_K = 3`.
-- No findings persistence; no knowledge of the current diff.
-- Stop-hook precedent: `src/hooks/stop_reconcile.py` (diffs the working tree,
-  honours `stop_hook_active`).
-- Tests: `tests/test_pre_edit_dup_advisory.py` (stub embedder, `tmp_path` `.ts`
-  repos, `advise()` direct + `main()` via monkeypatched stdin).
+- Engine package `src/duplicate_detection/`: `index.py` (normaliser, logic
+  tokens, ranking), `oracle.py` (cos ≥ 0.80 shortlist → logic ratio ≥ 0.97 confirm
+  → distinctiveness rank, `TOP_K = 3`), `repo_index.py` (disk-cached index),
+  `embed.py`, `findings.py` (per-repo ledger + `changed_files()`, done).
+  Not guarded — advisory engine, bound by tests.
+- Hook `src/hooks/post_edit_duplicate_check.py` (renamed from the pre-edit
+  version; still PreToolUse code until switched in Increment 5). Guarded:
+  hook edits are applied by the operator.
+- Separate deterministic hard block: `pre_edit_guard` →
+  `project_index.find_duplicate_definitions` (Python, same name or identical
+  body). May hard-block a Python function move; verified as a regression case.
+- Stop-hook precedent: `src/hooks/stop_reconcile.py` (`stop_hook_active`).
 
-## Behaviours (Given / When / Then — from the ticket)
+## Behaviours (Given / When / Then)
 
-- **B1 Boundary surfacing.** Given a non-trivial duplication spanning several
-  sites, when the check runs, then it is surfaced as an actionable item at a
-  natural boundary (Stop), not only inline at write time.
-- **B2 Relocation suppressed.** Given a function being moved from a file in the
-  working diff into another file, when the check runs, then no duplicate is
-  reported (inline it is downweighted to a one-line "likely move" note; at the
-  boundary it is dropped if the source copy is gone).
-- **B3 Resurface.** Given a finding that was not acted on, when the session
-  reaches the Stop boundary, then it resurfaces instead of evaporating.
-- **B4 Decision signal.** Given a surfaced finding, it states the number of sites
-  and whether the sites are test-covered.
-- **B5 Routing.** Given a finding whose matches all sit outside the current diff,
-  it is routed as a tracked follow-up, not an inline "refactor these unrelated
-  files" nudge.
+- **B1 Boundary surfacing.** A non-trivial duplication spanning several sites is
+  surfaced as an actionable item at Stop, not only inline at write time.
+- **B2 Relocation suppressed.** A function moved from a file in the working diff
+  into another file produces no finding (inline: silent, recorded as likely move;
+  at Stop: dropped once the source copy is gone).
+- **B3 Resurface.** A finding not acted on resurfaces at Stop.
+- **B4 Decision signal.** A surfaced finding states site count and whether the
+  sites are test-covered.
+- **B5 Routing.** In-diff overlap → inline nudge after the edit. Matches all
+  outside the diff → recorded as a tracked follow-up, no inline nudge.
 
-## Design (proposed — reshape at the checkpoint)
+## Design
 
-1. **Findings ledger** — new `src/hooks/_dup_findings.py`. Per-repo, per-session
-   JSONL under the existing cache root
-   (`~/.cache/reasoning-core/dup-findings/<repo-hash>/<session_id>.jsonl`, or
-   `$RC_CACHE_DIR`). Each row: added fn (path, name), match sites (path, line,
-   name, logic), `likely_move`, `in_diff`, `status` (open / surfaced / resolved).
-   Outside the repo tree, so nothing lands in Jakub's git status.
-2. **Diff awareness** — `changed_files(repo_root)` via `git status --porcelain`
-   (read-only, allowed by `pre_bash_guard`; runs inside the hook process, not the
-   agent's Bash). Fails open to "unknown" with a stderr note — never silent.
-3. **Move filter** — a hit is `likely_move` when its source file is modified in
-   the working tree (or is the file being edited) and logic ratio ≥ confirm.
-   Inline output collapses it to one line; the boundary re-checks whether the
-   source function still exists and drops the finding if it is gone.
-4. **Sites + coverage** — sites = 1 (added) + confirmed matches (raise per-fn
-   `TOP_K` cap for counting only, display still capped). Test-covered = a test
-   file (`tests?/`, `*.test.*`, `*_test.*`, `test_*`) references the function
-   name — a cheap, stated heuristic, labelled as such in the output.
-5. **Rule framing** — replace "advisory only… proceed" with a mechanical rule:
-   `sites ≥ 3 AND non-trivial (≥ N logic tokens) AND test-covered → EXTRACT`;
-   otherwise "note only". In-diff overlap → inline "extract now"; all-outside-diff
-   → "tracked follow-up" (recorded in ledger, surfaced at Stop).
-6. **Stop hook** — new `src/hooks/stop_dup_findings.py`: reads the session
-   ledger, re-validates (both copies still present? still a match?), emits one
-   compact batch: EXTRACT items first, follow-ups, note-only count.
-   - **EXTRACT-rule findings block the stop** until each is either extracted
-     (re-validation no longer finds the duplicate) or deferred with a reason
-     via `rc dup-defer <finding-id> --reason "..."` (ledger row → `deferred`).
-     A warning is what the agent already ignores; the block is the point.
-   - Allowed by AGENTS.md: the cosine shortlist is neural, but every finding is
-     confirmed by the deterministic logic-token ratio (difflib, ≥ 0.97), and the
-     EXTRACT rule's inputs (site count, size, test reference) are deterministic.
-   - Note-only findings never block. `stop_hook_active` → approve (no loop);
-     open rows resurface at the next Stop. `RC_MODE=advise` → never blocks.
-   - Rows are marked `surfaced` so note-only items show once per boundary.
+1. **Ledger** (`findings.py`, done): per-repo JSONL under the cache root, outside
+   the repo tree; statuses open / surfaced / deferred / resolved.
+2. **Diff awareness** (`changed_files()`, done): `git status --porcelain`; unknown
+   → `None` + stderr note.
+3. **Move filter** (`duplicate_detection`): a match is `likely_move` when its file
+   is in the working diff and logic ratio ≥ confirm. Not shown inline; Stop
+   re-checks the source and drops the finding when it is gone.
+4. **Sites + coverage**: sites = 1 + confirmed matches (uncapped for counting).
+   Test-covered = a test file references the function name (stated heuristic).
+5. **Rule**: `sites ≥ 3 AND non-trivial (≥ N logic tokens) AND test-covered →
+   EXTRACT`, else note-only. Replaces "advisory… proceed".
+6. **Per-edit hook (PostToolUse)**: thin wrapper. Reads the edited file as it now
+   is, calls the engine, records every finding in the ledger, emits inline only
+   for in-diff, non-move findings. Never blocks.
+7. **Stop hook** `src/hooks/stop_duplicate_check.py` (new, guarded once created):
+   re-validates open rows, emits one batch (EXTRACT first, follow-ups, note-only
+   count). **EXTRACT rows block** until extracted (re-validation finds no dup) or
+   deferred via `rc dup-defer <id> --reason "..."`. Deterministic inputs only
+   (difflib confirm, counts, test reference) → allowed by AGENTS.md.
+   `stop_hook_active` and `RC_MODE=advise` always approve.
 
 ## Safe-by-default
 
-- Whole feature stays **opt-in** (`RC_DUP_ORACLE=1`). The PreToolUse hook still
-  never blocks. The Stop block is a new enforcement default for opted-in repos,
-  so per AGENTS.md an immutable prechange baseline
-  (`baseline-2026-10-08-dup-advisory-prechange`) is captured before it lands.
-  No threshold (0.80 / 0.97) changes. Blocks only on the deterministic EXTRACT
-  rule; `RC_MODE=advise` and `stop_hook_active` always approve.
-- Every degrade (git unavailable, ledger write fails) is observable: stderr
-  note + a status field, never a bare swallow.
+- Feature stays opt-in (`RC_DUP_ORACLE=1`). Per-edit hook never blocks. The Stop
+  block is a new enforcement default for opted-in repos → immutable prechange
+  baseline `baseline-2026-10-08-dup-advisory-prechange` captured first. No
+  threshold (0.80 / 0.97) changes.
+- Every degrade (git unknown, ledger write fails) is observable: stderr + status.
 
-## Reality recon
+## Regression cases (from the real session)
 
-- Known-codebase work; the external boundary is the Claude Code hook protocol
-  (Stop payload + `additionalContext`), already used by `stop_reconcile.py`.
-  Before Increment 6, capture one real Stop payload from a session to confirm
-  the fields read (`session_id`, `cwd`, `stop_hook_active`).
+- **Moves → no finding:** `initialsOf` (Avatar → new `initials.ts`),
+  `clearConnectParam` (ConnectStrava → `useConnect.ts`).
+- **Real dup → EXTRACT, tracked follow-up:** `onDocClick` in 3 menus, matches
+  outside the diff, test-covered.
+- **Trivial → note-only, never blocks:** `setUrl` (3-line helper), `renderApp`.
+- **Python move vs structural hard block:** confirm whether `pre_edit_guard`
+  blocks a Python function move; document the result.
 
 ## Increments (test-first; each a commit)
 
-- [ ] **1. Ledger** (`_dup_findings.py`): append / read / mark-surfaced round-trip
-  in `tmp_path`; write failure is reported, not swallowed. → B3
-- [ ] **2. Diff awareness**: `changed_files()` on a `tmp_path` git repo (clean,
-  modified, untracked); non-git dir → explicit "unknown". → B2, B5
-- [ ] **3. Move filter in `advise()`**: regression case A (`initialsOf` moved
-  out of a modified `Avatar.ts` into new `initials.ts`) → no full finding, at
-  most a "likely move" line. Unmodified-source genuine dup still reported. → B2
-- [ ] **4. Sites + coverage + rule framing**: regression `onDocClick` (3 sites,
-  non-trivial, a test references it) → `EXTRACT` with "3 sites, test-covered";
-  `setUrl`/`renderApp` (trivial) → note-only; old "otherwise proceed" text
-  gone. → B4
-- [ ] **5. Routing + ledger write from `main()`**: all-outside-diff →
-  "tracked follow-up" wording + ledger row; in-diff → inline extract. → B1, B5
-- [ ] **6a. Baseline**: capture `baseline-2026-10-08-dup-advisory-prechange`,
-  commit manifest + README row.
-- [ ] **6b. `rc dup-defer`**: marks a ledger row deferred with a required
-  non-empty reason; unknown id → error. → B3, B5
-- [ ] **6c. Stop hook**: open EXTRACT row → block with batched message; deferred
-  or extracted (dup gone) → approve; move source deleted → dropped; note-only →
-  shown, never blocks; `stop_hook_active` / `RC_MODE=advise` / empty ledger →
-  approve. → B1, B2, B3
-- [ ] **7. Docs**: `docs/dup-oracle.md` — wiring for the Stop hook, the rule,
-  the move heuristic and its limits.
+- [x] **1. Ledger** (`findings.py`). → B3
+- [x] **2. Diff awareness** (`changed_files()`). → B2, B5
+- [ ] **3. Move filter** in the engine: `initialsOf` / `clearConnectParam` →
+  `likely_move`; unmodified-source dup → real. → B2
+- [ ] **4. Sites + coverage + rule**: `onDocClick` → EXTRACT "3 sites,
+  test-covered"; `setUrl` / `renderApp` → note-only; no "otherwise proceed". → B4
+- [ ] **5. Routing + ledger write**: engine `check_edit()` returns inline text +
+  findings; in-diff → inline, outside → ledger only. Operator switches the hook
+  to PostToolUse and to call `check_edit()`. → B1, B5
+- [ ] **6a. Baseline** capture + README row.
+- [ ] **6b. `rc dup-defer`** (rc_cli.py is guarded → operator applies). → B3
+- [ ] **6c. Stop hook** `stop_duplicate_check.py`. → B1, B2, B3
+- [ ] **7. Docs**: `docs/dup-oracle.md` — PostToolUse + Stop wiring, rule, move
+  heuristic and limits, structural-block finding.
 
 ## Out of scope / risks
 
-- Not wiring the hooks into `.claude/settings.json` / `install.sh` by default
-  (opt-in stays; `settings.json` is a guarded file anyway).
-- No ship-time (`/ship`) integration — that's personal tooling, not this repo.
-- Test-coverage signal is a name-reference heuristic, not real coverage;
-  labelled as such.
-- Move detection is a heuristic: a genuine copy into a file that also happens to
-  be modified gets downweighted inline, but the Stop re-check (source still
-  present ⇒ real dup) catches it.
+- Not wiring hooks into `.claude/settings.json` / `install.sh` by default.
+- Test-coverage signal is a name-reference heuristic, labelled as such.
+- A genuine copy into a modified file is treated as a likely move inline; the
+  Stop re-check (source still present ⇒ real dup) catches it.
