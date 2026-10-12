@@ -31,11 +31,11 @@ from ..project_index import _iter_repo_files
 from .index import build_token_df, extract_functions, logic_tokens
 from .oracle import FunctionRecord
 
-# The oracle dedups *functions*, so index only languages the extractor AND the
+# The oracle deduplicates *functions*, so index only languages the extractor AND the
 # normaliser fully handle -- currently Python / JavaScript / TypeScript. Being
 # grammar-parseable is NOT sufficient: the real gates are index._FUNC_TYPES
 # (which function nodes are extracted) and normalize()'s bound-name handling
-# (which params/locals are canonicalized so renamed duplicates collapse). C# and
+# (which params/locals are canonicalised so renamed duplicates collapse). C# and
 # SQL parse but are deliberately OUT OF SCOPE -- enabling them needs their
 # function node types in _FUNC_TYPES and their param containers in the
 # normaliser, not just a wider walk. Explicit allowlist by design; yields
@@ -335,14 +335,14 @@ def _save_cache(
             try:
                 os.unlink(tmp)  # don't leave a half-written temp behind
             except OSError:
-                # silent-ok: best-effort cleanup of the temp file. The real
+                # silent-ok: best-effort clean-up of the temp file. The real
                 # failure is the write below, which we re-raise; losing a stray
                 # .npz.tmp must not mask it.
                 pass
             raise
     except OSError as exc:
         # silent-ok: persistence is best-effort -- a write failure must never
-        # block an edit. But it IS a degrade (the next edit re-embeds), so make
+        # block an edit. But it IS a degradation (the next edit re-embeds), so make
         # it observable rather than swallowing it.
         print(f"dup-oracle: cache not saved ({exc}) — will rebuild next edit", file=sys.stderr)
 
