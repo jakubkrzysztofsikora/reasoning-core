@@ -1,7 +1,7 @@
 """Findings ledger for the duplicate check: findings persist past the edit
 that raised them so the Stop hook can review them at the end of the session.
 
-One append-only JSONL file per repo, under the cache root (``$RC_CACHE_DIR`` else
+One append-only .JSONL file per repo, under the cache root (``$RC_CACHE_DIR`` else
 ``~/.cache/reasoning-core``) -- outside the repo tree, so it never shows up in
 ``git status``. Rows are whole findings; on load the latest row per ``id`` wins.
 

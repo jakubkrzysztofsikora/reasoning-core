@@ -162,7 +162,7 @@ def normalize(path: str, src: str) -> list[str]:
 
 
 def logic_tokens(path: str, src: str) -> list[str]:
-    """The meaning-bearing subset of :func:`normalize`: operators, free names,
+    """The meaning-bearing subset of :func:`normalise`: operators, free names,
     literal values. This is what a duplicate must match on -- the shared
     skeleton (keywords, bound vars, punctuation) is dropped so a single
     differing operator or callee is not diluted by boilerplate.
@@ -178,7 +178,7 @@ def logic_ratio_tokens(a_tokens: list[str], b_tokens: list[str]) -> float:
     """Similarity in [0, 1] of two already-extracted logic-token streams.
 
     The query path uses this directly on stored tokens, so the oracle never
-    re-parses index functions at query time.
+    reparses index functions at query time.
     """
     if not a_tokens and not b_tokens:
         return 1.0
