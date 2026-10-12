@@ -88,6 +88,7 @@ def test_duplicate_inside_the_edited_file_is_shown_inline_with_the_rule(tmp_path
     assert text is not None
     assert "makeSlug" in text and "toSlug" in text
     assert "2 sites" in text
+    assert "[shares " in text and "toLowerCase" in text  # the evidence, not just a score
     assert "otherwise proceed" not in text
     assert all(r["in_diff"] for r in rows.values())
 

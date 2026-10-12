@@ -100,13 +100,25 @@ def verdict(*, sites: int, n_tokens: int, covered: bool) -> str:
 
 
 def _match(h: DupHit) -> dict[str, Any]:
-    return {"path": h.path, "name": h.name, "lineno": h.lineno, "logic": round(h.logic_ratio, 3)}
+    return {
+        "path": h.path, "name": h.name, "lineno": h.lineno, "logic": round(h.logic_ratio, 3),
+        # The rare tokens both copies share, without their kind prefix ("N:"):
+        # the evidence shown next to the score.
+        "shared": [t.split(":", 1)[-1] for t in h.shared[:4]],
+    }
+
+
+def format_match(m: dict[str, Any]) -> str:
+    """One match line, shared by the per-edit and Stop messages."""
+    line = f"    - {m['name']}  {m['path']}:{m['lineno']}  (logic {m['logic']:.2f})"
+    if m.get("shared"):
+        line += f"  [shares {', '.join(m['shared'])}]"
+    return line
 
 
 def _format_inline(name: str, rel: str, finding: dict[str, Any]) -> str:
     lines = [f"  `{name}` ({rel}) duplicates:"]
-    for m in finding["matches"]:
-        lines.append(f"    - {m['name']}  {m['path']}:{m['lineno']}  (logic {m['logic']:.2f})")
+    lines += [format_match(m) for m in finding["matches"]]
     cover = "test-covered" if finding["test_covered"] else "not test-covered"
     lines.append(f"  {finding['sites']} sites, {cover} (a test names the function or its file).")
     if finding["verdict"] == EXTRACT:

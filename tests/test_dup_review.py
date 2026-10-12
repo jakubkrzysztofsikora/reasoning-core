@@ -29,10 +29,13 @@ DISMISS = (
 MENUS = ("AccountMenu", "BasemapControl", "SortMenu")
 
 
-def _finding(added, matches, *, verdict=NOTE, likely_move=False, covered=False):
+def _finding(added, matches, *, verdict=NOTE, likely_move=False, covered=False, shared=()):
     return ledger.make_finding(
         added_path=added[0], added_name=added[1],
-        matches=[{"path": p, "name": n, "lineno": 1, "logic": 1.0} for p, n in matches],
+        matches=[
+            {"path": p, "name": n, "lineno": 1, "logic": 1.0, "shared": list(shared)}
+            for p, n in matches
+        ],
         verdict=verdict, in_diff=False, likely_move=likely_move, test_covered=covered,
     )
 
@@ -44,7 +47,7 @@ def _menus(repo: Path) -> dict:
     return _finding(
         ("AccountMenu.ts", "dismissAccountMenu"),
         [(f"{m}.ts", f"dismiss{m}") for m in MENUS[1:]],
-        verdict=EXTRACT, covered=True,
+        verdict=EXTRACT, covered=True, shared=("addEventListener", "Escape"),
     )
 
 
@@ -72,6 +75,7 @@ def test_open_extract_finding_blocks_with_the_finding_and_how_to_defer(tmp_path)
     assert f["id"] in d.message
     assert "3 sites" in d.message
     assert "rc dup-defer" in d.message
+    assert "shares " in d.message and "addEventListener" in d.message
 
 
 def test_extracted_duplicate_is_resolved_and_does_not_block(tmp_path):

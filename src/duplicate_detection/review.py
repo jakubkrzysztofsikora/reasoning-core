@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from ..grammars import UnsupportedLanguageError
 from . import findings as ledger
-from .check import EXTRACT, load_test_texts, site_is_covered, verdict
+from .check import EXTRACT, format_match, load_test_texts, site_is_covered, verdict
 from .index import extract_functions, logic_ratio_tokens, logic_tokens
 from .oracle import CONFIRM_DEFAULT
 
@@ -92,8 +92,7 @@ def _format(item: dict[str, Any]) -> str:
         f"  [{item['id']}] `{item['added_name']}` ({item['added_path']}) -- "
         f"{item['sites']} sites, {cover}:"
     ]
-    for m in item["matches"]:
-        lines.append(f"    - {m['name']}  {m['path']}:{m['lineno']}  (logic {m['logic']:.2f})")
+    lines += [format_match(m) for m in item["matches"]]
     return "\n".join(lines)
 
 
