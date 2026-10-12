@@ -1,12 +1,12 @@
 """Language-agnostic function normalisation for near-duplicate detection.
 
-Reduces a function to its *logic* -- the tokens that carry meaning (operators,
-callee / property names, literal values) with local variable names canonicalised
-and language scaffolding (type annotations, the function's own name) stripped --
-so a renamed (or lightly-edited) duplicate collapses to the same token stream
-while a same-shape sibling (``min`` / ``max``, ``addWeeks`` / ``subWeeks``) does
-not. A wholesale structural rewrite is *not* expected to match here -- that is
-what the embedding shortlist (Stage 1) is for.
+Reduces a function to its *logic*: the tokens that carry meaning (operators,
+callee / property names, literal values), with local variable names
+canonicalised and language scaffolding (type annotations, the function's own
+name) stripped. A renamed or lightly-edited duplicate then collapses to the same
+token stream, while a same-shape sibling (``min`` / ``max``, ``addWeeks`` /
+``subWeeks``) does not. A wholesale structural rewrite is *not* expected to
+match here -- that is what the embedding shortlist (Stage 1) is for.
 
 Pure: tree-sitter only, no model. Parsing goes through :mod:`src.grammars`, so
 the normaliser supports every language the grammar layer does. Used by the
@@ -45,7 +45,7 @@ _FUNC_TYPES = frozenset({
     "function_expression", "function_definition",
 })
 # Structural punctuation carries no logic signal -- dropped.
-_PUNCT = frozenset({"(", ")", "{", "}", "[", "]", ",", ";", ":", ".", "$", "=>", "?."})
+_PUNCTUATION = frozenset({"(", ")", "{", "}", "[", "]", ",", ";", ":", ".", "$", "=>", "?."})
 # Operators ARE logic: `<` vs `>` is the whole difference between min and max.
 _OPERATORS = frozenset({
     "+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "===", "!=", "!==",
@@ -154,7 +154,7 @@ def normalize(path: str, src: str) -> list[str]:
             tokens.append("V" if text in bound else "N:" + text)
         elif ttype == "number":
             tokens.append("NUM:" + text)
-        elif text in _PUNCT:
+        elif text in _PUNCTUATION:
             continue
         elif text:
             tokens.append("K:" + (text if len(text) <= 4 else ttype))
@@ -266,8 +266,8 @@ def distinctive_shared_tokens(
     a_tokens: list[str], b_tokens: list[str], token_df: Counter, cutoff: int
 ) -> list[str]:
     """Tokens shared by both functions that are rare across the repo
-    (``df <= cutoff``) -- the evidence a match is genuine, not boilerplate. Also
-    what the advisory shows the agent as the "why we think so".
+    (``df <= cutoff``) -- the evidence a match is genuine, not boilerplate. It is
+    also what the duplicate-check message shows the agent as "why we think so".
     """
     shared = set(a_tokens) & set(b_tokens)
     return sorted(t for t in shared if token_df.get(t, 0) <= cutoff)
