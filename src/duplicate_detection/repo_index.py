@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import tempfile
+import zipfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -239,7 +240,10 @@ def _load_cache(
         with np.load(path, allow_pickle=False) as npz:
             vectors = np.asarray(npz["vectors"], dtype=np.float32)
             manifest = json.loads(bytes(npz["manifest"]).decode("utf-8"))
-    except Exception:  # noqa: BLE001 - corrupt/missing cache must never raise
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        # A missing, unreadable, truncated or malformed cache file means
+        # "rebuild" (the caller prints a breadcrumb). Anything else is a bug
+        # and must surface, not pass as corruption.
         return None
     if not isinstance(manifest, dict):
         return None
@@ -254,7 +258,7 @@ def _load_cache(
     ):
         return None
     # Integrity: the matrix shape must match what the manifest claims, AND every
-    # entry's [row_start, row_start + n) window must sit inside the matrix -- else
+    # entry's [row_start, row_start + n] window must sit inside the matrix -- else
     # _reuse_entry's ``vectors[rs + j]`` would read the wrong rows or raise
     # IndexError (which escapes the un-guarded build path -> a persistent dead
     # oracle). A count-matching manifest with a corrupt row_start must be rejected

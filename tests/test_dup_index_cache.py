@@ -346,6 +346,58 @@ def test_garbage_cache_bytes_fall_back_to_full_build(tmp_path):
     assert embed2.calls == 0
 
 
+def _good_npz_bytes(tmp_path) -> bytes:
+    path = tmp_path / "good.npz"
+    np.savez(path, vectors=np.zeros((2, 3)), manifest=np.frombuffer(b'{"a":1}', dtype=np.uint8))
+    return path.read_bytes()
+
+
+@pytest.mark.parametrize("kind", ["truncated", "missing key", "bad json", "bad utf8", "directory"])
+def test_every_kind_of_bad_cache_file_falls_back_to_full_build(tmp_path, kind):
+    from src.duplicate_detection.repo_index import _cache_path, load_or_build_dup_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_repo(repo)
+    path = _cache_path(str(repo), str(tmp_path / "cache"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "truncated":
+        path.write_bytes(_good_npz_bytes(tmp_path)[:150])
+    elif kind == "missing key":
+        np.savez(path, vectors=np.zeros((2, 3)))
+    elif kind == "bad json":
+        np.savez(path, vectors=np.zeros((2, 3)), manifest=np.frombuffer(b"{not json", dtype=np.uint8))
+    elif kind == "bad utf8":
+        np.savez(path, vectors=np.zeros((2, 3)), manifest=np.frombuffer(b"\xff\xfe", dtype=np.uint8))
+    else:
+        path.mkdir()
+
+    embed = CountingEmbed()
+    # ("directory" is also unwritable: the index is rebuilt in memory, no crash.)
+    idx = load_or_build_dup_index(str(repo), embed_fn=embed, cache_dir=str(tmp_path / "cache"))
+    assert embed.calls == 3
+    assert len(idx) == 3
+
+
+def test_a_bug_while_reading_the_cache_is_not_disguised_as_corruption(tmp_path, monkeypatch):
+    # Only a bad cache FILE means "rebuild". A programming error must surface.
+    from src.duplicate_detection import repo_index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_repo(repo)
+    path = repo_index._cache_path(str(repo), str(tmp_path / "cache"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_good_npz_bytes(tmp_path))
+
+    def buggy_load(*_a, **_k):
+        raise TypeError("a bug, not a bad file")
+
+    monkeypatch.setattr(repo_index.np, "load", buggy_load)
+    with pytest.raises(TypeError, match="a bug"):
+        repo_index._load_cache(path, "any-embedder")
+
+
 def test_manifest_shape_mismatch_falls_back_to_full_build(tmp_path):
     from src.duplicate_detection.repo_index import load_or_build_dup_index
 
