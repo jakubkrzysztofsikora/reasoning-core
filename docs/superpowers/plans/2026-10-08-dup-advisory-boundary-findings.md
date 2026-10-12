@@ -89,9 +89,11 @@ The per-edit duplicate check fired PreToolUse, mid-increment, and ended with
 
 - [x] **1. Ledger** (`findings.py`). → B3
 - [x] **2. Diff awareness** (`changed_files()`). → B2, B5
-- [ ] **3. Move filter** in the engine: `initialsOf` / `clearConnectParam` →
+- [x] **3. Move filter** in the engine: `initialsOf` / `clearConnectParam` →
   `likely_move`; unmodified-source dup → real. → B2
-- [ ] **4. Sites + coverage + rule**: `onDocClick` → EXTRACT "3 sites,
+- [x] **4. Sites + coverage + rule** (N = 12 logic tokens, measured: click-outside
+  + Escape = 23, trivial helpers 4–8; coverage = a test names the function or
+  the site file's stem): `onDocClick` → EXTRACT "3 sites,
   test-covered"; `setUrl` / `renderApp` → note-only; no "otherwise proceed". → B4
 - [ ] **5. Routing + ledger write**: engine `check_edit()` returns inline text +
   findings; in-diff → inline, outside → ledger only. Operator switches the hook
