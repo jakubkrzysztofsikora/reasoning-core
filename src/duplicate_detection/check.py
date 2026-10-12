@@ -1,7 +1,7 @@
 """Decide what to do with confirmed duplicate hits.
 
 Pure over ``DupHit`` lists + the set of files in the working diff, so the
-per-edit and Stop hooks share one rule set and it is testable without a model.
+per-edit and Stop hooks share one rule set, and it is testable without a model.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import re
 import sys
 
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from . import findings as ledger
 from .index import extract_functions, logic_tokens
@@ -126,11 +126,11 @@ def check_edit(
     repo_root: str,
     changed: set[str] | None,
     ledger_file: Path,
-    test_texts: Optional[dict[str, str]] = None,
+    test_texts: dict[str, str] | None = None,
     recall: float = RECALL_DEFAULT,
     confirm: float = CONFIRM_DEFAULT,
     top_k: int = 3,
-) -> Optional[str]:
+) -> str | None:
     """Check every function in the edited file, record each duplicate in the
     ledger, and return the inline message (or ``None``).
 
