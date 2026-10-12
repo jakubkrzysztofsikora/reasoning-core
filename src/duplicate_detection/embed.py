@@ -32,7 +32,7 @@ def _to_numpy(vec) -> np.ndarray:
 def embed_function(source: str) -> np.ndarray:
     """Return the L2-normalised embedding of ``source`` (so cosine == dot).
 
-    A zero vector (degenerate input) is returned unnormalised rather than
+    A zero vector (degenerate input) is returned un-normalised rather than
     dividing by zero.
     """
     arr = _to_numpy(embed(source))
