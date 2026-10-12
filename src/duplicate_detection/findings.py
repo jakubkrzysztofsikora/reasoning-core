@@ -1,13 +1,13 @@
-"""Findings ledger for the dup advisory: findings persist past the edit that
-raised them so the Stop hook can resurface them at a boundary.
+"""Findings ledger for the duplicate check: findings persist past the edit
+that raised them so the Stop hook can review them at the end of the session.
 
-One append-only JSONL per repo, under the cache root (``$RC_CACHE_DIR`` else
+One append-only JSONL file per repo, under the cache root (``$RC_CACHE_DIR`` else
 ``~/.cache/reasoning-core``) -- outside the repo tree, so it never shows up in
 ``git status``. Rows are whole findings; on load the latest row per ``id`` wins.
 
-Statuses: ``open`` (not yet acted on), ``surfaced`` (shown at a Stop),
-``deferred`` (the agent recorded a reason to leave it), ``resolved``
-(re-validation found the duplicate gone).
+Statuses: ``open`` (not yet acted on), ``deferred`` (the agent recorded a
+reason to leave it), ``resolved`` (re-validation found the duplicate gone).
+How often a finding has blocked a Stop is counted in its ``blocks`` field.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-STATUSES = ("open", "surfaced", "deferred", "resolved")
+STATUSES = ("open", "deferred", "resolved")
 
 
 class LedgerError(RuntimeError):

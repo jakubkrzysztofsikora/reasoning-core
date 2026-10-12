@@ -23,8 +23,6 @@ from .oracle import CONFIRM_DEFAULT
 # Blocks per EXTRACT finding before the stop is let through and escalated.
 MAX_BLOCKS = 3
 
-_LIVE = ("open", "surfaced")
-
 
 @dataclass
 class StopDecision:
@@ -125,7 +123,7 @@ def stop_decision(
     stop is let through) instead of blocking forever. ``count_blocks=False``
     (advise mode: nothing is actually blocked) leaves the counts untouched.
     """
-    rows = [r for r in ledger.load(ledger_file).values() if r["status"] in _LIVE]
+    rows = [r for r in ledger.load(ledger_file).values() if r["status"] == "open"]
     decision = StopDecision(block=False)
     if not rows:
         return decision
