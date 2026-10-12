@@ -61,10 +61,10 @@ def load_test_texts(repo_root: str) -> dict[str, str]:
     hidden directories. An unreadable test file is reported on stderr and
     skipped: one bad file must not hide coverage for the rest."""
     texts: dict[str, str] = {}
-    for directory, subdirs, files in os.walk(repo_root):
-        # Pruning subdirs in place stops os.walk descending into them.
-        subdirs[:] = sorted(
-            d for d in subdirs if d not in _SKIP_DIRS and not d.startswith(".")
+    for directory, subdirectories, files in os.walk(repo_root):
+        # Pruning subdirectories in place stops os.walk descending into them.
+        subdirectories[:] = sorted(
+            d for d in subdirectories if d not in _SKIP_DIRS and not d.startswith(".")
         )
         for file_name in sorted(files):
             full_path = os.path.join(directory, file_name)
