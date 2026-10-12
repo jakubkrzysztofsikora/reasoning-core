@@ -116,6 +116,52 @@ def test_three_covered_nontrivial_sites_are_recorded_as_extract(tmp_path):
     assert row["verdict"] == EXTRACT
 
 
+def test_novel_function_records_nothing(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    (repo / "d.ts").write_text(
+        "export function quicksort(arr) {\n"
+        "  if (arr.length < 2) return arr;\n"
+        "  const p = arr[0];\n"
+        "  return quicksort(arr.filter((x) => x < p));\n"
+        "}\n"
+    )
+    text, rows = _check(repo, "d.ts", {"d.ts"}, tmp_path)
+    assert text is None
+    assert rows == {}
+
+
+def test_empty_source_or_index_is_silent(tmp_path):
+    repo = _repo(tmp_path)
+    empty_index = build_dup_index(str(repo), embed_fn=_stub_embed)
+    kw = dict(embed_fn=_stub_embed, repo_root=str(repo), changed=set(), ledger_file=tmp_path / "l.jsonl")
+    assert check_edit(str(repo / "d.ts"), SLUG.format(name="f"), empty_index, **kw) is None
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    index = build_dup_index(str(repo), embed_fn=_stub_embed)
+    assert check_edit(str(repo / "d.ts"), "", index, **kw) is None
+
+
+def test_a_function_is_never_its_own_duplicate(tmp_path):
+    # The edited file is in the index (absolute payload path vs relative index
+    # paths): toSlug must not match itself, only slugify in b.ts.
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    (repo / "b.ts").write_text(SLUG.format(name="slugify"))
+    _, rows = _check(repo, "a.ts", {"a.ts"}, tmp_path)
+    [row] = rows.values()
+    assert [(m["path"], m["name"]) for m in row["matches"]] == [("b.ts", "slugify")]
+
+
+def test_same_name_in_another_file_is_still_a_duplicate(tmp_path):
+    # Self-skip keys on path AND name; skipping on name alone would hide this.
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="slug"))
+    (repo / "b.ts").write_text(SLUG.format(name="slug"))
+    _, rows = _check(repo, "b.ts", {"b.ts"}, tmp_path)
+    [row] = rows.values()
+    assert [m["path"] for m in row["matches"]] == ["a.ts"]
+
+
 def test_reuses_index_vectors_instead_of_re_embedding_the_file(tmp_path):
     # The post-edit index refresh already embedded the edited file.
     repo = _repo(tmp_path)
