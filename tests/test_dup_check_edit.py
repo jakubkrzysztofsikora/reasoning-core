@@ -116,6 +116,47 @@ def test_three_covered_nontrivial_sites_are_recorded_as_extract(tmp_path):
     assert row["verdict"] == EXTRACT
 
 
+def test_reuses_index_vectors_instead_of_re_embedding_the_file(tmp_path):
+    # The post-edit index refresh already embedded the edited file.
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    (repo / "d.ts").write_text(SLUG.format(name="makeSlug"))
+    index = build_dup_index(str(repo), embed_fn=_stub_embed)
+    calls = []
+
+    def counting_embed(src):
+        calls.append(src)
+        return _stub_embed(src)
+
+    check_edit(
+        str(repo / "d.ts"), (repo / "d.ts").read_text(), index,
+        embed_fn=counting_embed, repo_root=str(repo), changed={"d.ts"},
+        ledger_file=tmp_path / "ledger.jsonl",
+    )
+    assert calls == []
+
+
+def test_embeds_a_function_the_index_does_not_have(tmp_path):
+    # Stale index (built before the edit): the new function must still be checked.
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    index = build_dup_index(str(repo), embed_fn=_stub_embed)
+    (repo / "d.ts").write_text(SLUG.format(name="makeSlug"))
+    calls = []
+
+    def counting_embed(src):
+        calls.append(src)
+        return _stub_embed(src)
+
+    check_edit(
+        str(repo / "d.ts"), (repo / "d.ts").read_text(), index,
+        embed_fn=counting_embed, repo_root=str(repo), changed={"d.ts"},
+        ledger_file=tmp_path / "ledger.jsonl",
+    )
+    assert len(calls) == 1
+    assert ledger.load(tmp_path / "ledger.jsonl")  # still found the duplicate
+
+
 def test_trivial_helper_in_three_places_stays_note_only(tmp_path):
     repo = _repo(tmp_path)
     for n in ("a", "b", "c"):

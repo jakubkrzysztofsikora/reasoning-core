@@ -142,13 +142,20 @@ def check_edit(
     rel = os.path.relpath(file_path, repo_root).replace(os.sep, "/")
     other_changed = None if changed is None else changed - {rel}
     seen = set(ledger.load(ledger_file))
+    # The index refresh after the edit already embedded this file; reuse those
+    # vectors and only embed functions the index lacks (stale index, size cap).
+    indexed = {
+        (r.name, r.lineno): i for i, r in enumerate(index.records) if r.path == rel
+    }
     blocks = []
-    for name, _line, fsrc in extract_functions(file_path, source):
+    for name, line, fsrc in extract_functions(file_path, source):
         tokens = logic_tokens(file_path, fsrc)
         if not tokens:
             continue
+        row = indexed.get((name, line))
+        vec = index.embeddings[row] if row is not None else embed_fn(fsrc)
         hits = find_near_duplicates(
-            embed_fn(fsrc), tokens, index.records, index.embeddings, index.token_df,
+            vec, tokens, index.records, index.embeddings, index.token_df,
             recall=recall, confirm=confirm,
             skip=lambda i, rec, nm=name: rec.path == rel and rec.name == nm,
         )
