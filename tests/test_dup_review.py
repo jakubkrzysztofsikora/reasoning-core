@@ -44,6 +44,10 @@ def _menus(repo: Path) -> dict:
     for m in MENUS:
         (repo / f"{m}.ts").write_text(DISMISS.format(name=f"dismiss{m}"))
         (repo / f"{m}.test.ts").write_text(f"import {{ {m} }} from './{m}'")
+    return _menus_finding()
+
+
+def _menus_finding() -> dict:
     return _finding(
         ("AccountMenu.ts", "dismissAccountMenu"),
         [(f"{m}.ts", f"dismiss{m}") for m in MENUS[1:]],
@@ -88,6 +92,43 @@ def test_extracted_duplicate_is_resolved_and_does_not_block(tmp_path):
     d = stop_decision(str(repo), path)
     assert d.block is False
     assert ledger.load(path)[f["id"]]["status"] == "resolved"
+
+
+def test_extraction_that_leaves_thin_wrappers_is_resolved(tmp_path):
+    # The usual extraction: one shared function, each old name now delegates.
+    repo, path = _setup(tmp_path)
+    f = _menus(repo)
+    ledger.record(path, f)
+    (repo / "shared.ts").write_text(DISMISS.format(name="useDismiss"))
+    for m in MENUS:
+        (repo / f"{m}.ts").write_text(
+            f"export function dismiss{m}(ref, onClose) {{\n  return useDismiss(ref, onClose);\n}}\n"
+        )
+    d = stop_decision(str(repo), path)
+    assert d.block is False
+    assert f["id"] in d.resolved
+
+
+def test_extraction_resolves_even_after_an_edit_re_recorded_the_wrappers(tmp_path):
+    # Writing the wrappers is itself an edit: the per-edit check sees the same
+    # three sites again, now trivial, and records them as a NOTE under the same
+    # id. Stop must still treat that as the extraction it is.
+    repo, path = _setup(tmp_path)
+    f = _menus(repo)
+    ledger.record(path, f)
+    (repo / "shared.ts").write_text(DISMISS.format(name="useDismiss"))
+    for m in MENUS:
+        (repo / f"{m}.ts").write_text(
+            f"export function dismiss{m}(ref, onClose) {{\n  return useDismiss(ref, onClose);\n}}\n"
+        )
+    ledger.record(path, dict(_menus_finding(), verdict=NOTE))
+    d = stop_decision(str(repo), path)
+    assert d.block is False
+    assert f["id"] in d.resolved
+    assert d.notes == []
+    # A later edit of a wrapper sees them again: still not a note to carry.
+    ledger.record(path, dict(_menus_finding(), verdict=NOTE))
+    assert stop_decision(str(repo), path).notes == []
 
 
 def test_completed_move_is_dropped(tmp_path):

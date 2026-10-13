@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from ..grammars import UnsupportedLanguageError
 from . import findings as ledger
-from .check import EXTRACT, format_match, load_test_texts, site_is_covered, verdict
+from .check import EXTRACT, MIN_LOGIC_TOKENS, format_match, load_test_texts, site_is_covered, verdict
 from .index import extract_functions, logic_ratio_tokens, logic_tokens
 from .oracle import CONFIRM_DEFAULT
 
@@ -57,11 +57,16 @@ def revalidate(
     row: dict[str, Any], repo_root: str, test_texts: dict[str, str], *, confirm: float = CONFIRM_DEFAULT
 ) -> Optional[dict[str, Any]]:
     """The finding as it stands now, or None when it no longer exists (the
-    added copy or every matched copy is gone or no longer equivalent)."""
+    added copy or every matched copy is gone or no longer equivalent, or an
+    EXTRACT finding's copies have shrunk to thin wrappers around a shared
+    function)."""
     added = _function(repo_root, row["added_path"], row["added_name"])
     if added is None:
         return None
     _, tokens = added
+    if (row["verdict"] == EXTRACT or row.get("was_extract")) and len(tokens) < MIN_LOGIC_TOKENS:
+        # The logic left the copy: what remains delegates, so it was extracted.
+        return None
     kept = []
     for m in row["matches"]:
         now = _function(repo_root, m["path"], m["name"])
