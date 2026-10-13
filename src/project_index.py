@@ -241,10 +241,10 @@ def _is_skip_dir(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pat) for pat in _SKIP_DIR_PATTERNS)
 
 
-def iter_repo_files(repo_root: str, exts: "frozenset[str]" = _SRC_EXTS) -> list[str]:
+def iter_repo_files(repo_root: str, extensions: "frozenset[str]" = _SRC_EXTS) -> list[str]:
     """Return sorted list of relative source-file paths.
 
-    ``exts`` selects which file extensions to include (default: the call-graph
+    ``extensions`` selects which file extensions to include (default: the call-graph
     source set). The dup oracle passes its own wider code-extension set so the
     walk + skip-dir pruning logic lives in one place.
     """
@@ -257,7 +257,7 @@ def iter_repo_files(repo_root: str, exts: "frozenset[str]" = _SRC_EXTS) -> list[
         dirnames[:] = [d for d in dirnames if not _is_skip_dir(d)]
         reldir = Path(dirpath).relative_to(root)
         for fn in filenames:
-            if any(fn.endswith(ext) for ext in exts):
+            if any(fn.endswith(ext) for ext in extensions):
                 found.append(str(reldir / fn))
     found.sort()
     return found
