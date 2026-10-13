@@ -91,8 +91,8 @@ Each confirmed duplicate is routed by where the match is:
 | Match is in | Treated as | Message to the agent now? |
 |---|---|---|
 | the edited file itself | in the agent's hands | yes, once per finding |
-| another file in the working diff | likely **move** | no |
-| only untouched files | tracked **follow-up** | no — reviewed at Stop |
+| other files, all in the working diff | likely **move** | no |
+| at least one untouched file | tracked **follow-up** (every copy counts) | no — reviewed at Stop |
 
 If git can't say what changed, nothing is treated as a move. Each finding gets a
 verdict: **EXTRACT** when it has ≥ 3 sites, ≥ 12 logic tokens and every site is
@@ -108,20 +108,25 @@ next session in the same repo until it is extracted, deferred or escalated.
 
 **At session end** (`stop_duplicate_check.py`, Stop):
 
-1. Each open finding is re-checked deterministically (tree-sitter + logic-token
-   ratio, no model). If the duplicate is gone — a finished move or extraction —
-   the finding is resolved.
+1. Each finding not yet resolved is re-checked deterministically (tree-sitter +
+   logic-token ratio, no model). If the duplicate is gone — a finished move or
+   extraction — the finding is resolved, whatever its status. An extraction
+   that keeps each old name as a thin wrapper counts as gone: a finding that
+   was ever EXTRACT resolves once its copies fall below 12 logic tokens.
+   Deferred and escalated findings are re-checked only for this.
 2. If an **EXTRACT** finding is still open, the stop is **blocked** and the
    finding listed; open NOTE findings ride along in the same message but never
    block on their own.
 3. The agent clears a block by extracting, or with
-   `rc dup-defer <id> --reason "..."` (reason required; a deferred finding is
-   not reopened).
+   `rc dup-defer <id> --reason "..."` (reason required). A deferral holds for
+   that set of sites: seeing it again doesn't reopen it, but a further copy
+   makes a new finding, which can block again.
 4. Blocking continues while `stop_hook_active` is set, capped at 3 blocks per
    finding (`review.MAX_BLOCKS`), counted across edits and sessions. Past the
    cap the stop goes through, the finding becomes `escalated` (it no longer
-   blocks, and can still be deferred) and one `escalated` audit event is
-   written.
+   blocks, and can still be deferred), reported once: an `escalated` audit
+   event, or `escalated_ids` on the `blocked` event when another finding
+   blocks in the same run.
 5. It blocks whenever the feature is on, unlike `stop_reconcile.py` which
    waits for `RC_MODE=copilot`. An explicit `RC_MODE=advise` in the hook's
    environment turns blocking off; findings then go to stderr and the audit log
