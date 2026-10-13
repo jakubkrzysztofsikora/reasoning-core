@@ -84,9 +84,9 @@ The per-edit duplicate check fired PreToolUse, mid-increment, and ended with
 ## Safe-by-default
 
 - Feature stays opt-in (`RC_DUP_ORACLE=1`). Per-edit hook never blocks. The Stop
-  block is a new enforcement default for opted-in repos → immutable prechange
-  baseline `baseline-2026-10-08-dup-advisory-prechange` captured first. No
-  threshold (0.80 / 0.97) changes.
+  block only applies to repos that opt in: no default changes for anyone else,
+  and the PR makes no before/after claim, so no prechange baseline is captured
+  (raised in the PR). No threshold (0.80 / 0.97) changes.
 - Every degrade (git unknown, ledger write fails) is observable: stderr + status.
 
 ## Regression cases (from the real session)
@@ -112,13 +112,15 @@ The per-edit duplicate check fired PreToolUse, mid-increment, and ended with
 - [x] **5. Routing + ledger write**: engine `check_edit()` returns inline text +
   findings; in-diff (same file) → inline once, other changed file → likely move,
   untouched files → ledger only.
-- [ ] **5b. Hook switch** (operator): Operator switches the hook
+- [x] **5b. Hook switch** (operator): Operator switches the hook
   to PostToolUse and to call `check_edit()`. → B1, B5
-- [ ] **6a. Baseline** capture + README row.
-- [ ] **6b. `rc dup-defer`** (rc_cli.py is guarded → operator applies). → B3
-- [ ] **6c. Stop hook** `stop_duplicate_check.py`. → B1, B2, B3
-- [ ] **7. Docs**: `docs/dup-oracle.md` — PostToolUse + Stop wiring, rule, move
-  heuristic and limits, structural-block finding.
+- [x] **6a. Baseline**: dropped, see Safe-by-default.
+- [x] **6b. `rc dup-defer`** (rc_cli.py is guarded → operator applies). → B3
+- [x] **6c. Stop hook** `stop_duplicate_check.py`. → B1, B2, B3
+- [x] **7. Docs**: `docs/dup-oracle.md` — PostToolUse + Stop wiring, rule, move
+  heuristic, audit events.
+- [ ] **7b. Structural-block finding**: whether `pre_edit_guard` blocks a
+  Python function move — not yet checked.
 
 ## Out of scope / risks
 

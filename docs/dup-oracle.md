@@ -6,17 +6,19 @@ Today the scorer compares an edit against the **same file** (`novelty` =
 before/after drift). It has no cross-file awareness, so an agent can happily
 re-implement a helper that already exists elsewhere under a different name.
 
-This oracle adds that awareness: when the agent is about to write a function,
-it checks the repo's other functions for a behaviourally-similar one and, if
-found, emits an advisory naming it — so the agent reuses or extends instead of
-re-inventing. **Advisory only: it never blocks** (always exits 0). Opt-in via
+This oracle adds that awareness: after the agent edits a file, it checks the
+functions in it against the repo's other functions for a behaviourally-similar
+one, records each duplicate as a finding, and reviews the open findings when the
+session ends — so the agent reuses or extends instead of re-inventing. The
+per-edit check never blocks; the session-end check blocks only on a duplicate
+worth extracting (see **Findings and the Stop review**). Opt-in via
 `RC_DUP_ORACLE=1`.
 
 **Language scope.** The oracle indexes **Python, JavaScript and TypeScript**
 (`.py`, `.js`, `.mjs`, `.cjs`, `.ts`, `.tsx`). Other tree-sitter-parseable
 languages (e.g. **C#**, **SQL**) are deliberately **out of scope**: making them
 work is not just a matter of walking their files — the function extractor
-(`dup_index._FUNC_TYPES`) and the normaliser (its param/local handling) would
+(`index._FUNC_TYPES`) and the normaliser (its param/local handling) would
 each need language-specific entries, or renamed duplicates would silently fail
 to collapse. Tracked as a follow-up; see the dup-oracle language-support issue.
 
@@ -55,7 +57,7 @@ it practical to leave enabled.
 - **Invalidation.** The manifest records `{format_version, embedder_id, dim}`; a
   mismatch on any discards the whole cache and rebuilds. **Bump
   `CACHE_FORMAT_VERSION` on ANY change to the embedding pipeline** — the model
-  id, the model **weights**, or `dup_embed`'s normalisation — because weights
+  id, the model **weights**, or `embed`'s normalisation — because weights
   can't be fingerprinted offline; this manual bump is the contract that
   guarantees incompatible vectors are never reused.
 - **Fail-open.** A corrupt/unreadable cache falls back to a full build and never
@@ -74,6 +76,54 @@ model in memory: the **sidecar** already does (it keeps embedding state across
 requests via `/baseline`), so a `/dup-check` endpoint alongside it would drop the
 per-edit cost to just "embed the new function + a cosine query". That is the next
 follow-up before default-enable.
+
+## Findings and the Stop review
+
+Scoring decides *whether* two functions are duplicates. What happens next is
+decided here.
+
+**After each edit** (`post_edit_duplicate_check.py`, PostToolUse, never blocks)
+each confirmed duplicate is routed by where the match is:
+
+| Match is in | Treated as | Message to the agent now? |
+|---|---|---|
+| the edited file itself | in the agent's hands | yes, once per finding |
+| another file in the working diff | likely **move** | no |
+| only untouched files | tracked **follow-up** | no — reviewed at Stop |
+
+If git can't say what changed, nothing is treated as a move. Each finding gets a
+verdict: **EXTRACT** when it has ≥ 3 sites, ≥ 12 logic tokens and every site is
+test-covered (a test file names the function or its file's stem — a heuristic);
+otherwise **NOTE**. Every finding is recorded in a per-repo ledger outside the
+repo (`~/.cache/reasoning-core/dup-findings.<repo-hash>.jsonl`; statuses
+`open` / `deferred` / `resolved`).
+
+**At session end** (`stop_duplicate_check.py`, Stop):
+
+1. Each open finding is re-checked deterministically (tree-sitter + logic-token
+   ratio, no model). If the duplicate is gone — a finished move or extraction —
+   the finding is resolved.
+2. If an **EXTRACT** finding is still open, the stop is **blocked** and the
+   finding listed; open NOTE findings ride along in the same message but never
+   block on their own.
+3. The agent clears a block by extracting, or with
+   `rc dup-defer <id> --reason "..."` (reason required; a deferred finding is
+   not reopened).
+4. Blocking continues while `stop_hook_active` is set, capped at 3 blocks per
+   finding (`review.MAX_BLOCKS`). Past the cap the stop goes through and an
+   `escalated` audit event is written.
+5. It blocks whenever the feature is on, unlike `stop_reconcile.py` which
+   waits for `RC_MODE=copilot`. An explicit `RC_MODE=advise` turns blocking
+   off; findings then go to stderr and the audit log only.
+
+Both hooks fail open: an error never blocks, and leaves a stderr line plus a
+`fail-open` audit event.
+
+**Audit events** (shared audit log, one per hook run):
+
+- `dup_check`: `found` / `clean` / `skipped` / `fail-open`, with `latency_ms`.
+- `dup_stop`: `blocked` / `approved` / `escalated` / `advise` / `fail-open`.
+- `dup_deferred`: written by `rc dup-defer`, with the finding id and reason.
 
 ## Acceptance test (the anchor)
 
@@ -111,19 +161,29 @@ All engine code lives in the `src/duplicate_detection/` package:
 - `embed.py` — L2-normalising wrapper over `ssm_backbone.embed`
   (the only torch-touching module).
 - `findings.py` — per-repo findings ledger, so findings outlive the edit.
-The hook lives with the other hooks:
+- `check.py` — the per-edit check: routing, verdict, recording
+  (`check_edit`).
+- `review.py` — the session-end review (`stop_decision`).
+- `defer.py` — deferring a finding with a reason (backs `rc dup-defer`).
 
-- `src/hooks/post_edit_duplicate_check.py` — the per-edit advisory.
+The hooks live with the other hooks:
+
+- `src/hooks/post_edit_duplicate_check.py` — the per-edit check.
+- `src/hooks/stop_duplicate_check.py` — the session-end review.
 
 ## Enabling
 
-Off by default. To turn it on, set `RC_DUP_ORACLE=1` and wire the hook as a
-`PreToolUse` matcher for `Edit|Write|MultiEdit` in `.claude/settings.json`:
+Off by default. To turn it on, set `RC_DUP_ORACLE=1` and wire both hooks in
+`.claude/settings.json`: the per-edit check as a `PostToolUse` matcher for
+`Edit|Write|MultiEdit`, and the review as a `Stop` hook:
 
     python3 src/hooks/post_edit_duplicate_check.py
+    python3 src/hooks/stop_duplicate_check.py
 
-It reads the tool payload on stdin and, when a duplicate is found, prints a
-`hookSpecificOutput.additionalContext` blurb (exit 0, never blocks).
+The per-edit check reads the tool payload on stdin and, for a duplicate inside
+the edited file, prints a `hookSpecificOutput.additionalContext` blurb (exit 0,
+never blocks). The Stop hook prints `{"decision": "block", "reason": ...}` when
+it blocks (exit 0).
 
 The index is cached to disk automatically (see **Index persistence** above).
 Relevant env: `RC_DUP_ORACLE_CACHE=0` disables the cache, `RC_DUP_ORACLE_MAX_FUNCS`
