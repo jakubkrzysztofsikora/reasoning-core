@@ -75,11 +75,14 @@ def make_finding(
     likely_move: bool,
     test_covered: bool,
 ) -> dict[str, Any]:
-    """Build a finding row. The id depends on the added function and the set of
-    matched sites (not their order or line numbers), so the same duplication
-    seen on a later edit maps to the same row."""
-    sites_key = sorted(f"{m['path']}::{m['name']}" for m in matches)
-    raw = json.dumps([added_path, added_name, sites_key])
+    """Build a finding row. The id depends only on the set of sites, the added
+    one included (not their order, line numbers, or which copy was edited), so
+    the same duplication seen from any copy maps to the same row. A new copy
+    makes a new set, and so a new finding."""
+    sites_key = sorted(
+        {f"{added_path}::{added_name}"} | {f"{m['path']}::{m['name']}" for m in matches}
+    )
+    raw = json.dumps(sites_key)
     return {
         "id": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12],
         "added_path": added_path,

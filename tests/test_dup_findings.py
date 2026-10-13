@@ -54,6 +54,21 @@ def test_finding_id_is_stable_and_ignores_match_order():
     assert f1["status"] == "open"
 
 
+def test_one_duplication_has_one_id_whichever_copy_was_edited():
+    # Editing AccountMenu then SortMenu must not open a second finding (and a
+    # second deferral) for the same three copies.
+    a = _finding()
+    b = ledger.make_finding(
+        added_path="src/SortMenu.ts", added_name="onDocClick",
+        matches=[
+            {"path": "src/AccountMenu.ts", "name": "onDocClick", "lineno": 1, "logic": 1.0},
+            {"path": "src/BasemapControl.ts", "name": "onDocClick", "lineno": 160, "logic": 0.98},
+        ],
+        verdict="extract", in_diff=False, likely_move=False, test_covered=True,
+    )
+    assert a["id"] == b["id"]
+
+
 def test_record_then_load_round_trips_and_latest_row_wins(tmp_path):
     path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
     f = _finding()
