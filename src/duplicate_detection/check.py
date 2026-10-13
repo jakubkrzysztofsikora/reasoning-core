@@ -165,7 +165,8 @@ def check_edit(
         raise UnsupportedLanguageError(ext)
     if not source or index is None or len(index) == 0:
         return None
-    rel = os.path.relpath(file_path, repo_root).replace(os.sep, "/")
+    # Real paths on both sides: one may go through a symlink (/var vs /private/var).
+    rel = os.path.relpath(os.path.realpath(file_path), os.path.realpath(repo_root)).replace(os.sep, "/")
     if baseline is _COMMITTED:
         baseline = ledger.committed_source(repo_root, rel)
     unchanged = set()

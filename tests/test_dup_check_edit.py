@@ -180,6 +180,22 @@ def test_reports_every_finding_it_recorded_even_without_a_message(tmp_path):
     assert recorded == list(ledger.load(path))
 
 
+def test_paths_through_a_symlink_resolve_to_the_same_repo_file(tmp_path):
+    # The hooks pass the repo's real path; the edited path may go through a link.
+    repo = _repo(tmp_path)
+    (repo / "d.ts").write_text(SLUG.format(name="makeSlug") + SLUG.format(name="toSlug"))
+    link = tmp_path / "link"
+    link.symlink_to(repo)
+    path = tmp_path / "ledger.jsonl"
+    text = check_edit(
+        str(link / "d.ts"), (repo / "d.ts").read_text(),
+        build_dup_index(str(repo), embed_fn=_stub_embed),
+        embed_fn=_stub_embed, repo_root=str(repo), changed={"d.ts"}, ledger_file=path,
+    )
+    assert text is not None
+    assert {r["added_path"] for r in ledger.load(path).values()} <= {"d.ts"}
+
+
 def test_file_outside_the_indexed_languages_is_unsupported(tmp_path):
     # Parseable but not indexed (e.g. Markdown): must not pass as "checked, clean".
     import pytest
