@@ -83,7 +83,10 @@ Scoring decides *whether* two functions are duplicates. What happens next is
 decided here.
 
 **After each edit** (`post_edit_duplicate_check.py`, PostToolUse, never blocks)
-each confirmed duplicate is routed by where the match is:
+the functions the edit added or changed are checked. A function identical to
+the committed (`HEAD`) version of the file is skipped, so duplication the agent
+didn't write is not pinned on it; a new or untracked file is checked in full.
+Each confirmed duplicate is routed by where the match is:
 
 | Match is in | Treated as | Message to the agent now? |
 |---|---|---|
@@ -95,8 +98,13 @@ If git can't say what changed, nothing is treated as a move. Each finding gets a
 verdict: **EXTRACT** when it has ≥ 3 sites, ≥ 12 logic tokens and every site is
 test-covered (a test file names the function or its file's stem — a heuristic);
 otherwise **NOTE**. Every finding is recorded in a per-repo ledger outside the
-repo (`~/.cache/reasoning-core/dup-findings.<repo-hash>.jsonl`; statuses
-`open` / `deferred` / `resolved`).
+repo (`~/.cache/reasoning-core/dup-findings.<repo-hash>.jsonl`, keyed on the
+repo's top-level path; statuses `open` / `deferred` / `escalated` /
+`resolved`). A finding is identified by its set of sites, so editing any of the
+copies maps to the same finding; a new copy makes a new set, and a new finding.
+
+Findings are per repo, not per session: an open finding carries over to the
+next session in the same repo until it is extracted, deferred or escalated.
 
 **At session end** (`stop_duplicate_check.py`, Stop):
 
@@ -110,11 +118,15 @@ repo (`~/.cache/reasoning-core/dup-findings.<repo-hash>.jsonl`; statuses
    `rc dup-defer <id> --reason "..."` (reason required; a deferred finding is
    not reopened).
 4. Blocking continues while `stop_hook_active` is set, capped at 3 blocks per
-   finding (`review.MAX_BLOCKS`). Past the cap the stop goes through and an
-   `escalated` audit event is written.
+   finding (`review.MAX_BLOCKS`), counted across edits and sessions. Past the
+   cap the stop goes through, the finding becomes `escalated` (it no longer
+   blocks, and can still be deferred) and one `escalated` audit event is
+   written.
 5. It blocks whenever the feature is on, unlike `stop_reconcile.py` which
-   waits for `RC_MODE=copilot`. An explicit `RC_MODE=advise` turns blocking
-   off; findings then go to stderr and the audit log only.
+   waits for `RC_MODE=copilot`. An explicit `RC_MODE=advise` in the hook's
+   environment turns blocking off; findings then go to stderr and the audit log
+   only. Unlike `stop_reconcile.py`, it does not read `RC_MODE` from
+   `.envrc.local`.
 
 **Python moves and the structural check.** `pre_edit_guard`'s deterministic
 structural check (`project_index.find_duplicate_definitions`, Python only) is
@@ -131,7 +143,8 @@ Both hooks fail open: an error never blocks, and leaves a stderr line plus a
 
 **Audit events** (shared audit log, one per hook run):
 
-- `dup_check`: `found` / `clean` / `skipped` / `fail-open`, with `latency_ms`.
+- `dup_check`: `found` (any finding recorded, with `finding_ids` and whether
+  it was shown `inline`) / `clean` / `skipped` / `fail-open`, with `latency_ms`.
 - `dup_stop`: `blocked` / `approved` / `escalated` / `advise` / `fail-open`.
 - `dup_deferred`: written by `rc dup-defer`, with the finding id and reason.
 
@@ -185,10 +198,13 @@ The hooks live with the other hooks:
 
 Off by default. To turn it on, set `RC_DUP_ORACLE=1` and wire both hooks in
 `.claude/settings.json`: the per-edit check as a `PostToolUse` matcher for
-`Edit|Write|MultiEdit`, and the review as a `Stop` hook:
+`Edit|Write|MultiEdit`, and the review as a `Stop` hook. Run them with the
+repo's virtualenv Python, like the hooks `install.sh` registers; both need
+numpy, and a Python without it leaves the feature inactive (a stderr line and
+a `fail-open` audit event on every run). `install.sh` does not register them.
 
-    python3 src/hooks/post_edit_duplicate_check.py
-    python3 src/hooks/stop_duplicate_check.py
+    <reasoning-core>/.venv/bin/python <reasoning-core>/src/hooks/post_edit_duplicate_check.py
+    <reasoning-core>/.venv/bin/python <reasoning-core>/src/hooks/stop_duplicate_check.py
 
 The per-edit check reads the tool payload on stdin and, for a duplicate inside
 the edited file, prints a `hookSpecificOutput.additionalContext` blurb (exit 0,
