@@ -27,6 +27,9 @@ EXTRACT_MIN_SITES = 3
 # tokens; trivial helpers (replaceState wrapper, render-with-provider) = 4-8.
 MIN_LOGIC_TOKENS = 12
 
+# check_edit's default baseline: read the file as committed at HEAD.
+_COMMITTED = object()
+
 _TEST_FILE_RE = re.compile(
     r"(^|/)(tests?|__tests__)/|\.(test|spec)\.[^/]+$|(^|/)test_[^/]+$|_test\.[^/]+$"
 )
@@ -141,12 +144,17 @@ def check_edit(
     changed: set[str] | None,
     ledger_file: Path,
     test_texts: dict[str, str] | None = None,
+    baseline: str | None | object = _COMMITTED,
     recall: float = RECALL_DEFAULT,
     confirm: float = CONFIRM_DEFAULT,
     top_k: int = 3,
 ) -> str | None:
-    """Check every function in the edited file, record each duplicate in the
-    ledger, and return the inline message (or ``None``).
+    """Check the functions the edit added or changed, record each duplicate in
+    the ledger, and return the inline message (or ``None``).
+
+    A function identical to one in ``baseline`` (default: the file as committed
+    at ``HEAD``; ``None`` checks every function) is skipped, so duplication the
+    agent didn't write is not pinned on it.
 
     Routing: a match in another file of the working diff is a likely move
     (recorded, silent); matches only in untouched files are a tracked follow-up
@@ -161,6 +169,11 @@ def check_edit(
     if not source or index is None or len(index) == 0:
         return None
     rel = os.path.relpath(file_path, repo_root).replace(os.sep, "/")
+    if baseline is _COMMITTED:
+        baseline = ledger.committed_source(repo_root, rel)
+    unchanged = set()
+    if isinstance(baseline, str) and baseline:
+        unchanged = {(n, s) for n, _, s in extract_functions(file_path, baseline)}
     other_changed = None if changed is None else changed - {rel}
     seen = set(ledger.load(ledger_file))
     # The index refresh after the edit already embedded this file; reuse those
@@ -170,6 +183,8 @@ def check_edit(
     }
     blocks = []
     for name, line, func_source in extract_functions(file_path, source):
+        if (name, func_source) in unchanged:
+            continue
         tokens = logic_tokens(file_path, func_source)
         if not tokens:
             continue

@@ -65,6 +65,21 @@ def changed_files(repo_root: str) -> set[str] | None:
     return paths
 
 
+def committed_source(repo_root: str, rel_path: str) -> str | None:
+    """The file as committed at ``HEAD``, or ``None`` when there is none (new
+    or untracked file, no commits, not a git repo). A missing git binary is
+    reported on stderr; the other cases are expected."""
+    try:
+        result = subprocess.run(
+            ["git", "show", f"HEAD:./{rel_path}"],
+            cwd=repo_root, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"dup-findings: committed version unknown ({exc!r})", file=sys.stderr)
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
 def make_finding(
     *,
     added_path: str,

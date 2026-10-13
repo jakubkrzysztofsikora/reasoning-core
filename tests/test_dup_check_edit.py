@@ -117,6 +117,52 @@ def test_three_covered_nontrivial_sites_are_recorded_as_extract(tmp_path):
     assert row["verdict"] == EXTRACT
 
 
+def test_duplication_already_in_the_file_before_the_edit_is_not_recorded(tmp_path):
+    # The agent touches a file that already held a duplicate it didn't write.
+    repo = _repo(tmp_path)
+    before = SLUG.format(name="makeSlug") + SLUG.format(name="toSlug")
+    (repo / "d.ts").write_text(before + "export const unrelated = 1;\n")
+    path = tmp_path / "ledger.jsonl"
+    text = check_edit(
+        str(repo / "d.ts"), (repo / "d.ts").read_text(),
+        build_dup_index(str(repo), embed_fn=_stub_embed),
+        embed_fn=_stub_embed, repo_root=str(repo), changed={"d.ts"}, ledger_file=path,
+        baseline=before,
+    )
+    assert text is None
+    assert ledger.load(path) == {}
+
+
+def test_a_copy_added_next_to_an_existing_function_is_still_caught(tmp_path):
+    repo = _repo(tmp_path)
+    before = SLUG.format(name="toSlug")
+    (repo / "d.ts").write_text(before + SLUG.format(name="makeSlug"))
+    path = tmp_path / "ledger.jsonl"
+    text = check_edit(
+        str(repo / "d.ts"), (repo / "d.ts").read_text(),
+        build_dup_index(str(repo), embed_fn=_stub_embed),
+        embed_fn=_stub_embed, repo_root=str(repo), changed={"d.ts"}, ledger_file=path,
+        baseline=before,
+    )
+    assert text is not None and "makeSlug" in text
+    assert len(ledger.load(path)) == 1
+
+
+def test_baseline_defaults_to_the_committed_file(tmp_path):
+    import subprocess
+
+    repo = _repo(tmp_path)
+    for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *args], cwd=repo, check=True)
+    (repo / "d.ts").write_text(SLUG.format(name="makeSlug") + SLUG.format(name="toSlug"))
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+    (repo / "d.ts").write_text((repo / "d.ts").read_text() + "export const unrelated = 1;\n")
+    text, rows = _check(repo, "d.ts", {"d.ts"}, tmp_path)
+    assert text is None
+    assert rows == {}
+
+
 def test_file_outside_the_indexed_languages_is_unsupported(tmp_path):
     # Parseable but not indexed (e.g. Markdown): must not pass as "checked, clean".
     import pytest
