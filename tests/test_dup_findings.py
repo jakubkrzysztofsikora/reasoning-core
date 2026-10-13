@@ -150,3 +150,32 @@ def test_corrupt_line_is_reported_not_silently_dropped(tmp_path, capsys):
     rows = ledger.load(path)
     assert len(rows) == 1
     assert "corrupt" in capsys.readouterr().err
+
+
+def test_valid_json_that_is_not_a_finding_is_skipped_and_reported(tmp_path, capsys):
+    path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
+    ledger.record(path, _finding())
+    with path.open("a") as fh:
+        fh.write('[1, 2]\n{"no_id": true}\n')
+    assert len(ledger.load(path)) == 1
+    assert capsys.readouterr().err.count("corrupt") == 2
+
+
+def test_undecodable_bytes_are_skipped_and_reported(tmp_path, capsys):
+    path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
+    ledger.record(path, _finding())
+    with path.open("ab") as fh:
+        fh.write(b"\xff\xfe garbage\n")
+    assert len(ledger.load(path)) == 1
+    assert "corrupt" in capsys.readouterr().err
+
+
+def test_a_truncated_last_line_does_not_swallow_the_next_row(tmp_path, capsys):
+    # A hook killed mid-write leaves a line with no newline; the next row must
+    # still land on its own line.
+    path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"id": "x", "sta')
+    f = _finding()
+    ledger.record(path, f)
+    assert f["id"] in ledger.load(path)

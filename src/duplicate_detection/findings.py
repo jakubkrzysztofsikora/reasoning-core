@@ -99,8 +99,15 @@ def make_finding(
 def _append(path: Path, row: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row) + "\n")
+        with path.open("a+b") as fh:
+            # A write cut short (hook killed) leaves no trailing newline; start
+            # on a fresh line so this row isn't glued onto the broken one.
+            fh.seek(0, os.SEEK_END)
+            lead = b""
+            if fh.tell():
+                fh.seek(-1, os.SEEK_END)
+                lead = b"" if fh.read(1) == b"\n" else b"\n"
+            fh.write(lead + (json.dumps(row) + "\n").encode("utf-8"))
     except OSError as exc:
         raise LedgerError(f"cannot write dup findings ledger {path}") from exc
 
@@ -111,13 +118,15 @@ def load(path: Path) -> dict[str, dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
     if not path.exists():
         return rows
-    with path.open(encoding="utf-8") as fh:
+    with path.open(encoding="utf-8", errors="replace") as fh:
         for n, line in enumerate(fh, 1):
             if not line.strip():
                 continue
             try:
                 row = json.loads(line)
             except ValueError:
+                row = None
+            if not isinstance(row, dict) or "id" not in row or "status" not in row:
                 print(f"dup-findings: corrupt ledger line {n} in {path}, skipped", file=sys.stderr)
                 continue
             rows[row["id"]] = row
