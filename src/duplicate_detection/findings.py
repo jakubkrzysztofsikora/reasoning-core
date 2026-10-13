@@ -6,7 +6,8 @@ One append-only .JSONL file per repo, under the cache root (``$RC_CACHE_DIR`` el
 ``git status``. Rows are whole findings; on load the latest row per ``id`` wins.
 
 Statuses: ``open`` (not yet acted on), ``deferred`` (the agent recorded a
-reason to leave it), ``resolved`` (re-validation found the duplicate gone).
+reason to leave it), ``escalated`` (still open after the Stop block cap; no
+longer blocks), ``resolved`` (re-validation found the duplicate gone).
 How often a finding has blocked a Stop is counted in its ``blocks`` field.
 """
 from __future__ import annotations
@@ -20,7 +21,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-STATUSES = ("open", "deferred", "resolved")
+STATUSES = ("open", "deferred", "escalated", "resolved")
+# Statuses an edit that sees the same duplication again must not undo.
+_STICKY = ("deferred", "escalated")
 
 
 class LedgerError(RuntimeError):
@@ -122,11 +125,14 @@ def load(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def record(path: Path, finding: dict[str, Any]) -> None:
-    """Upsert a finding. A deferred finding stays deferred when the same
-    duplication is seen again -- the agent already gave its reason."""
+    """Upsert a finding. A deferred or escalated finding keeps its status when
+    the same duplication is seen again, and the Stop block count carries over,
+    so editing the file again does not reset the cap."""
     existing = load(path).get(finding["id"])
-    if existing and existing["status"] == "deferred":
+    if existing and existing["status"] in _STICKY:
         return
+    if existing and "blocks" in existing and "blocks" not in finding:
+        finding = dict(finding, blocks=existing["blocks"])
     _append(path, finding)
 
 

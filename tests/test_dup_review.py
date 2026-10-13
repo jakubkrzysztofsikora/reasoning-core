@@ -145,6 +145,39 @@ def test_block_is_capped_then_escalated(tmp_path):
     d = stop_decision(str(repo), path)
     assert d.block is False
     assert d.escalated == [f["id"]]
+    assert ledger.load(path)[f["id"]]["status"] == "escalated"
+
+
+def test_escalation_is_reported_once_not_on_every_later_stop(tmp_path):
+    repo, path = _setup(tmp_path)
+    f = _menus(repo)
+    ledger.record(path, f)
+    for _ in range(MAX_BLOCKS + 1):
+        stop_decision(str(repo), path)
+    later = stop_decision(str(repo), path)
+    assert later.block is False
+    assert later.escalated == []
+
+
+def test_cap_survives_the_finding_being_seen_again_by_an_edit(tmp_path):
+    repo, path = _setup(tmp_path)
+    f = _menus(repo)
+    ledger.record(path, f)
+    for _ in range(MAX_BLOCKS):
+        assert stop_decision(str(repo), path).block is True
+        ledger.record(path, _menus(repo))  # the agent edits the file again
+    assert stop_decision(str(repo), path).block is False
+
+
+def test_unchanged_finding_is_not_rewritten_on_every_stop(tmp_path):
+    repo, path = _setup(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    (repo / "b.ts").write_text(SLUG.format(name="makeSlug"))
+    ledger.record(path, _finding(("b.ts", "makeSlug"), [("a.ts", "toSlug")]))
+    stop_decision(str(repo), path)
+    rows = path.read_text().count("\n")
+    stop_decision(str(repo), path)
+    assert path.read_text().count("\n") == rows
 
 
 def test_shrunk_finding_is_re_judged(tmp_path):

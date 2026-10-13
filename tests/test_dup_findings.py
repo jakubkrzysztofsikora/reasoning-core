@@ -90,6 +90,25 @@ def test_record_does_not_reopen_a_deferred_finding(tmp_path):
     assert ledger.load(path)[f["id"]]["status"] == "deferred"
 
 
+def test_record_keeps_the_block_count_when_the_finding_is_seen_again(tmp_path):
+    # Otherwise every later edit of the file resets the Stop block cap.
+    path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
+    f = _finding()
+    ledger.record(path, f)
+    ledger.record(path, dict(ledger.load(path)[f["id"]], blocks=2))
+    ledger.record(path, _finding())
+    assert ledger.load(path)[f["id"]]["blocks"] == 2
+
+
+def test_record_does_not_reopen_an_escalated_finding(tmp_path):
+    path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
+    f = _finding()
+    ledger.record(path, f)
+    ledger.set_status(path, f["id"], "escalated")
+    ledger.record(path, _finding())
+    assert ledger.load(path)[f["id"]]["status"] == "escalated"
+
+
 def test_record_write_failure_raises_with_cause(tmp_path):
     blocker = tmp_path / "file"
     blocker.write_text("x")

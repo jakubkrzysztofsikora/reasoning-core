@@ -47,6 +47,12 @@ def test_unknown_id_is_rejected_and_lists_open_ids(repo):
     assert fid in str(exc.value)
 
 
+def test_escalated_finding_can_still_be_deferred(repo):
+    root, fid = repo
+    ledger.set_status(ledger.ledger_path(root), fid, "escalated")
+    assert defer(root, fid, "callers diverge")["status"] == "deferred"
+
+
 def test_resolved_finding_cannot_be_deferred(repo):
     root, fid = repo
     ledger.set_status(ledger.ledger_path(root), fid, "resolved")
