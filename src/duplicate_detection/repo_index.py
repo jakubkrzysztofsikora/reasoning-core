@@ -7,7 +7,7 @@ tokens + a repo token-df, and embeds each. The embedder is **injectable**
 offline with a stub -- the real model is only reached when no ``embed_fn`` is
 supplied.
 
-File discovery reuses ``project_index._iter_repo_files`` with the dup oracle's
+File discovery reuses ``project_index.iter_repo_files`` with the dup oracle's
 own extension set: that helper walks only ``.py/.js/.ts/.tsx`` by default (for
 its call-graph feature), which would silently miss duplicates in ``.mjs/.cjs``
 (both JavaScript).
@@ -28,7 +28,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from ..grammars import EXTENSION_MAP, UnsupportedLanguageError
-from ..project_index import _iter_repo_files
+from ..project_index import iter_repo_files
 from .index import build_token_df, extract_functions, logic_tokens
 from .oracle import FunctionRecord
 
@@ -156,7 +156,7 @@ def build_dup_index(
 
     records: list[FunctionRecord] = []
     vecs: list["np.ndarray"] = []
-    for rel in _iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS):
+    for rel in iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS):
         if len(records) >= max_funcs:
             break
         file_records, file_vectors = _index_file(repo_root, rel, embed_fn)
@@ -393,7 +393,7 @@ def load_or_build_dup_index(
     old_files: dict[str, dict] = loaded[0]["files"] if loaded else {}
     old_vectors = loaded[1] if loaded else np.empty((0, 0), dtype=np.float32)
 
-    files_on_disk = _iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS)  # sorted, stable
+    files_on_disk = iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS)  # sorted, stable
     disk_set = set(files_on_disk)
 
     walked: list[str] = []  # files processed this run, in sorted order

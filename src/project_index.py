@@ -88,7 +88,7 @@ def find_duplicate_definitions(repo_root: str, file_path: str, after_src: str) -
     except OSError:
         before = []
     other_definitions: list[tuple[str, list[tuple[str, int, str]]]] = []
-    for rel_path in _iter_repo_files(repo_root):
+    for rel_path in iter_repo_files(repo_root):
         if not rel_path.endswith(".py") or rel_path == target_rel:
             continue
         try:
@@ -168,7 +168,7 @@ def _local_imports(src: str, rel_path: str, known: set[str]) -> set[str]:
 def find_import_cycle(repo_root: str, file_path: str, after_src: str) -> list[str] | None:
     """Return one newly present local import cycle, including its closing node."""
     root = Path(repo_root)
-    files = [path for path in _iter_repo_files(repo_root) if path.endswith(".py")]
+    files = [path for path in iter_repo_files(repo_root) if path.endswith(".py")]
     try:
         target_rel = str(Path(file_path).resolve().relative_to(root.resolve())) if Path(file_path).is_absolute() else str(Path(file_path))
     except ValueError:
@@ -241,7 +241,7 @@ def _is_skip_dir(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pat) for pat in _SKIP_DIR_PATTERNS)
 
 
-def _iter_repo_files(repo_root: str, exts: "frozenset[str]" = _SRC_EXTS) -> list[str]:
+def iter_repo_files(repo_root: str, exts: "frozenset[str]" = _SRC_EXTS) -> list[str]:
     """Return sorted list of relative source-file paths.
 
     ``exts`` selects which file extensions to include (default: the call-graph
@@ -352,7 +352,7 @@ _PROJECT_INDEX_MAX_SESSIONS: int = int(os.environ.get("RC_PROJECT_INDEX_MAX", "6
 
 def _build_index(repo_root: str, session_id: str) -> ProjectIndex:
     """Build the project index from scratch."""
-    files = _iter_repo_files(repo_root)
+    files = iter_repo_files(repo_root)
     symbol_index: dict[str, list[tuple[str, int]]] = {}
     import_index: dict[str, set[str]] = {}
 
@@ -458,4 +458,5 @@ __all__ = [
     "clear_all_indices",
     "clear_index",
     "get_or_build_index",
+    "iter_repo_files"
 ]

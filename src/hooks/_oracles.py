@@ -62,7 +62,7 @@ def health_canaries(repo_root: str | None = None) -> dict[str, dict[str, object]
     try:
         from src import project_index
         root = repo_root or os.getcwd()
-        checks["semantic_index"] = {"enabled": os.environ.get("RC_STRUCTURAL_BLOCK", "1") == "1", "healthy": isinstance(project_index._iter_repo_files(root), list)}
+        checks["semantic_index"] = {"enabled": os.environ.get("RC_STRUCTURAL_BLOCK", "1") == "1", "healthy": isinstance(project_index.iter_repo_files(root), list)}
     except Exception as exc:  # noqa: BLE001
         checks["semantic_index"] = {"enabled": True, "healthy": False, "detail": str(exc)}
     # Rule/plan modules are imported as availability canaries; their actual
