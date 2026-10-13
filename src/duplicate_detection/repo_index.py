@@ -42,7 +42,7 @@ from .oracle import FunctionRecord
 # normaliser, not just a wider walk. Explicit allowlist by design; yields
 # {.py, .js, .mjs, .cjs, .ts, .tsx}.
 _CODE_LANGUAGES = frozenset({"python", "javascript", "typescript", "tsx"})
-_DUP_SOURCE_EXTENSIONS = frozenset(
+DUP_SOURCE_EXTENSIONS = frozenset(
     ext for ext, lang in EXTENSION_MAP.items() if lang in _CODE_LANGUAGES
 )
 
@@ -156,7 +156,7 @@ def build_dup_index(
 
     records: list[FunctionRecord] = []
     vecs: list["np.ndarray"] = []
-    for rel in iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS):
+    for rel in iter_repo_files(repo_root, DUP_SOURCE_EXTENSIONS):
         if len(records) >= max_funcs:
             break
         file_records, file_vectors = _index_file(repo_root, rel, embed_fn)
@@ -393,7 +393,7 @@ def load_or_build_dup_index(
     old_files: dict[str, dict] = loaded[0]["files"] if loaded else {}
     old_vectors = loaded[1] if loaded else np.empty((0, 0), dtype=np.float32)
 
-    files_on_disk = iter_repo_files(repo_root, _DUP_SOURCE_EXTENSIONS)  # sorted, stable
+    files_on_disk = iter_repo_files(repo_root, DUP_SOURCE_EXTENSIONS)  # sorted, stable
     disk_set = set(files_on_disk)
 
     walked: list[str] = []  # files processed this run, in sorted order

@@ -15,7 +15,8 @@ from typing import Any, Callable
 from . import findings as ledger
 from .index import extract_functions, logic_tokens
 from ..grammars import UnsupportedLanguageError
-from .repo_index import _DUP_SOURCE_EXTENSIONS
+from ..project_index import iter_repo_files
+from .repo_index import DUP_SOURCE_EXTENSIONS
 from .oracle import CONFIRM_DEFAULT, RECALL_DEFAULT, DupHit, find_near_duplicates
 
 EXTRACT = "extract"
@@ -33,7 +34,6 @@ _COMMITTED = object()
 _TEST_FILE_RE = re.compile(
     r"(^|/)(tests?|__tests__)/|\.(test|spec)\.[^/]+$|(^|/)test_[^/]+$|_test\.[^/]+$"
 )
-_SKIP_DIRS = frozenset({"node_modules", "dist", "build", "vendor"})
 
 
 def split_moves(
@@ -60,25 +60,20 @@ def is_test_file(rel_path: str) -> bool:
 
 
 def load_test_texts(repo_root: str) -> dict[str, str]:
-    """Repo-relative path -> text, for every test file outside vendored and
-    hidden directories. An unreadable test file is reported on stderr and
-    skipped: one bad file must not hide coverage for the rest."""
+    """Repo-relative path -> text, for every test file in the indexed languages,
+    walked with the same skip rules as the index. An unreadable test file is
+    reported on stderr and skipped: one bad file must not hide coverage for the
+    rest."""
     texts: dict[str, str] = {}
-    for directory, subdirectories, files in os.walk(repo_root):
-        # Pruning subdirectories in place stops os.walk descending into them.
-        subdirectories[:] = sorted(
-            d for d in subdirectories if d not in _SKIP_DIRS and not d.startswith(".")
-        )
-        for file_name in sorted(files):
-            full_path = os.path.join(directory, file_name)
-            rel = os.path.relpath(full_path, repo_root).replace(os.sep, "/")
-            if not is_test_file(rel):
-                continue
-            try:
-                with open(full_path, encoding="utf-8", errors="replace") as fh:
-                    texts[rel] = fh.read()
-            except OSError as exc:
-                print(f"dup-oracle: cannot read test file {rel}: {exc}", file=sys.stderr)
+    for rel in iter_repo_files(repo_root, DUP_SOURCE_EXTENSIONS):
+        rel = rel.replace(os.sep, "/")
+        if not is_test_file(rel):
+            continue
+        try:
+            with open(os.path.join(repo_root, rel), encoding="utf-8", errors="replace") as fh:
+                texts[rel] = fh.read()
+        except OSError as exc:
+            print(f"dup-oracle: cannot read test file {rel}: {exc}", file=sys.stderr)
     return texts
 
 
@@ -162,7 +157,7 @@ def check_edit(
     shown inline, once per finding. Ledger write failures raise ``LedgerError``.
     """
     ext = os.path.splitext(file_path)[1].lower()
-    if ext not in _DUP_SOURCE_EXTENSIONS:
+    if ext not in DUP_SOURCE_EXTENSIONS:
         # Parseable is not enough: only these languages are indexed, so any
         # other file would wrongly read as "checked, no duplicates".
         raise UnsupportedLanguageError(ext)
