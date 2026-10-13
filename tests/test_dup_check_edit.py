@@ -163,6 +163,23 @@ def test_baseline_defaults_to_the_committed_file(tmp_path):
     assert rows == {}
 
 
+def test_reports_every_finding_it_recorded_even_without_a_message(tmp_path):
+    # The hook's audit event must not say "clean" for a silent follow-up.
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    (repo / "d.ts").write_text(SLUG.format(name="makeSlug"))
+    path = tmp_path / "ledger.jsonl"
+    recorded: list[str] = []
+    text = check_edit(
+        str(repo / "d.ts"), (repo / "d.ts").read_text(),
+        build_dup_index(str(repo), embed_fn=_stub_embed),
+        embed_fn=_stub_embed, repo_root=str(repo), changed={"d.ts"}, ledger_file=path,
+        recorded=recorded,
+    )
+    assert text is None
+    assert recorded == list(ledger.load(path))
+
+
 def test_file_outside_the_indexed_languages_is_unsupported(tmp_path):
     # Parseable but not indexed (e.g. Markdown): must not pass as "checked, clean".
     import pytest

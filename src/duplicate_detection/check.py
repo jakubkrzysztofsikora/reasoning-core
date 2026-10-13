@@ -140,6 +140,7 @@ def check_edit(
     ledger_file: Path,
     test_texts: dict[str, str] | None = None,
     baseline: str | None | object = _COMMITTED,
+    recorded: list[str] | None = None,
     recall: float = RECALL_DEFAULT,
     confirm: float = CONFIRM_DEFAULT,
     top_k: int = 3,
@@ -149,7 +150,8 @@ def check_edit(
 
     A function identical to one in ``baseline`` (default: the file as committed
     at ``HEAD``; ``None`` checks every function) is skipped, so duplication the
-    agent didn't write is not pinned on it.
+    agent didn't write is not pinned on it. When given, ``recorded`` collects
+    the id of every finding written, shown inline or not.
 
     Routing: a match in another file of the working diff is a likely move
     (recorded, silent); matches only in untouched files are a tracked follow-up
@@ -210,6 +212,8 @@ def check_edit(
                 verdict=NOTE, in_diff=False, likely_move=True, test_covered=False,
             )
         ledger.record(ledger_file, finding)
+        if recorded is not None:
+            recorded.append(finding["id"])
         if finding["in_diff"] and finding["id"] not in seen:
             finding["matches"] = finding["matches"][:top_k]
             blocks.append(_format_inline(name, rel, finding))
