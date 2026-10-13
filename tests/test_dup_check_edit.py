@@ -212,6 +212,21 @@ def test_paths_through_a_symlink_resolve_to_the_same_repo_file(tmp_path):
     assert {r["added_path"] for r in ledger.load(path).values()} <= {"d.ts"}
 
 
+def test_copies_in_the_diff_still_count_when_another_copy_is_outside_it(tmp_path):
+    # The agent adds the committed handler to two new files: 3 covered sites.
+    # The in-diff copy is not a move here, since a copy outside the diff stays.
+    repo = _repo(tmp_path)
+    for menu in ("AccountMenu", "BasemapControl", "SortMenu"):
+        (repo / f"{menu}.ts").write_text(DISMISS.format(name=f"dismiss{menu}"))
+        (repo / f"{menu}.test.ts").write_text(f"import {{ {menu} }} from './{menu}'")
+    changed = {"BasemapControl.ts", "SortMenu.ts"}
+    text, rows = _check(repo, "SortMenu.ts", changed, tmp_path)
+    [row] = [r for r in rows.values() if r["added_name"] == "dismissSortMenu"]
+    assert row["sites"] == 3
+    assert row["verdict"] == EXTRACT
+    assert row["likely_move"] is False
+
+
 def test_file_outside_the_indexed_languages_is_unsupported(tmp_path):
     # Parseable but not indexed (e.g. Markdown): must not pass as "checked, clean".
     import pytest

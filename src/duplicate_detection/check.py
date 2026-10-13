@@ -201,14 +201,16 @@ def check_edit(
             continue
         real, moves = split_moves(hits, other_changed)
         if real:
+            # A copy outside the diff means this is not (only) a move, so every
+            # copy counts, the ones in other changed files included.
             if test_texts is None:
                 test_texts = load_test_texts(repo_root)
             covered = all(site_is_covered(p, n, test_texts) for p, n in
-                          [(rel, name)] + [(h.path, h.name) for h in real])
+                          [(rel, name)] + [(h.path, h.name) for h in hits])
             finding = ledger.make_finding(
-                added_path=rel, added_name=name, matches=[_match(h) for h in real],
-                verdict=verdict(sites=1 + len(real), n_tokens=len(tokens), covered=covered),
-                in_diff=any(h.path == rel for h in real), likely_move=False,
+                added_path=rel, added_name=name, matches=[_match(h) for h in hits],
+                verdict=verdict(sites=1 + len(hits), n_tokens=len(tokens), covered=covered),
+                in_diff=any(h.path == rel for h in hits), likely_move=False,
                 test_covered=covered,
             )
         else:
