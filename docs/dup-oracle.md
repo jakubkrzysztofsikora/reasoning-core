@@ -116,6 +116,16 @@ repo (`~/.cache/reasoning-core/dup-findings.<repo-hash>.jsonl`; statuses
    waits for `RC_MODE=copilot`. An explicit `RC_MODE=advise` turns blocking
    off; findings then go to stderr and the audit log only.
 
+**Python moves and the structural check.** `pre_edit_guard`'s deterministic
+structural check (`project_index.find_duplicate_definitions`, Python only) is
+separate from this oracle and does not know about moves. Moving a function by
+first writing it to the new file, while the old copy still exists, is reported
+as `duplicate_definition:exact_name`. Under `RC_MODE=copilot` / `autopilot`
+(with `RC_STRUCTURAL_BLOCK` at its default `1`) that edit is **blocked**; under
+the default `advise` it is only a warning. Removing the old copy first, then
+adding the new one, raises nothing. This oracle treats the same copy-first move
+as a likely move and stays quiet.
+
 Both hooks fail open: an error never blocks, and leaves a stderr line plus a
 `fail-open` audit event.
 

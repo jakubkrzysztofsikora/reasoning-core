@@ -119,8 +119,9 @@ The per-edit duplicate check fired PreToolUse, mid-increment, and ended with
 - [x] **6c. Stop hook** `stop_duplicate_check.py`. → B1, B2, B3
 - [x] **7. Docs**: `docs/dup-oracle.md` — PostToolUse + Stop wiring, rule, move
   heuristic, audit events.
-- [ ] **7b. Structural-block finding**: whether `pre_edit_guard` blocks a
-  Python function move — not yet checked.
+- [x] **7b. Structural-block finding**: a copy-first Python move is reported as
+  `duplicate_definition:exact_name`; blocked in copilot/autopilot, warn in
+  advise; remove-first raises nothing. Documented in `docs/dup-oracle.md`.
 
 ## Out of scope / risks
 
