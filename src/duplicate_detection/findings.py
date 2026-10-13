@@ -89,7 +89,9 @@ def committed_source(repo_root: str, rel_path: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", "show", f"HEAD:./{rel_path}"],
-            cwd=repo_root, capture_output=True, text=True, timeout=10,
+            cwd=repo_root, capture_output=True, timeout=10,
+            # Read like the edited file is read: bad bytes must not fail the check.
+            encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"dup-findings: committed version unknown ({exc!r})", file=sys.stderr)
@@ -175,7 +177,7 @@ def record(path: Path, finding: dict[str, Any]) -> None:
     existing = load(path).get(finding["id"])
     if existing and existing["status"] in _STICKY:
         return
-    if existing and "blocks" in existing and "blocks" not in finding:
+    if existing and existing["status"] == "open" and "blocks" in existing and "blocks" not in finding:
         finding = dict(finding, blocks=existing["blocks"])
     _append(path, finding)
 

@@ -128,7 +128,10 @@ def stop_decision(
     stop is let through) instead of blocking forever. ``count_blocks=False``
     (advise mode: nothing is actually blocked) leaves the counts untouched.
     """
-    rows = [r for r in ledger.load(ledger_file).values() if r["status"] == "open"]
+    # Deferred and escalated findings are re-checked too, but only to resolve
+    # them once the duplicate is gone; otherwise their status would outlive the
+    # code, and the same copies reintroduced later would stay silent for good.
+    rows = [r for r in ledger.load(ledger_file).values() if r["status"] != "resolved"]
     decision = StopDecision(block=False)
     if not rows:
         return decision
@@ -141,8 +144,10 @@ def stop_decision(
             print(f"dup-oracle: cannot re-check finding {row['id']}: {exc}", file=sys.stderr)
             now = row
         if now is None:
-            ledger.set_status(ledger_file, row["id"], "resolved")
+            ledger.set_status(ledger_file, row["id"], "resolved", reason=row.get("reason"))
             decision.resolved.append(row["id"])
+            continue
+        if row["status"] != "open":
             continue
         if now["verdict"] == EXTRACT:
             if now.get("blocks", 0) >= max_blocks:

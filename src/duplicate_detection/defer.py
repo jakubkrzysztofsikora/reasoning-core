@@ -21,7 +21,7 @@ def defer(repo_root: str, finding_id: str, reason: str) -> dict[str, Any]:
     rows = ledger.load(path)
     row = rows.get(finding_id)
     if row is None:
-        live = sorted(i for i, r in rows.items() if r["status"] == "open")
+        live = sorted(i for i, r in rows.items() if r["status"] in ("open", "escalated"))
         raise DeferError(f"no finding {finding_id!r}; open findings: {', '.join(live) or 'none'}")
     if row["status"] == "resolved":
         raise DeferError(f"finding {finding_id} is already resolved")

@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections import Counter
 
 from pathlib import Path
 from typing import Any, Callable
@@ -169,9 +170,11 @@ def check_edit(
     rel = os.path.relpath(os.path.realpath(file_path), os.path.realpath(repo_root)).replace(os.sep, "/")
     if baseline is _COMMITTED:
         baseline = ledger.committed_source(repo_root, rel)
-    unchanged = set()
+    # Counted, not a set: a second same-named copy (another class's `handle`)
+    # is new even though one identical copy was already committed.
+    unchanged: Counter = Counter()
     if isinstance(baseline, str) and baseline:
-        unchanged = {(n, s) for n, _, s in extract_functions(file_path, baseline)}
+        unchanged = Counter((n, s) for n, _, s in extract_functions(file_path, baseline))
     other_changed = None if changed is None else changed - {rel}
     seen = set(ledger.load(ledger_file))
     # The index refresh after the edit already embedded this file; reuse those
@@ -181,7 +184,8 @@ def check_edit(
     }
     blocks = []
     for name, line, func_source in extract_functions(file_path, source):
-        if (name, func_source) in unchanged:
+        if unchanged[(name, func_source)] > 0:
+            unchanged[(name, func_source)] -= 1
             continue
         tokens = logic_tokens(file_path, func_source)
         if not tokens:

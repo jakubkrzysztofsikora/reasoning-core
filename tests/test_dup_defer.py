@@ -53,6 +53,14 @@ def test_escalated_finding_can_still_be_deferred(repo):
     assert defer(root, fid, "callers diverge")["status"] == "deferred"
 
 
+def test_unknown_id_error_lists_escalated_findings_too(repo):
+    root, fid = repo
+    ledger.set_status(ledger.ledger_path(root), fid, "escalated")
+    with pytest.raises(DeferError) as exc:
+        defer(root, "nope", "why")
+    assert fid in str(exc.value)
+
+
 def test_resolved_finding_cannot_be_deferred(repo):
     root, fid = repo
     ledger.set_status(ledger.ledger_path(root), fid, "resolved")

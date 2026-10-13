@@ -148,6 +148,22 @@ def test_a_copy_added_next_to_an_existing_function_is_still_caught(tmp_path):
     assert len(ledger.load(path)) == 1
 
 
+def test_a_same_named_copy_added_next_to_the_original_is_still_checked(tmp_path):
+    # e.g. a second class gets the same `handle` method: one copy is new.
+    repo = _repo(tmp_path)
+    (repo / "a.ts").write_text(SLUG.format(name="toSlug"))
+    before = SLUG.format(name="toSlug")
+    (repo / "d.ts").write_text(before + SLUG.format(name="toSlug"))
+    path = tmp_path / "ledger.jsonl"
+    check_edit(
+        str(repo / "d.ts"), (repo / "d.ts").read_text(),
+        build_dup_index(str(repo), embed_fn=_stub_embed),
+        embed_fn=_stub_embed, repo_root=str(repo), changed={"d.ts"}, ledger_file=path,
+        baseline=before,
+    )
+    assert len(ledger.load(path)) == 1
+
+
 def test_baseline_defaults_to_the_committed_file(tmp_path):
     import subprocess
 

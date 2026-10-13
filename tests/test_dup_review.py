@@ -148,6 +148,31 @@ def test_block_is_capped_then_escalated(tmp_path):
     assert ledger.load(path)[f["id"]]["status"] == "escalated"
 
 
+def test_deferred_or_escalated_finding_resolves_once_the_duplicate_is_gone(tmp_path):
+    # Otherwise the sticky status outlives the code, and a later reintroduction
+    # of the same copies would stay silent for good.
+    for status in ("deferred", "escalated"):
+        (tmp_path / status).mkdir()
+        repo, path = _setup(tmp_path / status)
+        f = _menus(repo)
+        ledger.record(path, f)
+        ledger.set_status(path, f["id"], status, reason="r")
+        for m in MENUS[1:]:
+            (repo / f"{m}.ts").write_text(f"export const {m} = 1;\n")
+        d = stop_decision(str(repo), path)
+        assert d.resolved == [f["id"]]
+        assert ledger.load(path)[f["id"]]["status"] == "resolved"
+
+
+def test_deferred_finding_still_present_stays_deferred(tmp_path):
+    repo, path = _setup(tmp_path)
+    f = _menus(repo)
+    ledger.record(path, f)
+    ledger.set_status(path, f["id"], "deferred", reason="r")
+    stop_decision(str(repo), path)
+    assert ledger.load(path)[f["id"]]["status"] == "deferred"
+
+
 def test_escalation_is_reported_once_not_on_every_later_stop(tmp_path):
     repo, path = _setup(tmp_path)
     f = _menus(repo)

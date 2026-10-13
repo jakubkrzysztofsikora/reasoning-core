@@ -51,6 +51,28 @@ def test_ledger_is_the_same_from_a_subdirectory_or_a_symlinked_path(tmp_path):
     assert ledger.ledger_path(str(link), cache_dir=cache) == root
 
 
+def test_committed_source_tolerates_a_non_utf8_file(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (repo / "a.py").write_bytes(b"# caf\xe9\ndef f():\n    return 1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "init")
+    assert "def f()" in ledger.committed_source(str(repo), "a.py")
+
+
+def test_record_does_not_carry_blocks_from_a_resolved_finding(tmp_path):
+    # Reintroduced after being fixed: a fresh cap, not the old count.
+    path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
+    f = _finding()
+    ledger.record(path, dict(f, blocks=2))
+    ledger.set_status(path, f["id"], "resolved")
+    ledger.record(path, _finding())
+    assert ledger.load(path)[f["id"]].get("blocks", 0) == 0
+
+
 def test_finding_id_is_stable_and_ignores_match_order():
     f1 = _finding()
     f2 = ledger.make_finding(
