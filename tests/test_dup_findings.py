@@ -159,6 +159,15 @@ def test_record_does_not_reopen_an_escalated_finding(tmp_path):
     assert ledger.load(path)[f["id"]]["status"] == "escalated"
 
 
+def test_record_skips_a_finding_that_has_not_changed(tmp_path):
+    # Every edit that sees the same duplication would otherwise add a row.
+    path = ledger.ledger_path("/repo", cache_dir=str(tmp_path))
+    ledger.record(path, _finding())
+    rows = path.read_text().count("\n")
+    ledger.record(path, _finding())
+    assert path.read_text().count("\n") == rows
+
+
 def test_record_write_failure_raises_with_cause(tmp_path):
     blocker = tmp_path / "file"
     blocker.write_text("x")

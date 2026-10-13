@@ -91,12 +91,6 @@ def revalidate(
     )
 
 
-def _changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
-    """Whether a re-check changed anything but the timestamp; an unchanged
-    finding is not rewritten, so the append-only ledger doesn't grow per Stop."""
-    return {k: v for k, v in before.items() if k != "ts"} != {k: v for k, v in after.items() if k != "ts"}
-
-
 def _format(item: dict[str, Any]) -> str:
     cover = "test-covered" if item["test_covered"] else "not test-covered"
     lines = [
@@ -165,8 +159,7 @@ def stop_decision(
             decision.extract.append(now)
         else:
             decision.notes.append(now)
-        if _changed(row, now):
-            ledger.record(ledger_file, now)
+        ledger.record(ledger_file, now)  # a no-op when nothing changed
     if decision.extract:
         decision.block = True
         decision.message = _message(decision.extract, decision.notes)

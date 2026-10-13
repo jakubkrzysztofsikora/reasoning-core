@@ -179,12 +179,18 @@ def record(path: Path, finding: dict[str, Any]) -> None:
         return
     if existing and existing["status"] == "open" and "blocks" in existing and "blocks" not in finding:
         finding = dict(finding, blocks=existing["blocks"])
-    if existing and _was_extract(existing):
+    if _was_extract(finding) or (existing and _was_extract(existing)):
         # Kept, even past resolution, so the Stop review can tell an extraction
         # (copies reduced to thin wrappers, re-recorded as a NOTE whenever one is
         # edited) from a plain trivial note.
         finding = dict(finding, was_extract=True)
+    if existing and _without_ts(existing) == _without_ts(finding):
+        return  # nothing new: the append-only ledger shouldn't grow per edit or Stop
     _append(path, finding)
+
+
+def _without_ts(row: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in row.items() if k != "ts"}
 
 
 def _was_extract(row: dict[str, Any]) -> bool:
