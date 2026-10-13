@@ -35,9 +35,26 @@ def _cache_dir_default() -> Path:
     return Path(override) if override else Path.home() / ".cache" / "reasoning-core"
 
 
+def resolve_repo_root(start: str) -> str:
+    """The real path of the git work tree containing ``start``, else of
+    ``start`` itself. One repo gets one key however it was reached (a
+    subdirectory, a symlink)."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=start, capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return os.path.realpath(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        # silent-ok: not a repo, or git missing -- changed_files() reports the latter.
+        pass
+    return os.path.realpath(start)
+
+
 def ledger_path(repo_root: str, cache_dir: str | None = None) -> Path:
     base = Path(cache_dir) if cache_dir else _cache_dir_default()
-    key = hashlib.sha256(os.path.abspath(repo_root).encode("utf-8")).hexdigest()[:16]
+    key = hashlib.sha256(resolve_repo_root(repo_root).encode("utf-8")).hexdigest()[:16]
     return base / f"dup-findings.{key}.jsonl"
 
 

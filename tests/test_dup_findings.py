@@ -38,6 +38,19 @@ def test_ledger_path_is_per_repo_under_cache_dir(tmp_path):
     assert a.parent == tmp_path
 
 
+def test_ledger_is_the_same_from_a_subdirectory_or_a_symlinked_path(tmp_path):
+    # The hooks and `rc dup-defer` may run from different directories of one repo.
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    _git(repo, "init", "-q")
+    link = tmp_path / "link"
+    link.symlink_to(repo)
+    cache = str(tmp_path / "cache")
+    root = ledger.ledger_path(str(repo), cache_dir=cache)
+    assert ledger.ledger_path(str(repo / "src"), cache_dir=cache) == root
+    assert ledger.ledger_path(str(link), cache_dir=cache) == root
+
+
 def test_finding_id_is_stable_and_ignores_match_order():
     f1 = _finding()
     f2 = ledger.make_finding(
