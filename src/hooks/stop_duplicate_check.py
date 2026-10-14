@@ -93,7 +93,7 @@ def main() -> None:
         sys.exit(0)
     try:
         payload = _read_payload()
-        repo_root = payload.get("cwd") or os.getcwd()
+        repo_root = ledger.resolve_repo_root(payload.get("cwd") or os.getcwd())
         advise_mode = os.environ.get("RC_MODE", "").strip().lower() == "advise"
         decision = stop_decision(repo_root, ledger.ledger_path(repo_root), count_blocks=not advise_mode)
 

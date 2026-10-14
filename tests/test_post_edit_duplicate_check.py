@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -103,10 +105,33 @@ def test_cross_file_duplicate_is_recorded_without_a_message(env, monkeypatch, ca
     monkeypatch.setattr(hook.ledger, "changed_files", lambda root: {"d.ts"})
     assert _run(monkeypatch, _payload(repo, "d.ts")) == 0
     assert capsys.readouterr().out == ""
-    [event] = _events(audit)
-    assert event["decision"] == "clean"
     rows = hook.ledger.load(hook.ledger.ledger_path(str(repo)))
     assert [r["added_name"] for r in rows.values()] == ["makeSlug"]
+    # Recorded silently is still a finding, not "clean".
+    [event] = _events(audit)
+    assert event["decision"] == "found"
+    assert event["inline"] is False
+    assert event["finding_ids"] == list(rows)
+
+
+def test_hook_run_from_a_subdirectory_uses_the_repo_top_level(env, monkeypatch, capsys):
+    repo, audit = env
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "d.ts").write_text(SLUG.format(name="makeSlug") + SLUG.format(name="toSlug"))
+    roots = []
+
+    def _index(root):
+        roots.append(root)
+        return build_dup_index(root, embed_fn=_stub_embed)
+
+    monkeypatch.setattr(hook, "_get_index", _index)
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": str(repo / "src" / "d.ts")},
+               "cwd": str(repo / "src")}
+    assert _run(monkeypatch, payload) == 0
+    assert roots == [os.path.realpath(repo)]
+    rows = hook.ledger.load(hook.ledger.ledger_path(str(repo)))
+    assert {r["added_path"] for r in rows.values()} == {"src/d.ts"}
 
 
 def test_missing_file_is_logged_as_skipped(env, monkeypatch, capsys):

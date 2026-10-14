@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -57,6 +58,18 @@ def _open_extract(repo: Path) -> dict:
     )
     ledger.record(ledger.ledger_path(str(repo)), f)
     return f
+
+
+def test_stop_from_a_subdirectory_reviews_the_whole_repo(env, monkeypatch, capsys):
+    # Paths in the ledger are relative to the repo's top level; reviewing them
+    # from a subdirectory must not mistake the copies for gone and resolve them.
+    repo, _ = env
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    f = _open_extract(repo)
+    (repo / "src").mkdir()
+    out, _ = _run(monkeypatch, capsys, repo / "src")
+    assert out and out["decision"] == "block"
+    assert ledger.load(ledger.ledger_path(str(repo)))[f["id"]]["status"] == "open"
 
 
 def _run(monkeypatch, capsys, repo: Path, **extra):

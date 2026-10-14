@@ -121,18 +121,24 @@ def main() -> None:
         if not file_path or not os.path.isfile(file_path):
             _audit(payload, "skipped", started, reason="no file")  # or the edit deleted it
             sys.exit(0)
-        repo_root = payload.get("cwd") or os.getcwd()
+        # The repo's top level, not the session cwd: git status paths, the
+        # index and the ledger key are all relative to it.
+        repo_root = ledger.resolve_repo_root(payload.get("cwd") or os.getcwd())
         source = Path(file_path).read_text(encoding="utf-8", errors="replace")
+        recorded: list = []
         text = check_edit(
             file_path, source, _get_index(repo_root),
             embed_fn=_embedder(),
             repo_root=repo_root,
             changed=ledger.changed_files(repo_root),
             ledger_file=ledger.ledger_path(repo_root),
+            recorded=recorded,
         )
         if text:
             _emit_additional_context(text)
-        _audit(payload, "found" if text else "clean", started)
+        # "found" covers silent follow-ups and moves too, not just inline messages.
+        _audit(payload, "found" if recorded else "clean", started,
+               finding_ids=recorded, inline=bool(text))
     except UnsupportedLanguageError:
         _audit(payload, "skipped", started, reason="unsupported language")
     except Exception as exc:  # noqa: BLE001
