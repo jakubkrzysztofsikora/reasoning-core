@@ -31,7 +31,7 @@ def test_fresh_build_returns_none_immediately(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(project_index, "_build_index", slow_build)
-    monkeypatch.setattr(project_index, "_iter_repo_files", lambda root: ["a.py"])
+    monkeypatch.setattr(project_index, "iter_repo_files", lambda root: ["a.py"])
 
     t0 = time.monotonic()
     result = project_index.get_or_build_index("nonblocking-test", repo_root=str(tmp_path))
@@ -53,7 +53,7 @@ def test_subsequent_call_sees_cached_result(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(project_index, "_build_index", fast_build)
-    monkeypatch.setattr(project_index, "_iter_repo_files", lambda root: ["a.py"])
+    monkeypatch.setattr(project_index, "iter_repo_files", lambda root: ["a.py"])
 
     project_index.clear_index("cache-test")
     project_index.get_or_build_index("cache-test", repo_root=str(tmp_path))

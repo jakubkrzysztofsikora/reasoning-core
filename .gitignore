@@ -15,6 +15,7 @@ dist/
 .coverage
 htmlcov/
 .DS_Store
+.idea/
 *.log
 .env
 .env.local
@@ -25,6 +26,8 @@ node_modules/
 
 # direnv local overrides — secrets + personal toggles, never committed.
 .envrc.local
+# Dependencies are managed with pip + requirements.txt; `uv run` creates this.
+uv.lock
 # direnv state cache, per-machine.
 .direnv/
 

@@ -520,6 +520,19 @@ def cmd_unskip_file(args: argparse.Namespace) -> int:
     ks.remove_skip_file(os.path.abspath(args.path))
     sys.stdout.write(f"removed: {os.path.abspath(args.path)}\n")
     return 0
+def cmd_dup_defer(args: argparse.Namespace) -> int:
+    from src.duplicate_detection.defer import DeferError, defer
+
+    try:
+        row = defer(os.getcwd(), args.finding_id, args.reason)
+    except DeferError as exc:
+        sys.stderr.write(f"dup-defer: {exc}\n")
+        return 1
+    audit_log.append_event(audit_log.new_event(
+        tool_name="rc", decision="dup_deferred", finding_id=row["id"], reason=row["reason"],
+    ))
+    sys.stdout.write(f"deferred {row['id']}: {row['reason']}\n")
+    return 0
 def cmd_score_pr(args: argparse.Namespace) -> int:
     """Score the files changed between two git refs using scripts/score_pr.py.
     This is the local / CI entry point for the PR scorer. It shells out to
@@ -2048,6 +2061,10 @@ def main(argv: list | None = None) -> int:
     u = sub.add_parser("unskip-file")
     u.add_argument("path")
     u.set_defaults(func=cmd_unskip_file)
+    dd = sub.add_parser("dup-defer", help="defer a duplicate finding with a written reason")
+    dd.add_argument("finding_id")
+    dd.add_argument("--reason", required=True)
+    dd.set_defaults(func=cmd_dup_defer)
     sp_cmd = sub.add_parser(
         "score-pr",
         help="score changed files between two git refs (CI / local dry-run)",
