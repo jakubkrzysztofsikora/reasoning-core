@@ -54,6 +54,7 @@ full = [
   "safetensors>=0.4",
   "sentencepiece>=0.1.99",
   "einops>=0.7",
+  "numpy>=1.26",
   "ruff>=0.6,<1.0",
   "portalocker>=2.7",
   "psutil>=5.9",

@@ -18,7 +18,7 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
-from .dup_index import (
+from .index import (
     distinctive_shared_tokens,
     logic_ratio_tokens,
     rare_cutoff,

@@ -58,6 +58,9 @@ _EXPLICIT_ALLOWLIST: Tuple[str, ...] = (
     "/.reasoning-core/rules.schema.yaml",
     "/.reasoning-core/git_worktrees.yaml",
     "/reasoning-core/git_lease",
+    # Modules hooks delegate blocking decisions to
+    "/src/project_index.py",
+    "/src/sidecar_auth.py",
 )
 
 
