@@ -19,6 +19,7 @@ Run with: ``python3 -m src.s2_core``
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import math
@@ -35,7 +36,7 @@ import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from typing import Any, Optional
 
 from .grammars import (
@@ -53,9 +54,15 @@ from .ssm_backbone import (
     is_loaded,
     load_backbone,
 )
-from .sidecar_auth import operator_token
+from .sidecar_auth import KEYCHAIN_LOOKUP_BUDGET_S, operator_token
 
 logger = logging.getLogger(__name__)
+
+_AUTH_EXECUTOR_WORKERS = 4
+_AUTH_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_AUTH_EXECUTOR_WORKERS, thread_name_prefix="rc-auth"
+)
+_AUTH_EXECUTOR_SLOTS = BoundedSemaphore(_AUTH_EXECUTOR_WORKERS)
 
 
 # ---------------------------------------------------------------------------
@@ -1664,7 +1671,7 @@ def create_app():
     @app.get("/auth")
     async def auth(request: Request):
         """Validate the scoring credential without invoking model scoring."""
-        expected_token = _get_operator_token()
+        expected_token = await _resolve_operator_token()
         if not expected_token:
             return JSONResponse(
                 status_code=503,
@@ -1684,7 +1691,7 @@ def create_app():
         
         # RC-SEC-07: Bearer token authentication for /score
         auth_header = request.headers.get("authorization", "")
-        expected_token = _get_operator_token()
+        expected_token = await _resolve_operator_token()
         if not expected_token:
             _record_latency((time.monotonic() - t0) * 1000.0, error=True)
             return JSONResponse(
@@ -1794,15 +1801,46 @@ def create_app():
         _baseline_rate_limits[session_id] = now
         return True
 
+    _auth_lookup_future = None
+
     def _get_operator_token() -> Optional[str]:
         """Use the shared credential resolver for score and baseline auth."""
         return operator_token() or None
+
+    async def _resolve_operator_token() -> Optional[str]:
+        """Resolve env credentials immediately and share bounded Keychain work."""
+        nonlocal _auth_lookup_future
+        token = os.environ.get("RC_ENFORCEMENT_TOKEN", "")
+        if token:
+            return token
+        loop = asyncio.get_running_loop()
+        if _auth_lookup_future is None or _auth_lookup_future.done():
+            if not _AUTH_EXECUTOR_SLOTS.acquire(blocking=False):
+                return None
+            try:
+                _auth_lookup_future = _AUTH_EXECUTOR.submit(_get_operator_token)
+            except RuntimeError:
+                _AUTH_EXECUTOR_SLOTS.release()
+                return None
+            _auth_lookup_future.add_done_callback(
+                lambda _done: _AUTH_EXECUTOR_SLOTS.release()
+            )
+        future = asyncio.wrap_future(_auth_lookup_future, loop=loop)
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(future), timeout=KEYCHAIN_LOOKUP_BUDGET_S
+            ) or None
+        except asyncio.TimeoutError:
+            return None
+        except Exception:  # noqa: BLE001
+            logger.exception("sidecar credential lookup failed")
+            return None
 
     @app.post("/baseline")
     async def baseline(request: Request):
         # RC-SEC-07: Bearer token authentication
         auth_header = request.headers.get("authorization", "")
-        expected_token = _get_operator_token()
+        expected_token = await _resolve_operator_token()
         if not expected_token:
             return JSONResponse(
                 status_code=503,

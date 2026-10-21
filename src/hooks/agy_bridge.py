@@ -145,12 +145,17 @@ def guard_decision(returncode: int, stdout: str, stderr: str) -> dict[str, str]:
 
 def _run_hook(mode: str, translated: dict[str, Any]) -> subprocess.CompletedProcess[str]:
     hook = _HOOKS_DIR / _RC_HOOKS[mode]
+    from src.sidecar_auth import operator_token
     env = {
         **os.environ,
         "RC_SESSION_ID": str(translated.get("session_id") or ""),
         "RC_PROJECT_DIR": str(translated.get("cwd") or ""),
         "CLAUDE_PROJECT_DIR": str(translated.get("cwd") or ""),
     }
+    if "RC_ENFORCEMENT_TOKEN" not in env:
+        token = operator_token()
+        if token:
+            env["RC_ENFORCEMENT_TOKEN"] = token
     return subprocess.run(
         [sys.executable, str(hook)],
         input=json.dumps(translated),

@@ -104,3 +104,10 @@ def test_bootstrap_retries_while_previous_job_is_removing(monkeypatch, tmp_path)
     monkeypatch.setattr("src._launchd.time.sleep", lambda _: None)
     assert load_supervisor(tmp_path / "supervisor.plist") == (True, "")
     assert len(attempts) == 2
+
+
+def test_wheel_supervisor_child_uses_installed_interpreter(tmp_path):
+    import sys
+    from src.sidecar_supervisor import _build_children
+    child = _build_children(tmp_path)[0]
+    assert child.cmd == [sys.executable, "-m", "src.s2_core"]

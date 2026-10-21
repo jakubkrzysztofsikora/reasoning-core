@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib.util
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -30,6 +29,18 @@ def test_allowlist_strips_api_keys(monkeypatch):
     for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY",
               "GITHUB_TOKEN"):
         assert k not in env, f"{k} leaked into child env"
+
+
+def test_allowlist_keeps_explicit_keychain_account(monkeypatch):
+    monkeypatch.setenv("RC_ENFORCEMENT_KEYCHAIN_ACCOUNT", "previous-account")
+    env = mod.build_child_env()
+    assert env["RC_ENFORCEMENT_KEYCHAIN_ACCOUNT"] == "previous-account"
+
+
+def test_allowlist_keeps_rc_enforcement_token(monkeypatch):
+    monkeypatch.setenv("RC_ENFORCEMENT_TOKEN", "token-12345678901234567890123456789012")
+    env = mod.build_child_env()
+    assert env["RC_ENFORCEMENT_TOKEN"] == "token-12345678901234567890123456789012"
 
 
 def test_allowlist_keeps_rc_gen_vars(monkeypatch):

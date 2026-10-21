@@ -686,6 +686,13 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
     token = secrets.token_urlsafe(32)
     hmac_key = secrets.token_hex(32)  # 256-bit key for HMAC-SHA256
     account = keychain_account()
+
+    if sys.platform == "darwin" and not account:
+        sys.stderr.write(
+            "rc auth-bootstrap: could not resolve the current macOS account; "
+            "refusing to write credentials.\n"
+        )
+        return 1
     
     if sys.platform == "darwin":
         # Store enforcement token in keychain
@@ -723,7 +730,7 @@ def cmd_auth_bootstrap(args: argparse.Namespace) -> int:
             return 1
         
         sys.stdout.write(f"enforcement token stored in keychain for user {account}\n")
-        sys.stdout.write(f"HMAC key stored in keychain for kill-switch integrity\n")
+        sys.stdout.write("HMAC key stored in keychain for kill-switch integrity\n")
         sys.stdout.write(f"enforcement token (copy now, won't be shown again): {token}\n")
         sys.stdout.write(f"HMAC key (copy now, won't be shown again): {hmac_key}\n")
         return 0

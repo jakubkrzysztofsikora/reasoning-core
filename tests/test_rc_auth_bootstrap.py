@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -64,6 +63,23 @@ def test_auth_bootstrap_keychain_darwin(monkeypatch, tmp_path):
     assert rc == 0
     # Should have: sudo check + 2 keychain writes (token + HMAC)
     assert len([c for c in call_log if isinstance(c, list) and "add-generic-password" in c]) == 2
+
+
+def test_auth_bootstrap_refuses_unresolved_account(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setenv("RC_AUDIT_ROOT", str(tmp_path / "events"))
+
+    import rc_cli
+    importlib.reload(rc_cli)
+    monkeypatch.setattr(rc_cli, "_operator_present", lambda: True)
+    monkeypatch.setattr(rc_cli, "keychain_account", lambda: "")
+
+    def unexpected_keychain_write(*_args, **_kwargs):
+        raise AssertionError("must not write credentials without a resolved account")
+
+    monkeypatch.setattr(rc_cli.subprocess, "run", unexpected_keychain_write)
+
+    assert rc_cli.main(["auth-bootstrap"]) == 1
 
 
 def test_operator_authenticated_env_hash_on_linux(monkeypatch, tmp_path):

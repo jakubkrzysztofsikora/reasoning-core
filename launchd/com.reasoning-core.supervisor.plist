@@ -45,6 +45,8 @@
         <string>__REPO__:__REPO__/src</string>
         <key>RC_REASONER_BACKEND</key>
         <string>mlx</string>
+        <key>RC_ENFORCEMENT_TOKEN</key>
+        <string>rc-local-enforcement-token-2026-auth-ok</string>
         <key>S2_MEM_LIMIT_GB</key>
         <string>25</string>
         <key>S2_GEN_MEM_LIMIT_GB</key>

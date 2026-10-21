@@ -37,9 +37,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from _supervisor_env import build_child_env, gen_extra_env
-from _supervisor_broker import broker_health_snapshot, start_broker_http
-from _supervisor_recalibrate import recalibrate_watcher
+try:
+    from .sidecar_boot import _lock_path
+except ImportError:  # pragma: no cover
+    from sidecar_boot import _lock_path
+
+if __package__:
+    from ._supervisor_env import build_child_env, gen_extra_env
+    from ._supervisor_broker import broker_health_snapshot, start_broker_http
+    from ._supervisor_recalibrate import recalibrate_watcher
+else:
+    from _supervisor_env import build_child_env, gen_extra_env
+    from _supervisor_broker import broker_health_snapshot, start_broker_http
+    from _supervisor_recalibrate import recalibrate_watcher
+
+
+def _safe_log(msg: str) -> None:
+    try:
+        sys.stderr.write(msg)
+        sys.stderr.flush()
+    except OSError:
+        pass
 
 
 _LOG_ROTATE_BYTES = 100 * 1024 * 1024
@@ -84,7 +102,92 @@ class _Child:
     open_until: float = 0.0
     backoff_s: float = 1.0
     startup_grace_until: float = 0.0
+    lock_name: Optional[str] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+def _cleanup_orphaned_lock(child: _Child) -> None:
+    if not child.lock_name:
+        return
+    path = _lock_path(child.lock_name)
+    if not path.is_file():
+        return
+    try:
+        content = path.read_text().strip()
+        if not content:
+            return
+        pid = int(content)
+    except (OSError, ValueError):
+        return
+
+    if pid <= 1 or pid == os.getpid():
+        return
+
+    if child.proc is not None and child.proc.pid == pid and child.proc.poll() is None:
+        return
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return
+
+    try:
+        res = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+        cmdline = res.stdout.lower()
+    except (OSError, subprocess.TimeoutExpired):
+        cmdline = ""
+
+    sidecar_indicators = ("sidecar", "mamba", "mlx_lm", "qwen", "reasoning-core")
+    if not any(k in cmdline for k in sidecar_indicators):
+        _safe_log(
+            f"[supervisor] lock file {path} pid={pid} does not match "
+            f"sidecar signature ({cmdline!r}); leaving untouched\n"
+        )
+        return
+
+    _safe_log(
+        f"[supervisor] found orphaned {child.name} process pid={pid} holding {path}; reaping\n"
+    )
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+            time.sleep(0.2)
+        except OSError:
+            break
+    else:
+        _safe_log(
+            f"[supervisor] orphaned {child.name} pid={pid} ignored SIGTERM; sending SIGKILL\n"
+        )
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        time.sleep(0.5)
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _rotate_log(path: Path) -> None:
@@ -116,9 +219,12 @@ def _spawn(child: _Child, *, extra_env: Optional[Dict[str, str]] = None) -> None
             )
         with child.lock:
             child.startup_grace_until = time.time() + child.startup_grace_s
-        sys.stderr.write(f"[supervisor] {child.name} started pid={child.proc.pid}\n")
+        _safe_log(f"[supervisor] {child.name} started pid={child.proc.pid}\n")
     except (OSError, ValueError) as exc:
-        sys.stderr.write(f"[supervisor] {child.name} spawn failed: {exc}\n")
+        _safe_log(f"[supervisor] {child.name} spawn failed: {exc}\n")
+        with child.lock:
+            child.proc = None
+            child.failures += 1
 
 
 def _health(
@@ -157,19 +263,31 @@ def _stop_child(proc: subprocess.Popen, *, grace_s: float = 5.0) -> bool:
     if proc.poll() is not None:
         return True
     try:
+        pid = getattr(proc, "pid", None)
+        if isinstance(pid, int):
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except OSError:
+                pass
         proc.terminate()
         proc.wait(timeout=grace_s)
         return True
     except subprocess.TimeoutExpired:
-        sys.stderr.write("[supervisor] child ignored SIGTERM; sending SIGKILL\n")
+        _safe_log("[supervisor] child ignored SIGTERM; sending SIGKILL\n")
         try:
+            pid = getattr(proc, "pid", None)
+            if isinstance(pid, int):
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except OSError:
+                    pass
             proc.kill()
             proc.wait(timeout=grace_s)
             return True
         except (OSError, subprocess.TimeoutExpired) as exc:
-            sys.stderr.write(f"[supervisor] child could not be reaped: {exc}\n")
+            _safe_log(f"[supervisor] child could not be reaped: {exc}\n")
     except OSError as exc:
-        sys.stderr.write(f"[supervisor] child termination failed: {exc}\n")
+        _safe_log(f"[supervisor] child termination failed: {exc}\n")
     return proc.poll() is not None
 
 
@@ -184,12 +302,34 @@ def _supervise_one(child: _Child, *, stop: threading.Event,
                 stop.wait(min(5.0, cooldown_left))
                 continue
             if not _is_alive(child):
-                sys.stderr.write(f"[supervisor] {child.name} not alive; spawning\n")
-                _spawn(child, extra_env=extra_env)
                 with child.lock:
-                    wait_s = child.backoff_s
-                    child.backoff_s = min(child.backoff_s * 2, 8.0)
-                stop.wait(wait_s)
+                    has_prior = child.proc is not None or child.failures > 0
+                    if has_prior:
+                        child.failures += 1
+                        if child.failures >= _FAILURE_THRESHOLD:
+                            _safe_log(
+                                f"[supervisor] {child.name} circuit-break "
+                                f"({_FAILURE_THRESHOLD} consec, 60s cooldown)\n"
+                            )
+                            child.open_until = now + 60.0
+                            child.failures = 0
+                            child.backoff_s = 1.0
+                            child.proc = None
+                            continue
+                        wait_s = child.backoff_s
+                        child.backoff_s = min(child.backoff_s * 2, 60.0)
+                    else:
+                        wait_s = 0.0
+
+                if wait_s > 0:
+                    stop.wait(wait_s)
+                    if stop.is_set():
+                        break
+
+                _safe_log(f"[supervisor] {child.name} not alive; spawning\n")
+                _cleanup_orphaned_lock(child)
+                _spawn(child, extra_env=extra_env)
+                stop.wait(1.0)
                 continue
 
             # Startup grace: the mamba sidecar downloads/loads a model before the
@@ -229,7 +369,7 @@ def _supervise_one(child: _Child, *, stop: threading.Event,
                 else:
                     child.failures += 1
                     if child.failures >= _FAILURE_THRESHOLD:
-                        sys.stderr.write(
+                        _safe_log(
                             f"[supervisor] {child.name} circuit-break "
                             f"({_FAILURE_THRESHOLD} consec, 60s cooldown)\n"
                         )
@@ -238,11 +378,12 @@ def _supervise_one(child: _Child, *, stop: threading.Event,
                         child.backoff_s = 1.0
                         if child.proc and child.proc.poll() is None:
                             stale_proc = child.proc
+                        child.proc = None
             if stale_proc is not None and not _stop_child(stale_proc):
-                sys.stderr.write(f"[supervisor] {child.name} remains alive after escalation\n")
+                _safe_log(f"[supervisor] {child.name} remains alive after escalation\n")
             stop.wait(5.0)
         except Exception as exc:
-            sys.stderr.write(
+            _safe_log(
                 f"[supervisor] {child.name} supervise loop error: {exc}\n"
                 f"{traceback.format_exc()}"
             )
@@ -287,10 +428,11 @@ def _build_children(repo_root: Path) -> List[_Child]:
     mamba_startup_grace = _parse_non_negative_float("S2_MAMBA_STARTUP_GRACE_S", 1800.0)
     children.append(_Child(
         name="mamba",
-        cmd=["bash", str(repo_root / "scripts" / "start-sidecar.sh")],
+        cmd=[sys.executable, "-m", "src.s2_core"],
         health_url=f"http://127.0.0.1:{mamba_port}/health",
         startup_grace_s=mamba_startup_grace,
         requires_model_loaded=True,
+        lock_name="reasoning-core-sidecar.lock",
     ))
     backend = os.environ.get("RC_REASONER_BACKEND", "").lower()
     if backend in ("mlx", "llama"):
@@ -305,6 +447,7 @@ def _build_children(repo_root: Path) -> List[_Child]:
             # no longer the supervisor-managed path. 2026-06-02 incident fix.
             cmd=[sys.executable, "-m", "src.gen_sidecar_launcher"],
             health_url=f"http://127.0.0.1:{gen_port}/v1/models",
+            lock_name="reasoning-core-gen-sidecar.lock",
         ))
     return children
 
@@ -315,14 +458,11 @@ def main() -> int:
     stop = threading.Event()
 
     def _on_signal(signum, _frame) -> None:
-        sys.stderr.write(f"[supervisor] caught signal {signum}, shutting down\n")
+        _safe_log(f"[supervisor] caught signal {signum}, shutting down\n")
         stop.set()
         for c in children:
             if c.proc and c.proc.poll() is None:
-                try:
-                    c.proc.terminate()
-                except OSError:
-                    pass
+                _stop_child(c.proc)
 
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
@@ -330,7 +470,7 @@ def main() -> int:
     try:
         broker = start_broker_http(children, _BROKER_PORT)
     except OSError as exc:
-        sys.stderr.write(f"[supervisor] broker http bind failed: {exc}\n")
+        _safe_log(f"[supervisor] broker http bind failed: {exc}\n")
         broker = None
 
     threads = []
@@ -354,7 +494,7 @@ def main() -> int:
     recal_t.start()
     threads.append(recal_t)
 
-    sys.stderr.write(
+    _safe_log(
         f"[supervisor] managing {len(children)} children: "
         f"{[c.name for c in children]}\n"
     )
@@ -362,7 +502,7 @@ def main() -> int:
     while not stop.is_set():
         stop.wait(10.0)
         if not stop.is_set():
-            sys.stderr.write("[supervisor] " + json.dumps(_broker_health(children)) + "\n")
+            _safe_log("[supervisor] " + json.dumps(_broker_health(children)) + "\n")
 
     for t in threads:
         t.join(timeout=2.0)

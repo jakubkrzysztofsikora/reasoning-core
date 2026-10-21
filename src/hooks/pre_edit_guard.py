@@ -238,6 +238,8 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
     returns a degraded dict matching the bridge contract. On any other non-200
     raises SidecarUnavailable so the caller applies fail-open / fail-closed.
     """
+    total_cap_s = _effective_score_timeout()
+    deadline = time.monotonic() + total_cap_s
     # Audit 2026-06-01 §Summary #1: without session_id the sidecar can never
     # compute Phase-2 dims (session_centroid_drift, project_fan_in,
     # project_coupling). CLAUDE_SESSION_ID is rarely set in real hook runs;
@@ -258,14 +260,26 @@ def _post_score(file_path: str, before_src: str, after_src: str) -> Dict[str, An
         payload["session_id"] = sid
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
-    headers.update(_score_auth_headers(SCORE_ENDPOINT))
+    headers.update(
+        _score_auth_headers(
+            SCORE_ENDPOINT,
+            timeout_s=max(0.0, deadline - time.monotonic()),
+        )
+    )
+    cap_s = deadline - time.monotonic()
+    if cap_s <= 0:
+        cap_ms = int(total_cap_s * 1000)
+        sys.stderr.write(
+            f"[hybrid-reasoner] sidecar hard cap exceeded ({cap_ms}ms); "
+            "symbolic fallback engaged.\n"
+        )
+        raise SidecarUnavailable(f"hard_cap_exceeded:{cap_ms}ms")
     req = urllib.request.Request(
         SCORE_ENDPOINT,
         data=body,
         headers=headers,
         method="POST",
     )
-    cap_s = _effective_score_timeout()
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, fp, code, msg, headers, newurl):
             return None
