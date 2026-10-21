@@ -7,7 +7,7 @@ The old checkout and editable install flow still works. The recommended
 end-user path is:
 
 ```bash
-python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
+python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.1'
 cd /path/to/your-repo && rc init
 ```
 
@@ -15,7 +15,7 @@ cd /path/to/your-repo && rc init
 
 1. **Install this project's tagged source.**
    ```bash
-   python3 -m pip install --upgrade 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
+   python3 -m pip install --upgrade 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.1'
    ```
    This pulls every runtime dep the framework needs (~500 MB across
    torch, transformers, tree-sitter, fastapi, mcp, ruff, …). The
@@ -101,7 +101,7 @@ rejected; see `src/ssm_backbone.py`).
 - **`rc: command not found`** — your `pip` and the shell that runs `rc`
   disagree on which Python to use. Either activate the venv you pip'd
   into, or reinstall with `python3 -m pip install --user
-  'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'`
+  'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.1'`
   and ensure `~/.local/bin` is on PATH.
 - **`rc init` hangs on the mamba download** — set
   `HF_HOME=/your/writable/path` and re-run, or pass `--no-model` and

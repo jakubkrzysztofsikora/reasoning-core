@@ -74,7 +74,7 @@ You do **not** need to change how you work or learn a new coding interface. You 
 > ⚠️ **Important:** Install from this tagged GitHub repository. The `reasoning-core` name on PyPI belongs to an unrelated project.
 
 ```bash
-python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
+python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.1'
 ```
 
 ### 2. Wire into Your Existing Project Repository

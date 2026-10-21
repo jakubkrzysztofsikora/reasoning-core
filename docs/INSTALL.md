@@ -21,7 +21,7 @@ to the v0.2 wheel flow.
 ## End-user install
 
 ```bash
-python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.0'
+python3 -m pip install 'reasoning-core[full] @ git+https://github.com/jakubkrzysztofsikora/reasoning-core.git@v0.3.1'
 cd /path/to/your-repo
 rc init                                # wires hooks + boots sidecar
 claude                                 # or: codex / gemini / copilot / kimi / vibe / pi

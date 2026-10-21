@@ -255,6 +255,13 @@ timestamp). This provisions two keychain entries:
 - `reasoning-core-enforcement`: enforcement token for `RC_ENFORCEMENT_TOKEN` env var
 - `reasoning-core-hmac`: 256-bit key for kill-switch integrity
 
+The Keychain lookup is scoped to the current macOS account plus legacy items
+with an empty account. If an existing item is under a previous account name,
+set `RC_ENFORCEMENT_KEYCHAIN_ACCOUNT` to that exact account to read it. This
+override also controls where `rc auth-bootstrap` writes, so remove it before
+running bootstrap if you intend to rotate credentials into the current account.
+The resolver never searches other accounts implicitly.
+
 **Setup (CI):** Pre-provision these environment variables:
 - `RC_ENFORCEMENT_TOKEN`: ≥32 char token matching the stored value
 - `RC_HMAC_KEY`: hex-encoded 256-bit key for kill-switch HMAC
