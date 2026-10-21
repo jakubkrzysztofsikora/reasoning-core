@@ -488,3 +488,27 @@ def test_operator_bypass_is_batch_scoped_but_cannot_edit_guards(
         expected_before_sha256=hashlib.sha256(b"guard\n").hexdigest(),
     )
     assert bridge().handle_event(event)["reason"] == "guard_file_locked"
+
+
+@pytest.mark.parametrize("route", ["edit", "delete", "move_overwrite", "symlink"])
+def test_contract_dependency_cannot_be_mutated_by_guarded_batch(tmp_path, isolated_env, score_server, route):
+    event = prepared(tmp_path)
+    contract = tmp_path / "src/omp_contract.py"
+    contract.parent.mkdir()
+    contract.write_text("x = 1\n")
+    path = contract
+    if route == "symlink":
+        path = tmp_path / "alias.py"
+        path.symlink_to(contract)
+    candidate = dict(event["batch"]["candidates"][0])
+    candidate.update(path=str(path), before_src="x = 1\n",
+                     expected_before_sha256=hashlib.sha256(b"x = 1\n").hexdigest(),
+                     after_src=None if route == "delete" else "x = 2\n",
+                     operation="delete" if route == "delete" else "write")
+    if route == "move_overwrite":
+        event["batch"]["candidates"][0].update(operation="delete", after_src=None)
+    event["batch"]["candidates"].append(candidate)
+    assert bridge().handle_event(event)["reason"] == "guard_file_locked"
+    assert contract.read_text() == "x = 1\n"
+    assert (tmp_path / "one.py").read_text() == "x = 1\n"
+    assert not score_server["requests"]

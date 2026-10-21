@@ -33,7 +33,9 @@ def states(checks):
 
 
 def healthy_runtime(root):
-    return {"schema_version": 1, "version": "18.8.8", "native_protocol": 1,
+    from src import data
+    return {"host_kind": "source", "host_files": json.loads(data.read_text("omp.host-files.json")), "host_sha256": "c" * 64,
+            "schema_version": 1, "version": "18.8.8", "native_protocol": 1,
             "source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
             "adapter_path": str(root / EXTENSION),
             "adapter_sha256": hashlib.sha256((root / EXTENSION).read_bytes()).hexdigest(),
@@ -104,3 +106,27 @@ def test_cli_omp_host_does_not_require_claude_wiring(project, probes, capsys):
     assert {row["name"] for row in report["checks"]} == {
         "omp_installed", "omp_loaded", "omp_authenticated", "omp_qualified",
     }
+
+
+@pytest.mark.parametrize("name", ["RC_PLAN_GROUNDING", "RC_STRUCTURAL_ALLOW", "RC_LANG_OVERRIDE"])
+def test_effective_enforcement_environment_is_bound(project, probes, monkeypatch, name):
+    initial = module().qualification_binding(project, probes["runtime"])
+    monkeypatch.setenv(name, "changed-policy")
+    assert module().qualification_binding(project, probes["runtime"]) != initial
+
+@pytest.mark.parametrize("path", ["PLAN.md", ".reasoning-core/contract.yaml"])
+def test_plan_dependencies_are_bound(project, probes, path):
+    initial = module().qualification_binding(project, probes["runtime"])
+    (project / path).write_text("changed policy")
+    assert module().qualification_binding(project, probes["runtime"]) != initial
+
+def test_same_version_host_implementation_change_invalidates_qualification(project, probes):
+    doctor = module()
+    runtime = probes["runtime"]
+    runtime["host_sha256"] = "c" * 64
+    report = {"schema_version": 1, "binding": doctor.qualification_binding(project, runtime),
+              "evidence": {name: True for name in doctor.REQUIRED_EVIDENCE}}
+    (project / ".reasoning-core/omp-qualification.json").write_text(json.dumps(report))
+    assert states(doctor.check_omp(project))["omp_qualified"]["ok"]
+    runtime["host_sha256"] = "d" * 64
+    assert not states(doctor.check_omp(project))["omp_qualified"]["ok"]

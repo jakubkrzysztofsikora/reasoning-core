@@ -54,6 +54,10 @@ eval/calibrated/prm_corpus.jsonl
 # Per-repo install manifest written by `rc init` / `install.sh`.
 .reasoning-core/
 
+# OMP autoload path: must not exist in the rc source checkout.
+# See docs/DIAGNOSIS_OMP_GATE_TEMPLATE_2026-10-10.md §5.
+.omp/extensions/
+
 # Local databases and runtime state
 data/
 eval/runs/

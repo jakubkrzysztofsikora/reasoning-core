@@ -13,7 +13,7 @@ from pathlib import Path
 
 from src import _install_paths
 from src._init import InitResult
-from src._omp_doctor import REQUIRED_EVIDENCE, _json_process, check_omp, qualification_binding
+from src._omp_doctor import POLICY_FILES, REQUIRED_EVIDENCE, _json_process, check_omp, qualification_binding
 from src._omp_install import _safe, install_omp
 
 REPORT = ".reasoning-core/omp-qualification.json"
@@ -50,10 +50,10 @@ def qualify(project: Path) -> dict:
         install_omp(root, manifest, {
             "RC_PYTHON": _install_paths.python_executable(), "RC_REPO": _install_paths.rc_repo_path(),
         }, InitResult(root))
-        for relative in (".omp/settings.json", ".reasoning-core/rules.yaml",
-                         ".reasoning-core/rules.schema.yaml", ".reasoning-core/git_worktrees.yaml"):
+        for relative in POLICY_FILES:
             source = project / relative
             if source.is_file():
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
                 (root / relative).write_bytes(source.read_bytes())
         environment = dict(os.environ, RC_AUDIT_ROOT=str(root / "audit"))
         runtime = _json_process([executable, "--rc-native-probe"],

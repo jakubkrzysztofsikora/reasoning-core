@@ -41,10 +41,21 @@ def test_fresh_and_reinit_are_idempotent_with_exact_asset_ownership(tmp_path):
 
 def test_canonical_asset_parity():
     from src import data
-    assert data.read_text("omp.reasoning_core_gate.ts") == (
-        Path(__file__).resolve().parents[1] / EXT
-    ).read_text()
+    source = Path(__file__).resolve().parents[1] / "integrations/omp/reasoning_core_gate.ts"
+    assert data.read_text("omp.reasoning_core_gate.ts") == source.read_text()
     assert json.loads(data.read_text("omp.compatibility.json"))["native_protocol"] == 1
+
+
+def test_source_checkout_has_no_omp_autoload_path():
+    repo_root = Path(__file__).resolve().parents[1]
+    autoload = repo_root / ".omp" / "extensions"
+    assert not autoload.exists(), (
+        "reasoning-core source checkout contains an OMP autoload path at "
+        f"{autoload}. omp would auto-load any *.ts extensions from this "
+        "directory and re-brick local dev sessions (see "
+        "docs/DIAGNOSIS_OMP_GATE_TEMPLATE_2026-10-10.md §2, §5). The canonical "
+        "template source lives at integrations/omp/reasoning_core_gate.ts."
+    )
 
 
 def test_existing_user_settings_extensions_and_changed_owned_assets_survive(tmp_path):

@@ -86,7 +86,7 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
   const key = (ctx: any, call: string) => canonical({ ...identity(ctx), call });
   return {
     async prepare(event: any, ctx: any) {
-      const denied = { allowed: false, finalInputSha256: event.batch?.finalInputSha256 ?? "" };
+      const denied = { allowed: false, finalInputSha256: event.batch?.finalInputSha256 ?? "", reason: "invalid_bridge_response" };
       try {
         const id = key(ctx, event.toolCallId);
         if (pending.has(id)) throw Error("duplicate prepared call");
@@ -98,15 +98,20 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
           })) };
         const expected = bindings(batch);
         const reply = await bridge({ event: "prepare", batch });
-        if (!reply || reply.decision !== "allowed" || typeof reply.reason !== "string" || !reply.reason.trim()
+        if (!reply || !["allowed", "blocked"].includes(reply.decision) || typeof reply.reason !== "string" || !reply.reason.trim()
           || typeof reply.decision_id !== "string" || !reply.decision_id
           || Object.entries(expected).some(([name, value]) => reply[name] !== value)
           || Object.keys(reply).sort().join(",") !==
             "batch_sha256,candidate_sha256,decision,decision_id,final_input_sha256,reason")
           return denied;
+        if (reply.decision === "blocked") return { ...denied,
+          reason: reply.reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512),
+          decisionId: /^[a-zA-Z0-9_-]{1,128}$/.test(reply.decision_id) ? reply.decision_id : undefined };
         pending.set(id, { batch, approval: reply });
         return { allowed: true, finalInputSha256: batch.final_input_sha256 };
-      } catch { return denied; }
+      } catch (error: any) { return { ...denied, reason: error?.message === "bridge timeout"
+        ? "bridge_timeout" : error?.message === "invalid bridge output"
+          ? "invalid_bridge_response" : "bridge_unavailable" }; }
     },
     async result(event: any, ctx: any) {
       const id = key(ctx, event.toolCallId);

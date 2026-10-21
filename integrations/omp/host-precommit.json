@@ -3,11 +3,11 @@
   "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
   "upstream_version": "18.8.8",
   "requires_native_precommit": true,
-  "patch_sha256": "ba3a21d6b3ab78d8b65f464b83c1df8417b35beb2ad8b968d53f1f584f42a38f",
+  "patch_sha256": "3c7f3050a67d9dacb9e3f9b23342294a9a2ae6836d71f3757e34dc5dfb6e9318",
   "files": {
     "packages/coding-agent/src/edit/index.ts": {
       "before_sha256": "a1caabb2d515a3e1cd8cf808064538a58441f74e147f4ee14efcc76e09dfac17",
-      "after_sha256": "baebd65b24bbeed8b7e0fd528f09d91ab38b959a1f1bf4784f8c24b7f18d3fdf"
+      "after_sha256": "3c242cbb299a1403a73cc1c8e41985cffe9312e72bc970d2a328cd62c297e7ed"
     },
     "packages/coding-agent/src/tools/index.ts": {
       "before_sha256": "6e8aaf6523c0cfcc041aacfe5004d9c08aff9a9b86fd65251f7eb7972b6ce828",
@@ -19,11 +19,11 @@
     },
     "packages/coding-agent/src/extensibility/extensions/types.ts": {
       "before_sha256": "c0b78c9414ec34ead5617b14a48b4750df0e1d2204eca002a9032c558b20c0ba",
-      "after_sha256": "988e8b9d669a622c37315cc85ace57824ce08e1f891782b65a7263a5236b8dec"
+      "after_sha256": "83e75b31b09cd0dd918a86dcfb0f10fb1e794f29ae03c445b8043887ca48b0c4"
     },
     "packages/coding-agent/src/extensibility/extensions/runner.ts": {
       "before_sha256": "cdf3f8b2d80da336a443c6cbd5616f84859624b8d73fd5b8347b5572fed5f28c",
-      "after_sha256": "84417512e7456bc2174cde08a24c805ce5f670a80c1ed0afa5a8818ec2a597cd"
+      "after_sha256": "e3aa5f0232350961c12d3ec7b8a3f1492742551525cd08218dc82d3ed98d52f8"
     },
     "packages/coding-agent/src/extensibility/extensions/loader.ts": {
       "before_sha256": "6ce3fcecb30caca84738683af80677638a9b6aa51b285709f32f5fad56bcd2c2",
@@ -43,7 +43,7 @@
     },
     "packages/coding-agent/src/cli/rc-native-probe.ts": {
       "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after_sha256": "fcf34bb01526cad7bb3f871d251ab7adb18e94d476c9cd5056f6ddc7063f0273"
+      "after_sha256": "fbacedc431e43f9a63e8ff361d36e5ef9136479905835be49fcdf4645224fca1"
     }
   }
 }

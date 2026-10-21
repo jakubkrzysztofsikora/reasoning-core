@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGate, bindings, runBridge } from "../.omp/extensions/reasoning_core_gate";
+import { createGate, bindings, runBridge } from "../integrations/omp/reasoning_core_gate";
 
 const hash = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
 function fixture() {
@@ -83,7 +83,7 @@ describe("session native guard adapter", () => {
 });
 
 test("qualified adapter restricts unprepared mutation and delegated routes", async () => {
- const { default: extension } = await import("../.omp/extensions/reasoning_core_gate");
+ const { default: extension } = await import("../integrations/omp/reasoning_core_gate");
  const handlers = new Map<string, any>();
  extension({ nativeEditProtocol: 1, on: (name: string, handler: any) => handlers.set(name, handler) });
  const tool = handlers.get("tool_call");
@@ -97,4 +97,20 @@ test("qualified adapter restricts unprepared mutation and delegated routes", asy
  const oldHandlers = new Map<string, any>();
  extension({ on: (name: string, handler: any) => oldHandlers.set(name, handler) });
  expect(oldHandlers.get("tool_call")({ toolName: "edit" })?.block).toBe(true);
+});
+
+test.each(["policy", "timeout", "malformed"])("safe denial diagnostic: %s", async mode => {
+ const f = fixture();
+ try {
+  const gate = createGate(async wire => {
+   if (mode === "timeout") throw Error("bridge timeout");
+   if (mode === "malformed") return {};
+   return { decision: "blocked", reason: "guard_file_locked", decision_id: "audit123", ...bindings(wire.batch) };
+  });
+  const result = await gate.prepare(f.event, f.ctx);
+  expect(result.allowed).toBe(false);
+  expect(result.reason).toBe(mode === "policy" ? "guard_file_locked" :
+    mode === "timeout" ? "bridge_timeout" : "invalid_bridge_response");
+  if (mode === "policy") expect(result.decisionId).toBe("audit123");
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });

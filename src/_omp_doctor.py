@@ -13,6 +13,12 @@ from pathlib import Path
 from src import _install_paths, data
 from src._omp_install import COMPATIBILITY, EXTENSION, read_ownership, render_extension
 
+POLICY_FILES = (".omp/settings.json", ".omp/config.yml", ".omp/config.yaml",
+                ".claude/settings.yml", ".claude/settings.yaml", ".claude/settings.json",
+                ".claude/settings.local.json", ".reasoning-core/rules.yaml",
+                ".reasoning-core/rules.schema.yaml", ".reasoning-core/git_worktrees.yaml",
+                "PLAN.md", ".reasoning-core/contract.yaml")
+
 REQUIRED_EVIDENCE = (
     "allowed_write", "denied_unchanged", "receipt_verified",
     "child_guard_retained", "restrictions_verified",
@@ -91,23 +97,36 @@ def _authentication_probe(project: Path) -> dict | None:
 
 
 def qualification_binding(project: Path, runtime: dict) -> dict:
-    policies = [".omp/settings.json", ".reasoning-core/rules.yaml",
-                ".reasoning-core/rules.schema.yaml", ".reasoning-core/git_worktrees.yaml"]
+    policies = POLICY_FILES
     framework = Path(_install_paths.rc_repo_path())
     return {
         "version": runtime.get("version"), "source_sha": runtime.get("source_sha"),
         "native_protocol": runtime.get("native_protocol"),
         "native_sha256": runtime.get("native_sha256"),
+        "host_sha256": runtime.get("host_sha256"),
+        "host_configuration_sha256": runtime.get("host_configuration_sha256"),
         "adapter_sha256": _sha(project / EXTENSION),
         "compatibility_sha256": _sha(project / COMPATIBILITY),
         "bridge_sha256": _sha(framework / "src/hooks/omp_bridge.py"),
         "contract_sha256": _sha(framework / "src/omp_contract.py"),
         "configuration": {path: _sha(project / path) for path in policies},
-        "environment": {name: os.environ.get(name) for name in (
-            "RC_MODE", "S2_FAIL_CLOSED", "RC_ORACLE_BLOCK", "RC_ORACLE_T1", "RC_ORACLE_T2",
-            "RC_STRUCTURAL_BLOCK", "RC_RULE_ENGINE", "RC_LANG_LOCK", "RC_ALLOW_GUARD_EDIT",
-        )},
+        "implementation": {str(path.relative_to(framework)): _sha(path)
+                           for path in sorted((framework / "src").rglob("*.py"))},
+        "environment": {name: hashlib.sha256(value.encode()).hexdigest()
+                        for name, value in sorted(os.environ.items())
+                        if name.startswith(("RC_", "S2_", "OMP_", "PI_"))},
     }
+
+
+def _host_verified(runtime: dict, compatibility: dict) -> bool:
+    if runtime.get("host_kind") == "binary":
+        expected = compatibility.get("host_binary_sha256")
+        return isinstance(expected, str) and _HASH.fullmatch(expected) is not None and runtime.get("host_sha256") == expected
+    try:
+        expected = json.loads(data.read_text("omp.host-files.json"))
+        return runtime.get("host_kind") == "source" and runtime.get("host_files") == expected and isinstance(runtime.get("host_sha256"), str) and _HASH.fullmatch(runtime["host_sha256"]) is not None
+    except (OSError, ValueError):
+        return False
 
 
 def check_omp(project: Path) -> list[dict]:
@@ -144,6 +163,7 @@ def check_omp(project: Path) -> list[dict]:
         and type(runtime.get("native_protocol")) is int and runtime.get("native_protocol") == 1
         and runtime.get("adapter_path") == str(project / EXTENSION)
         and runtime.get("adapter_sha256") == _sha(project / EXTENSION)
+        and _host_verified(runtime, compatibility)
         and isinstance(runtime.get("native_sha256"), str)
         and _HASH.fullmatch(runtime["native_sha256"]) is not None
     )

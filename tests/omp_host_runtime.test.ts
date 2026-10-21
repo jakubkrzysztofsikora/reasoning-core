@@ -36,7 +36,7 @@ test("real EditTool requests whole batch before any write and publishes failure 
 
 const { ExtensionRunner } = await import(join(upstream, "packages/coding-agent/src/extensibility/extensions/runner.ts"));
 const { SessionManager } = await import(join(upstream, "packages/coding-agent/src/session/session-manager.ts"));
-const { createGate, runBridge } = await import("../.omp/extensions/reasoning_core_gate");
+const { createGate, runBridge } = await import("../integrations/omp/reasoning_core_gate");
 test.each(["allow", "deny"])("real native host and isolated Python bridge: %s", async mode => {
  const cwd = mkdtempSync(join(tmpdir(), "rc host bridge "));
  const audit = process.env.RC_AUDIT_ROOT;
@@ -71,6 +71,7 @@ test.each(["allow", "deny"])("real native host and isolated Python bridge: %s", 
   if (oldMode === undefined) delete process.env.RC_MODE; else process.env.RC_MODE = oldMode;
   if (oldClosed === undefined) delete process.env.S2_FAIL_CLOSED; else process.env.S2_FAIL_CLOSED = oldClosed;
   expect(output.isError === true).toBe(mode === "deny");
+  if (mode === "deny") expect(JSON.stringify(output.content)).toMatch(/rc explain [a-z0-9]{12}/);
   expect(readFileSync(file, "utf8")).toBe(mode === "allow" ? "x = 2\n" : "x = 1\n");
  } finally {
   if (audit === undefined) delete process.env.RC_AUDIT_ROOT; else process.env.RC_AUDIT_ROOT = audit;
@@ -156,7 +157,7 @@ test("real SDK retains native gate in isolated child and restricts automatic par
  const { createAgentSession } = await import(join(upstream, "packages/coding-agent/src/sdk.ts"));
  const { ModelRegistry } = await import(join(upstream, "packages/coding-agent/src/config/model-registry.ts"));
  const { createInMemoryAuthStorage } = await import(join(upstream, "packages/coding-agent/test/helpers/agent-session-setup.ts"));
- const { default: adapter } = await import("../.omp/extensions/reasoning_core_gate");
+ const { default: adapter } = await import("../integrations/omp/reasoning_core_gate");
  const cwd = mkdtempSync(join(tmpdir(), "rc SDK parent "));
  const childCwd = mkdtempSync(join(tmpdir(), "rc SDK isolated "));
  const storage = createInMemoryAuthStorage();
@@ -169,7 +170,7 @@ test("real SDK retains native gate in isolated child and restricts automatic par
   adapter(api, async (wire: any) => {
    captured.push(wire);
    if (wire.event !== "prepare") return { decision: "allowed" };
-   const { bindings } = await import("../.omp/extensions/reasoning_core_gate");
+   const { bindings } = await import("../integrations/omp/reasoning_core_gate");
    return { decision: "blocked", reason: "deterministic fixture", decision_id: "child-denial", ...bindings(wire.batch) };
   });
  };
@@ -207,7 +208,7 @@ test("real SDK retains native gate in isolated child and restricts automatic par
 
 test("actual OS failure publishes the landed prefix through runtime filesystem receipt", async () => {
  const { mkdirSync, chmodSync, existsSync } = await import("node:fs");
- const { bindings } = await import("../.omp/extensions/reasoning_core_gate");
+ const { bindings } = await import("../integrations/omp/reasoning_core_gate");
  const cwd = mkdtempSync(join(tmpdir(), "rc OS prefix "));
  const blockedDir = join(cwd, "blocked");
  const events: any[] = [];

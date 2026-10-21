@@ -31,7 +31,7 @@
  /** Builds the LSP writethrough from the current `lsp.*` settings; called per write so changes apply immediately. */
  function createEditWritethrough(session: ToolSession): WritethroughCallback {
  	const enableLsp = session.enableLsp ?? true;
-@@ -484,21 +502,37 @@
+@@ -484,27 +502,46 @@
  			open.native.finish();
  		}
  		const editSession = open.native;
@@ -41,6 +41,7 @@
  		let outcome;
 +   let release = () => {};
 +   let receiptSent = false;
++   let denial: { reason?: string; decisionId?: string } | undefined;
 +   const sendReceipt = async (success: boolean, error: string | null) => {
 +     if (!guarded || receiptSent) return;
 +     receiptSent = true;
@@ -55,7 +56,9 @@
 +				(_error, request) => this.#write(request, signal, guarded),
 +       guarded ? async (error, batch) => {
 +         if (error || !this.session.prepareNativeEdit) return { allowed: false, finalInputSha256: batch.finalInputSha256 };
-+         return this.session.prepareNativeEdit({ type: "native_edit_prepare", toolCallId, batch }, signal);
++         const approval = await this.session.prepareNativeEdit({ type: "native_edit_prepare", toolCallId, batch }, signal);
++         if (approval?.allowed === false) denial = approval;
++         return approval;
 +       } : undefined,
  			);
 +			await sendReceipt(!outcome.isError, outcome.isError ? outcome.text : null);
@@ -72,7 +75,14 @@
  			if (this.#sessions.get(toolCallId) === open) this.#sessions.delete(toolCallId);
  			this.#streamedArgs.delete(toolCallId);
  		}
-@@ -515,6 +549,7 @@
+ 
+ 		if (outcome.isError) {
+-			return { content: [{ type: "text", text: outcome.text }], isError: true };
++			return { content: [{ type: "text", text: denial ? `reasoning-core: ${denial.reason ?? "native_approval_denied"}${denial.decisionId ? "; rc explain " + denial.decisionId : ""}` : outcome.text }], isError: true };
+ 		}
+ 
+ 		const details = aggregateDetails(outcome.files, this.mode);
+@@ -515,6 +552,7 @@
  		const record = createEditBlackboxRecorder(this.session, this.mode, params);
  		const notes: string[] = [];
  		for (const file of outcome.files) {
@@ -80,7 +90,7 @@
  			if (!file.parseRegressed || file.oldText === undefined || file.newText === undefined) continue;
  			const snapshot: AppliedEditSnapshot = {
  				path: file.moveTo ?? file.path,
-@@ -620,6 +655,7 @@
+@@ -620,6 +658,7 @@
  	 * address whole files.
  	 */
  	async #resolveUrl(url: string, context: ResolveContext): Promise<EditUrlResolution> {
@@ -88,7 +98,7 @@
  		const router = InternalUrlRouter.instance();
  		try {
  			const target = router.peelWriteSelector(url, "edit");
-@@ -637,7 +673,28 @@
+@@ -637,7 +676,28 @@
  		}
  	}
  
@@ -161,7 +171,7 @@
 + candidates: Array<{ path: string; operation: string; beforeSrc: string | null;
 +   afterSrc: string | null; expectedBeforeSha256: string | null }>;
 +}
-+export interface NativeEditApproval { allowed: boolean; finalInputSha256: string }
++export interface NativeEditApproval { allowed: boolean; finalInputSha256: string; reason?: string; decisionId?: string }
 +export interface NativeEditPrepareEvent {
 + type: "native_edit_prepare"; toolCallId: string; batch: NativeEditBatch;
 +}
@@ -198,7 +208,7 @@
  	AfterProviderResponseEvent,
  	AssistantMessageRewriteEvent,
  	AssistantMessageRewriteResult,
-@@ -1860,6 +1863,39 @@
+@@ -1860,6 +1863,43 @@
  		return buildAggregatedToolCallResult(result, aggregated);
  	}
  
@@ -207,7 +217,7 @@
 +   sessionId: string | null, agentId: string | null, signal?: AbortSignal,
 + ): Promise<NativeEditApproval | undefined> {
 +   const denied: NativeEditApproval = { allowed: false,
-+     finalInputSha256: event.type === "native_edit_prepare" ? event.batch.finalInputSha256 : "" };
++     finalInputSha256: event.type === "native_edit_prepare" ? event.batch.finalInputSha256 : "", reason: "native_handler_unavailable" };
 +   if (!sessionId || !agentId) return denied;
 +   const agent = this.createContext().agent;
 +   const ctx = this.createContext(undefined, undefined, agentId === agent.id ? agent
@@ -225,6 +235,10 @@
 +       handled = true;
 +       const result = await this.#runHandlerWithTimeout(handler, event, ctx, ext, 40000,
 +         () => denied, signal) as NativeEditApproval | undefined;
++       if (event.type === "native_edit_prepare" && result?.allowed === false
++         && result.finalInputSha256 === event.batch.finalInputSha256) return { ...denied,
++           reason: typeof result.reason === "string" ? result.reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512) : "native_handler_denied",
++           decisionId: typeof result.decisionId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(result.decisionId) ? result.decisionId : undefined };
 +       if (event.type === "native_edit_prepare" && (!result || result.allowed !== true
 +         || result.finalInputSha256 !== event.batch.finalInputSha256)) return denied;
 +       if (event.type === "native_edit_result" && result === denied)
@@ -343,10 +357,10 @@
  		await runSmokeTest();
 --- /dev/null
 +++ b/packages/coding-agent/src/cli/rc-native-probe.ts
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,119 @@
 +import { createHash } from "node:crypto";
 +import { readFileSync, realpathSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-+import { join } from "node:path";
++import { join, resolve } from "node:path";
 +import { tmpdir } from "node:os";
 +import { Database } from "bun:sqlite";
 +import { buildModel } from "@oh-my-pi/pi-catalog/build";
@@ -358,6 +372,7 @@
 +import { SessionManager } from "../session/session-manager";
 +import { createAgentSession } from "../sdk";
 +
++const hostFiles = ["packages/coding-agent/src/cli.ts","packages/coding-agent/src/cli/rc-native-probe.ts","packages/coding-agent/src/edit/index.ts","packages/coding-agent/src/extensibility/extensions/loader.ts","packages/coding-agent/src/extensibility/extensions/runner.ts","packages/coding-agent/src/extensibility/extensions/types.ts","packages/coding-agent/src/sdk.ts","packages/coding-agent/src/tools/index.ts","packages/natives/native/index.d.ts","packages/natives/native/index.js"];
 +const sha = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 +export async function runNativeProbe(): Promise<void> {
 + let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -386,7 +401,15 @@
 +   const owned = created.extensionsResult.extensions.find(extension =>
 +     extension.resolvedPath && realpathSync(extension.resolvedPath) === adapter);
 +   const native = nativeAddonStatus();
-+   const report = { schema_version: 1, version: VERSION, source_sha: "aafb6551616fccec65cbfb264298e7f98df8ce5f",
++   const compiled = import.meta.url.includes("$bunfs");
++   const files = compiled ? undefined : Object.fromEntries(hostFiles.map(path =>
++     [path, sha(resolve(import.meta.dir, "../../../..", path))]));
++   const hostSha = compiled ? sha(process.execPath) : createHash("sha256")
++     .update(hostFiles.map(path => path + ":" + files![path]).join("\n")).digest("hex");
++   const configurationSha = createHash("sha256").update(JSON.stringify({
++     global: settings.getGlobalSettings(), project: settings.getProjectSettings(),
++   })).digest("hex");
++   const report = { host_configuration_sha256: configurationSha, host_kind: compiled ? "binary" : "source", host_sha256: hostSha, host_files: files, schema_version: 1, version: VERSION, source_sha: "aafb6551616fccec65cbfb264298e7f98df8ce5f",
 +     native_protocol: editPrecommitProtocol?.() ?? 0, model_invoked: false,
 +     loaded: !!owned && session.hasExtensionHandlers("native_edit_prepare") && session.hasExtensionHandlers("native_edit_result"),
 +     adapter_path: adapter, adapter_sha256: sha(adapter), native_sha256: native ? sha(native.path) : null };
