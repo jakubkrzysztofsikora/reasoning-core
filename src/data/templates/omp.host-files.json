@@ -1,0 +1,12 @@
+{
+  "packages/coding-agent/src/edit/index.ts": "3c242cbb299a1403a73cc1c8e41985cffe9312e72bc970d2a328cd62c297e7ed",
+  "packages/coding-agent/src/tools/index.ts": "eb3ceb86a19851a4112fdc88b71f2e69d9144d06ed3c0153f3fe8330653d7b8e",
+  "packages/coding-agent/src/sdk.ts": "852961f24b66e084e099dc896c5ebef3de965e2bfb83b8513e35e286bf6e0547",
+  "packages/coding-agent/src/extensibility/extensions/types.ts": "83e75b31b09cd0dd918a86dcfb0f10fb1e794f29ae03c445b8043887ca48b0c4",
+  "packages/coding-agent/src/extensibility/extensions/runner.ts": "e3aa5f0232350961c12d3ec7b8a3f1492742551525cd08218dc82d3ed98d52f8",
+  "packages/coding-agent/src/extensibility/extensions/loader.ts": "e7f1442943d91a47a8cebe37c8d925eedc0aa6f83cfea1f3c8ef34b64ee54912",
+  "packages/natives/native/index.d.ts": "53641ccf6bd36e69e0cce83d9c7187e061d9b0f6e9bcc9f5bca625b3ba32b8ee",
+  "packages/natives/native/index.js": "34c00a5483143fa53910b3c3cfe75c513652b4487813349633746d04edb86683",
+  "packages/coding-agent/src/cli.ts": "32c785dbc800bfaf82e38f46bd99d3870360a9481d12d0a348d7275ecb1f7f09",
+  "packages/coding-agent/src/cli/rc-native-probe.ts": "fbacedc431e43f9a63e8ff361d36e5ef9136479905835be49fcdf4645224fca1"
+}
