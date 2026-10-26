@@ -181,11 +181,11 @@ returns a repaired patch when possible. Never raises.
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `RC_REASONER_BACKEND` | `mlx` | `mlx` (Apple) / `llama` / `remote` |
-| `RC_GEN_URL` | local mlx port | Override for hosted endpoint (e.g. Scaleway `https://api.scaleway.ai/v1/chat/completions`) |
+| `RC_REASONER_BACKEND` | _unset_ (= `nemotron`) | `nemotron` (default/unset/empty: external always-on nemotron server `:8088`, no local sidecar spawned) / `mlx` (Apple) / `llama` / `remote` / `off` |
+| `RC_GEN_URL` | `http://127.0.0.1:8088/v1/chat/completions` (nemotron) or local mlx port `:8766` | Override for hosted endpoint (e.g. Scaleway `https://api.scaleway.ai/v1/chat/completions`) |
 | `RC_GEN_API_KEY` | _unset_ | Bearer token for hosted endpoint; falls through to `SCALEWAY_API_KEY` |
 | `RC_GEN_ALLOWED_HOSTS` | _unset_ | CSV of non-loopback hosts the `Authorization` header may be sent to. Cross-origin redirects refused so the API key cannot leak via 30x to attacker-controlled hosts |
-| `RC_GEN_MODEL` | `mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit` | Model id sent in chat-completions body |
+| `RC_GEN_MODEL` | `nemotron-bolt` (nemotron) / `mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit` (mlx/llama) | Model id sent in chat-completions body |
 | `RC_GEN_BUDGET_MS` | `2500` | Generation budget per repair call (ms) |
 | `RC_GEN_FALLBACK_LOG` | _internal default_ | Path-allowlisted log destination for repair-head fallbacks |
 
