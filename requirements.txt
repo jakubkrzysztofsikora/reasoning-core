@@ -58,7 +58,7 @@ psutil>=5.9
 # Only required if you explicitly select the GGUF backend.
 # Builds a C++ extension on install — first install is slow on macOS
 # without prebuilt wheels.
-llama-cpp-python>=0.2.90
+llama-cpp-python>=0.3.36
 
 # --- Rule engine: PyYAML is required (see src/hooks/_rule_engine.py).
 # The fallback _basic_yaml_parse is a security-review-flagged divergence
