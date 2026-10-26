@@ -113,3 +113,30 @@ def test_cache_per_url(stub_models, monkeypatch):
     assert gen_client._backend_active() is False
     monkeypatch.setenv("RC_GEN_URL", stub_models.url())
     assert gen_client._backend_active() is True
+
+
+def test_nemotron_backend_explicit_on(monkeypatch):
+    """RC_REASONER_BACKEND=nemotron is explicit-on without any probe."""
+    monkeypatch.delenv("RC_GEN_URL", raising=False)
+    monkeypatch.setenv("RC_REASONER_BACKEND", "nemotron")
+    assert gen_client._backend_active() is True
+
+
+def test_default_url_targets_external_nemotron(monkeypatch):
+    """Unset backend defaults to the always-on nemotron server; mlx keeps 8766."""
+    monkeypatch.delenv("RC_GEN_URL", raising=False)
+    monkeypatch.delenv("RC_REASONER_BACKEND", raising=False)
+    assert gen_client._default_url() == "http://127.0.0.1:8088/v1/chat/completions"
+    monkeypatch.setenv("RC_REASONER_BACKEND", "mlx")
+    assert gen_client._default_url() == "http://127.0.0.1:8766/v1/chat/completions"
+
+
+def test_default_model_follows_backend(monkeypatch):
+    """nemotron mode requests nemotron-bolt; mlx/llama keep the Qwen id."""
+    monkeypatch.delenv("RC_GEN_MODEL", raising=False)
+    monkeypatch.delenv("RC_REASONER_BACKEND", raising=False)
+    assert gen_client._default_model() == "nemotron-bolt"
+    monkeypatch.setenv("RC_REASONER_BACKEND", "llama")
+    assert gen_client._default_model() == (
+        "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit"
+    )

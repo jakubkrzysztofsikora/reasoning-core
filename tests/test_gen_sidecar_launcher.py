@@ -54,6 +54,44 @@ def test_remote_backend_short_circuits():
     assert "EXIT=0" in r.stdout
 
 
+def test_nemotron_backend_short_circuits():
+    """RC_REASONER_BACKEND=nemotron exits 0 — gen rides the external server."""
+    script = textwrap.dedent("""
+        import sys
+        sys.path.insert(0, 'src')
+        import gen_sidecar_launcher as g
+        try:
+            g.main()
+        except SystemExit as e:
+            print(f"EXIT={e.code}")
+    """)
+    r = _run(script, {
+        "RC_REASONER_BACKEND": "nemotron",
+        "S2_GEN_SINGLE_INSTANCE": "0",
+    })
+    assert r.returncode == 0, r.stderr
+    assert "EXIT=0" in r.stdout
+
+
+def test_nemotron_is_default_backend():
+    """Unset/empty RC_REASONER_BACKEND no longer spawns a local sidecar."""
+    script = textwrap.dedent("""
+        import sys
+        sys.path.insert(0, 'src')
+        import gen_sidecar_launcher as g
+        try:
+            g.main()
+        except SystemExit as e:
+            print(f"EXIT={e.code}")
+    """)
+    r = _run(script, {
+        "RC_REASONER_BACKEND": "",
+        "S2_GEN_SINGLE_INSTANCE": "0",
+    })
+    assert r.returncode == 0, r.stderr
+    assert "EXIT=0" in r.stdout
+
+
 def test_unknown_backend_rejected():
     """Unknown backend exits non-zero with an error."""
     script = textwrap.dedent("""

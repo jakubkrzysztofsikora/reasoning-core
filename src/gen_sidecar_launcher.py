@@ -17,13 +17,15 @@ sidecar growing to 36 GB unchecked because nothing was watching its RSS. This
 launcher closes that hole without forking mlx-lm.
 
 Environment knobs:
+  RC_REASONER_BACKEND  — ``nemotron`` (default: use the always-on external
+                        server, no child spawned here) / ``mlx`` / ``llama``
+                        (spawn a local sidecar) / ``remote`` (no-op).
   RC_GEN_PORT          — bind port (default 8766).
-  RC_GEN_MODEL         — model id (default Qwen2.5-Coder-1.5B-Instruct-4bit).
+  RC_GEN_MODEL         — model id (default: ``nemotron-bolt`` on the external
+                        server; Qwen2.5-Coder-1.5B-Instruct-4bit for mlx/llama).
   S2_GEN_MEM_LIMIT_GB  — cap; falls back to ``S2_MEM_LIMIT_GB``, then 16.
   S2_GEN_MEM_POLL_S    — watchdog poll interval seconds (default 5).
   S2_GEN_SINGLE_INSTANCE — ``0`` to disable the flock.
-  RC_REASONER_BACKEND  — ``mlx``/``llama``/``remote``. Only ``mlx`` and
-                        ``llama`` spawn a child here; ``remote`` exits 0.
 """
 from __future__ import annotations
 
@@ -91,8 +93,14 @@ def _resolve_mlx_server() -> str:
 
 
 def _build_cmd() -> list[str]:
-    backend = os.environ.get("RC_REASONER_BACKEND", "mlx")
+    backend = (os.environ.get("RC_REASONER_BACKEND") or "nemotron").lower()
     port = os.environ.get("RC_GEN_PORT", "8766")
+    if backend in ("remote", "nemotron"):
+        print(
+            f"[gen-launcher] backend={backend} — no local sidecar to start.",
+            file=sys.stderr,
+        )
+        sys.exit(0)
     if backend == "mlx":
         model = os.environ.get(
             "RC_GEN_MODEL", "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit"
@@ -116,10 +124,6 @@ def _build_cmd() -> list[str]:
             "--port", port,
             "--host", "127.0.0.1",
         ]
-    if backend == "remote":
-        print("[gen-launcher] backend=remote — no local sidecar to start.",
-              file=sys.stderr)
-        sys.exit(0)
     print(f"ERROR: unknown RC_REASONER_BACKEND={backend!r}", file=sys.stderr)
     sys.exit(1)
 

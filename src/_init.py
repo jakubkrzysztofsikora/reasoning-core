@@ -603,7 +603,7 @@ LAUNCHD_PLIST_TEMPLATE = '''<?xml version="1.0" encoding="UTF-8"?>
     <key>EnvironmentVariables</key>
     <dict>
         <key>RC_REASONER_BACKEND</key>
-        <string>mlx</string>
+        <string>nemotron</string>
         <key>PYTHONPATH</key>
         <string>{src}</string>
         <key>HF_HOME</key>
@@ -627,7 +627,7 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=append:/tmp/rc-supervisor.out.log
 StandardError=append:/tmp/rc-supervisor.err.log
-Environment=RC_REASONER_BACKEND=mlx
+Environment=RC_REASONER_BACKEND=nemotron
 Environment=HF_HOME=%h/.cache/huggingface
 
 [Install]

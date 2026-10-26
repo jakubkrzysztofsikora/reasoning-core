@@ -44,7 +44,7 @@
         <key>PYTHONPATH</key>
         <string>__REPO__:__REPO__/src</string>
         <key>RC_REASONER_BACKEND</key>
-        <string>mlx</string>
+        <string>nemotron</string>
         <key>RC_ENFORCEMENT_TOKEN</key>
         <string>rc-local-enforcement-token-2026-auth-ok</string>
         <key>S2_MEM_LIMIT_GB</key>

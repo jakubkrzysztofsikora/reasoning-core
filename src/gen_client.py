@@ -12,7 +12,7 @@ Per v2 plan reviewer corrections folded in:
 - Pin temperature=0 for gate-affecting paths (deterministic).
 - Hard-budget RC_GEN_BUDGET_MS=2500 per call → fail-open to BM25 on
   timeout / 5xx.
-- Cross-platform via RC_REASONER_BACKEND={mlx, llama, remote}.
+- Cross-platform via RC_REASONER_BACKEND={nemotron, mlx, llama, remote}.
 """
 from __future__ import annotations
 
@@ -29,7 +29,14 @@ from typing import Any, Dict, Optional
 
 
 def _default_url() -> str:
-    return os.environ.get("RC_GEN_URL", "http://127.0.0.1:8766/v1/chat/completions")
+    explicit = os.environ.get("RC_GEN_URL")
+    if explicit:
+        return explicit
+    # Self-hosted backends bind their own sidecar port; everything else
+    # (nemotron / unset auto-probe) targets the always-on external server.
+    if os.environ.get("RC_REASONER_BACKEND", "").lower() in ("mlx", "llama"):
+        return "http://127.0.0.1:8766/v1/chat/completions"
+    return "http://127.0.0.1:8088/v1/chat/completions"
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -99,14 +106,14 @@ def _backend_active() -> bool:
 
     Resolution order:
       1. RC_REASONER_BACKEND in {off, 0, no, false, disabled} → hard opt-out.
-      2. RC_REASONER_BACKEND in {mlx, llama, remote}           → explicit on.
+      2. RC_REASONER_BACKEND in {mlx, llama, remote, nemotron}  → explicit on.
       3. else (auto/unset) → probe /v1/models once per (URL) per process.
          Cached so the gate doesn't pay the probe on every Edit.
     """
     raw = os.environ.get("RC_REASONER_BACKEND", "").lower()
     if raw in ("off", "0", "no", "false", "disabled"):
         return False
-    if raw in ("mlx", "llama", "remote"):
+    if raw in ("mlx", "llama", "remote", "nemotron"):
         return True
     url = _default_url()
     key = f"auto::{url}"
@@ -201,9 +208,12 @@ def _post(url: str, body: Dict[str, Any], budget_ms: int) -> Optional[Dict[str, 
 
 
 def _default_model() -> str:
-    return os.environ.get(
-        "RC_GEN_MODEL", "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit"
-    )
+    explicit = os.environ.get("RC_GEN_MODEL")
+    if explicit:
+        return explicit
+    if os.environ.get("RC_REASONER_BACKEND", "").lower() in ("mlx", "llama"):
+        return "mlx-community/Qwen2.5-Coder-1.5B-Instruct-4bit"
+    return "nemotron-bolt"
 
 
 def critic_call(prompt: str, *, model: Optional[str] = None,
