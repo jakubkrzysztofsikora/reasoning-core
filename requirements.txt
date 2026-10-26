@@ -63,7 +63,7 @@ llama-cpp-python>=0.2.90
 # --- Rule engine: PyYAML is required (see src/hooks/_rule_engine.py).
 # The fallback _basic_yaml_parse is a security-review-flagged divergence
 # surface and only activates under RC_RULE_ENGINE_ALLOW_BASIC_YAML=1.
-PyYAML>=6.0
+PyYAML>=6.0.3
 
 # --- Test harness ---
 pytest>=8.0,<9.0
