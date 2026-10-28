@@ -429,10 +429,11 @@ def _run_bounded(command: list[str], *, cwd: Path, env: dict[str, str],
             if timed_out or output_limited:
                 kill_descendants(proc.pid)
         finally:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             for stream in (proc.stdout, proc.stderr):
                 stream.close()
             if proc.poll() is None:
