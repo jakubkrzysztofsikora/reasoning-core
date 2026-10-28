@@ -1,11 +1,15 @@
 {
   "schema_version": 1,
   "upstream_repository": "https://github.com/can1357/oh-my-pi",
-  "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
-  "upstream_version": "18.8.8",
-  "upstream_archive_sha256": "f7b808277ffe18fc1940efcfd4c41c2b6d6eb8fba2e65ba8682760e95f9caa07",
-  "patch_sha256": "e9947d54e9e0a3e259a102606772e4b808a1fb7ff1022505c9c5a95306e4adf6",
+  "upstream_source_sha": "96894a6147d8cc64b7e00ad3a7d7178fd93b9531",
+  "upstream_version": "18.11.3",
+  "upstream_archive_sha256": "048ce4e2c71afc509f4fc216ada46d996a6c19281eaeb88b2b67cdad2901a61a",
+  "patch_sha256": "a830579d196e39ddd26f5c147ed09db0bbf2241aadb1b514e1e7747977a7fe52",
   "files": {
+    "Cargo.lock": {
+      "before_sha256": "255c0df51e2c036d51114bf7a3932e84699cbf2161621517c14ff125308e2cd1",
+      "after_sha256": "3c0b3da26c3ee80523e2ae624969bcb56dafd160853ca53260fbbf9a8682da75"
+    },
     "crates/pi-edit/Cargo.toml": {
       "before_sha256": "3caa2e47075702d088618290592c45e8bd473fda90e0db2162259e2179bd72a9",
       "after_sha256": "c310806e57e4f3d352c4850c2a881a5cfe5929adb69087d80b5b6db65af6bcb1"
@@ -15,16 +19,12 @@
       "after_sha256": "56eed7e045321c9a89e55deabbb2659b5c571a287365cd2df60bd71015fc8699"
     },
     "crates/pi-edit/src/session.rs": {
-      "before_sha256": "2801e664cf5069258bc6fd11710e10c144b479e4c72534cb3a3c3b30dbdbee13",
-      "after_sha256": "631c6dd43cba178d77365f6a8dd587fd4b3a5a485262cb0c3fc72fe80d894c1c"
+      "before_sha256": "de67e10698508e3ec0049c6b4ba2399c9575d6ce8123d3d8ed1832cd2b176fbb",
+      "after_sha256": "81bbdc022f7dc89bc475495e90db5a4ccc3b57f8aac5c73aaad9601b40e12d30"
     },
     "crates/pi-natives/src/edit.rs": {
-      "before_sha256": "eb65dd9d29185a50c9b74658a23451f27cc799c0e2061d1236b5def6c8aaee21",
-      "after_sha256": "203dd5351d8689d19b12c64a9eaa68446057c66b9d027e4d8db6b8cbbf817e1d"
-    },
-    "Cargo.lock": {
-      "before_sha256": "d9c1d3a964c1d24694b945a64eec15f5c64b89fdee76a48d17e79c3b83e13996",
-      "after_sha256": "6b1c5b1d6eeaab299006ccefd36847677a5ead11da8712e0daea871dcae549d3"
+      "before_sha256": "f9fc8652d4fff2a2e07df59725884f988671a6317f570894ec4bd4de55195701",
+      "after_sha256": "92bc79ea9b772048aa9b76ecc8fe482888a44f07c21450ecaab93876891b3a2e"
     }
   },
   "native_api": {
@@ -50,11 +50,11 @@
     "capability": "editPrecommitProtocol() == 1"
   },
   "verification": {
-    "state": "native_component_tested",
-    "date": "2026-10-10",
+    "state": "host_qualified",
+    "date": "2026-10-28",
     "rust_toolchain": "nightly-2026-10-06",
-    "bun_version": "1.3.14",
-    "native_suite_passed": 349,
+    "bun_version": "1.4.4",
+    "native_suite_passed": 354,
     "boundary_fixtures_passed": 20,
     "python_suite": {
       "passed": 1401,
@@ -62,9 +62,9 @@
       "xfailed": 1
     },
     "addon_build": "napi build --profile debug; Rust nightly-2026-10-06",
-    "addon_sha256": "7dcc7e00bd594fc4eb44e14de5e2956cc1fe8c124a2139e803927f5f29578887",
-    "host_qualified": false,
-    "machine_activation": false,
+    "addon_sha256": "a333cbb68204324b7584115e3d3649a56a4884499a17e5401497fae91cfa46ac",
+    "host_qualified": true,
+    "machine_activation": true,
     "tested_modes": [
       "hashline"
     ]

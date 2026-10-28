@@ -1,3 +1,13 @@
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -6953,6 +6953,7 @@
+  "regex",
+  "serde",
+  "serde_json",
++ "sha2 0.10.9",
+  "tempfile",
+  "thiserror 2.0.21",
+  "tokio",
 --- a/crates/pi-edit/Cargo.toml
 +++ b/crates/pi-edit/Cargo.toml
 @@ -11,6 +11,7 @@
@@ -77,10 +87,12 @@
  
  use crate::{
  	diff_string::{CompactDiffOptions, build_compact_diff_preview},
-@@ -68,9 +72,142 @@
+@@ -66,11 +70,144 @@
+ 	pub written:          String,
+ 	/// Diagnostics payload serialized by the host; opaque here.
  	pub diagnostics_json: Option<String>,
- }
- 
++}
++
 +/// Complete final native candidates passed to the host before any write.
 +#[derive(Debug, Clone)]
 +pub struct PreparedCandidate {
@@ -163,8 +175,8 @@
 +		}
 +		Ok(())
 +	}
-+}
-+
+ }
+ 
 +impl PreparedEdit {
 +	fn from_staged(input: &str, staged: &[StagedFile]) -> EditResult<Self> {
 +		let mut candidates = Vec::new();
@@ -231,10 +243,11 @@
  		for file in &staged {
  			self.files.enforce_write(
  				&file.display,
-@@ -304,10 +443,36 @@
+@@ -303,11 +442,37 @@
+ 				file.move_to.as_ref().map(|m| m.display.as_str()),
  			)?;
  		}
- 
++
 +		let prepared = if writer.needs_approval() {
 +			let batch = PreparedEdit::from_staged(self.args.buffer(), &staged)?;
 +			writer.approve(batch.clone()).await?;
@@ -248,7 +261,7 @@
 +		} else {
 +			None
 +		};
-+
+ 
  		let last_write = staged.iter().rposition(|file| file.op != FileOp::Noop);
  		let mut files = Vec::with_capacity(staged.len());
  		for (index, mut file) in staged.into_iter().enumerate() {
@@ -289,7 +302,7 @@
  	threadsafe_function::{ThreadsafeFunction, UnknownReturnValue},
  };
  use napi_derive::napi;
-@@ -38,11 +38,19 @@
+@@ -38,12 +38,20 @@
  	diff_string::{BlockContextSource, generate_diff_string},
  	modes::{hashline, sloppy},
  	path_policy::canonical_key,
@@ -302,15 +315,16 @@
  	stream_json::snapshot_from_text,
  	text::normalize_to_lf,
  };
-+
+ 
 +#[napi]
 +pub fn edit_precommit_protocol() -> u32 {
 +  1
 +}
++
+ use crate::memory::{self, Settled, native_work};
  
  fn parse_mode(mode: &str) -> Result<EditMode> {
- 	EditMode::parse(mode)
-@@ -355,6 +363,28 @@
+@@ -357,6 +365,28 @@
  // ═══════════════════════════════════════════════════════════════════════════
  
  type PreviewCallback = ThreadsafeFunction<EditPreviewBatch, UnknownReturnValue>;
@@ -339,7 +353,7 @@
  type WriterCallback = ThreadsafeFunction<EditWriteRequest, Promise<EditWriteResponse>>;
  
  /// Weak so a session awaiting GC never keeps the event loop alive: every call
-@@ -448,11 +478,62 @@
+@@ -451,11 +481,62 @@
  
  /// Bridges the host writer callback into the engine's writer trait.
  struct TsfnWriter {
@@ -403,7 +417,7 @@
  	async fn write(&self, request: WriteRequest) -> EditResult<WriteResponse> {
  		let op = if request.move_to.is_some() {
  			"move"
-@@ -589,12 +670,15 @@
+@@ -592,12 +673,15 @@
  		#[napi(ts_arg_type = "(error: Error | null, request: EditWriteRequest) => \
  		                      Promise<EditWriteResponse>")]
  		writer: WriterCallback,
@@ -420,13 +434,3 @@
  		let request =
  			ApplyRequest { lsp_batch_id: request.lsp_batch_id, lsp_flush: request.lsp_flush };
  		// Apply never reuses preview-time answers (resolved before approval,
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -6953,6 +6953,7 @@
-  "regex",
-  "serde",
-  "serde_json",
-+ "sha2 0.10.9",
-  "tempfile",
-  "thiserror 2.0.21",
-  "tokio",

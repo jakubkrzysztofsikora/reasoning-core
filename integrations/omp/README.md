@@ -1,8 +1,8 @@
 # OMP native precommit boundary
 
 This patch adds a complete-batch approval callback to OMP's native edit engine.
-It is tested against source `aafb6551616fccec65cbfb264298e7f98df8ce5f`
-(version 18.8.8), with Rust `nightly-2026-10-06` and Bun 1.3.14.
+It is tested against source `96894a6147d8cc64b7e00ad3a7d7178fd93b9531`
+(version 18.11.3), with Rust `nightly-2026-10-06` and Bun 1.4.4.
 `native-precommit.json` records the archive, patch, source-file, and tested
 development-addon digests.
 
@@ -55,7 +55,7 @@ Use a disposable upstream checkout/archive tree. Verify its archive and the five
 original file digests against the metadata before applying the patch. The archive
 is available at:
 
-`https://codeload.github.com/can1357/oh-my-pi/tar.gz/aafb6551616fccec65cbfb264298e7f98df8ce5f`
+`https://codeload.github.com/can1357/oh-my-pi/tar.gz/96894a6147d8cc64b7e00ad3a7d7178fd93b9531`
 
 Apply with `patch -p1 < /absolute/path/to/native-precommit.patch` in that tree,
 then verify the five patched file digests. This changes the upstream source,

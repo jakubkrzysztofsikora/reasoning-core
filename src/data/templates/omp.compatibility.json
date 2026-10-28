@@ -1,10 +1,11 @@
 {
   "schema_version": 1,
-  "upstream_version": "18.8.8",
-  "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
+  "upstream_version": "18.11.3",
+  "upstream_source_sha": "96894a6147d8cc64b7e00ad3a7d7178fd93b9531",
+  "host_binary_sha256": "5d14a9bb3708e3f99088b5d3fc3d8e2e3aeda9b428e6f214632f941ec85c9697",
   "native_protocol": 1,
-  "native_patch_sha256": "e9947d54e9e0a3e259a102606772e4b808a1fb7ff1022505c9c5a95306e4adf6",
-  "host_patch_sha256": "3c7f3050a67d9dacb9e3f9b23342294a9a2ae6836d71f3757e34dc5dfb6e9318",
+  "native_patch_sha256": "a830579d196e39ddd26f5c147ed09db0bbf2241aadb1b514e1e7747977a7fe52",
+  "host_patch_sha256": "61a13a5568261293daaf0738ed9715f9911a83b0b806022369e5d0ee63194820",
   "qualification": "not_qualified",
   "supported_mutation_routes": [
     "native_file_edit"

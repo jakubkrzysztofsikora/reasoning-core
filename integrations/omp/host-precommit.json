@@ -1,49 +1,49 @@
 {
   "schema_version": 1,
-  "upstream_source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
-  "upstream_version": "18.8.8",
+  "upstream_source_sha": "96894a6147d8cc64b7e00ad3a7d7178fd93b9531",
+  "upstream_version": "18.11.3",
   "requires_native_precommit": true,
-  "patch_sha256": "3c7f3050a67d9dacb9e3f9b23342294a9a2ae6836d71f3757e34dc5dfb6e9318",
+  "patch_sha256": "61a13a5568261293daaf0738ed9715f9911a83b0b806022369e5d0ee63194820",
   "files": {
+    "packages/coding-agent/src/cli.ts": {
+      "before_sha256": "c5025beed4e1528ca6e01e11497fdf328e173f0a1bb70955aaa97e53c762ecb2",
+      "after_sha256": "6ca673d67c480b9b52175fa622bc93df5cfd34fec99eac7614b20f671f59f7cb"
+    },
+    "packages/coding-agent/src/cli/rc-native-probe.ts": {
+      "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after_sha256": "f39aadcc4a1f7608d7b3682641d869f0466cd02df8ac8fe8e86bc924fc938661"
+    },
     "packages/coding-agent/src/edit/index.ts": {
-      "before_sha256": "a1caabb2d515a3e1cd8cf808064538a58441f74e147f4ee14efcc76e09dfac17",
-      "after_sha256": "3c242cbb299a1403a73cc1c8e41985cffe9312e72bc970d2a328cd62c297e7ed"
-    },
-    "packages/coding-agent/src/tools/index.ts": {
-      "before_sha256": "6e8aaf6523c0cfcc041aacfe5004d9c08aff9a9b86fd65251f7eb7972b6ce828",
-      "after_sha256": "eb3ceb86a19851a4112fdc88b71f2e69d9144d06ed3c0153f3fe8330653d7b8e"
-    },
-    "packages/coding-agent/src/sdk.ts": {
-      "before_sha256": "4b9f9aa2a62deacfbe36fa0ea0e262b2c4d753fb724de0dea8a0e379bf60f8c8",
-      "after_sha256": "852961f24b66e084e099dc896c5ebef3de965e2bfb83b8513e35e286bf6e0547"
-    },
-    "packages/coding-agent/src/extensibility/extensions/types.ts": {
-      "before_sha256": "c0b78c9414ec34ead5617b14a48b4750df0e1d2204eca002a9032c558b20c0ba",
-      "after_sha256": "83e75b31b09cd0dd918a86dcfb0f10fb1e794f29ae03c445b8043887ca48b0c4"
-    },
-    "packages/coding-agent/src/extensibility/extensions/runner.ts": {
-      "before_sha256": "cdf3f8b2d80da336a443c6cbd5616f84859624b8d73fd5b8347b5572fed5f28c",
-      "after_sha256": "e3aa5f0232350961c12d3ec7b8a3f1492742551525cd08218dc82d3ed98d52f8"
+      "before_sha256": "499887ea35f07c7b1974abdcff609442df50b599cc57d29bc3d899e79faaf9a4",
+      "after_sha256": "129e27dbcd99e3294a96956be767fdeb718a213339b2d39b95591f9e3639b143"
     },
     "packages/coding-agent/src/extensibility/extensions/loader.ts": {
       "before_sha256": "6ce3fcecb30caca84738683af80677638a9b6aa51b285709f32f5fad56bcd2c2",
       "after_sha256": "e7f1442943d91a47a8cebe37c8d925eedc0aa6f83cfea1f3c8ef34b64ee54912"
     },
+    "packages/coding-agent/src/extensibility/extensions/runner.ts": {
+      "before_sha256": "d6f7984441529ae4a2bfc6bd84eb19e1c324bb3dcc4715dee2ac2d3430ac46ee",
+      "after_sha256": "743221b03ce8aa4ac0f5fe196655455046989eb530bc0edd02db0e5d731f8725"
+    },
+    "packages/coding-agent/src/extensibility/extensions/types.ts": {
+      "before_sha256": "948869fb75328a32b252423750567695b0a5c0641fab8b79e84f98e2a754409f",
+      "after_sha256": "703ffefb44e308540eb14c9cf0e388ce6c46b6b64e1dd5f50b90d6d3f5c0eea3"
+    },
+    "packages/coding-agent/src/sdk.ts": {
+      "before_sha256": "e8ed2920bc0ba222b12791e4cb9aa4fc9f6aab608311b78df3d59eb381fb5317",
+      "after_sha256": "7b3de12c9c9cf4cd20156472d360d668e2727b1d3e169ce45b778199d803afff"
+    },
+    "packages/coding-agent/src/tools/index.ts": {
+      "before_sha256": "2f05884b99e280d6d2a5f8cb6c459e53e9f239495e11aecf9bc93cea0efddd5b",
+      "after_sha256": "2dca7eaa0ac378780ad189ae179f8aabd9ddd1e92f84e4872905e37ef3e0a840"
+    },
     "packages/natives/native/index.d.ts": {
-      "before_sha256": "4aa8a69da6afb4b425eb5db27dcf3ef48e2f4427e8fc56b4805fe707318dd679",
-      "after_sha256": "53641ccf6bd36e69e0cce83d9c7187e061d9b0f6e9bcc9f5bca625b3ba32b8ee"
+      "before_sha256": "73c1091ab1b2b5e15ade60ff2b34058eae1c070164cdeb440ee0afc1b605b291",
+      "after_sha256": "d9b7e000274934c9013e88531480d54a261e51d861304aa26b37d5a6a298539c"
     },
     "packages/natives/native/index.js": {
-      "before_sha256": "e4ee6f849c4e34a648d773c9090a84cfa5f8219c4a1db582532fba0cfc9daccb",
-      "after_sha256": "34c00a5483143fa53910b3c3cfe75c513652b4487813349633746d04edb86683"
-    },
-    "packages/coding-agent/src/cli.ts": {
-      "before_sha256": "eca186ac945c972743d95619d5ea030b503b4326bfce6f532d5fe8a28936936a",
-      "after_sha256": "32c785dbc800bfaf82e38f46bd99d3870360a9481d12d0a348d7275ecb1f7f09"
-    },
-    "packages/coding-agent/src/cli/rc-native-probe.ts": {
-      "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "after_sha256": "fbacedc431e43f9a63e8ff361d36e5ef9136479905835be49fcdf4645224fca1"
+      "before_sha256": "13373397d008b23446fd729c776add2b38e42bb5019fd9bec38b3b2cb119f2f6",
+      "after_sha256": "f3d5970f2b811791101b873c8fff2984cbfc213cf75fe3c58b8da75bddd6a14f"
     }
   }
 }

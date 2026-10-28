@@ -1,0 +1,64 @@
+{
+  "recorded_at": "2026-10-28T13:30:00Z",
+  "recorded_by": "rc-omp-integration Phase 6",
+  "omp_pin": {
+    "version": "18.11.3",
+    "commit": "96894a6147d8cc64b7e00ad3a7d7178fd93b9531",
+    "editPrecommitProtocol": 1,
+    "patch_files": [
+      "integrations/omp/host-precommit.patch",
+      "integrations/omp/native-precommit.patch"
+    ],
+    "host_files_probed": [
+      "packages/coding-agent/src/cli.ts",
+      "packages/coding-agent/src/cli/rc-native-probe.ts",
+      "packages/coding-agent/src/edit/index.ts",
+      "packages/coding-agent/src/extensibility/extensions/loader.ts",
+      "packages/coding-agent/src/extensibility/extensions/runner.ts",
+      "packages/coding-agent/src/extensibility/extensions/types.ts",
+      "packages/coding-agent/src/sdk.ts",
+      "packages/coding-agent/src/tools/index.ts",
+      "packages/natives/native/index.d.ts",
+      "packages/natives/native/index.js"
+    ],
+    "host_file_digests": "computed at drift-runbook time against a checkout of the pinned commit; no pinned tree present locally at record time"
+  },
+  "active_installs": {
+    "primary": {
+      "path": "~/.local/bin/omp",
+      "version": "18.11.3",
+      "kind": "compiled standalone",
+      "patched": true,
+      "probe_result": "--rc-native-probe qualified 2026-10-28 (doctor 6/6, omp-qualification.json bound)"
+    },
+    "npm_source": {
+      "path": "/opt/homebrew/lib/node_modules/@oh-my-pi/pi-coding-agent",
+      "version": "18.2.11",
+      "kind": "npm global, unpatched source",
+      "patched": false
+    }
+  },
+  "upstream": {
+    "latest_known": "18.13.2 (2026-10-27)",
+    "drift_runbook": "plan Phase 6"
+  },
+  "guard_hash_interim": {
+    "note": "agent-computed SHA-256 snapshot; authoritative store pending operator `rc guard-hash --init` (keychain read denied to agent session, errSecInteractionNotAllowed; no sudo timestamp)",
+    "algorithm": "sha256",
+    "hashes": {
+      "src/hooks/pre_edit_guard.py": "dde0ee7c0ad2b3a6827acf5d370f75fc5c3ebaa74ffd287d02ace8d367df0063",
+      "src/hooks/_dispatch.py": "1f30eb09a9c688defbfd113bfe75de062f7a5882e3cf23ccbf890aa9216c6635",
+      "src/hooks/_guard_paths.py": "23b7d7a871c3f82a3423a6ec26eec41f9ddfa1ae15e5d10dcef791af95d5f98d",
+      "src/hooks/_kill_switches.py": "9ae0386ab686cf2dbe7171239d719bdbf4b2e21dd5c8025530a6a5c3abdb6f7a",
+      "src/hooks/_magic_comments.py": "dd2f72970f216f1ab5b7ab3819fb79c8839c481f246f91bbd734962c841aea6b",
+      "src/hooks/_rule_engine.py": "9a64615cca0cddf10932d211969a7f0e649ff78b010ffaccf4cd89fc048ede16",
+      "src/hooks/audit_log.py": "81d2e3fd34c4e077f6113eb1d72272f2c4d39e2c440e97cf8c016347e0c09830",
+      "src/rc_cli.py": "521f604c45736173d6c645551bd5534db79cc4a1496d0dd8dc973cb0dae60d2e",
+      ".envrc.local": "98b143ede2f77916d704fbbe18e7f021bf28123a51a37836a34f55ab4018434f",
+      "PLAN.md": "3be967a730d4600a299365b27792c17e007891e3075ce70f51bdde4b5d6de95d",
+      "<state>/kill_switches.json": "a7f95ced3b36e19859d5169cf9ad6b1fefc5a471947053f8f6ed15b31b9752de",
+      "<state>/kill_switches.json.mac": "6a77034d6d6a4280aefba73b7ff1f5095a3439e76e27a0711aa4a063c2ec30cb"
+    }
+  },
+  "baseline": "baseline-2026-10-28-omp-integration-pre"
+}
