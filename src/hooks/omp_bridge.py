@@ -37,16 +37,8 @@ def _failure(reason: str, batch: PreparedBatch | None = None) -> dict[str, Any]:
     return {"decision": "blocked", "reason": reason, "decision_id": identifier}
 
 
-def _context(event: dict[str, Any]) -> dict[str, str | None]:
-    if event.get("event") in ("prepare", "result"):
-        batch = PreparedBatch.from_dict(event.get("batch"))
-        return {
-            "project_dir": batch.project_dir, "session_id": batch.session_id,
-            "agent_id": batch.agent_id, "parent_agent_id": batch.parent_agent_id,
-        }
-    if event.get("event") not in ("session_start", "session_stop") or set(event) != {
-        "event", "project_dir", "session_id", "agent_id", "parent_agent_id",
-    }:
+def _lifecycle_identity(event: dict[str, Any], fields: set[str]) -> dict[str, str | None]:
+    if set(event) != {"event", "project_dir", "session_id", "agent_id", "parent_agent_id", *fields}:
         raise ValueError("invalid event")
     project = _absolute(event["project_dir"], "project_dir").resolve(strict=True)
     if not project.is_dir():
@@ -58,6 +50,39 @@ def _context(event: dict[str, Any]) -> dict[str, str | None]:
         "agent_id": _identity(event["agent_id"], "agent_id"),
         "parent_agent_id": _identity(parent, "parent_agent_id") if parent is not None else None,
     }
+
+
+def _context(event: dict[str, Any]) -> dict[str, str | None]:
+    if event.get("event") in ("prepare", "result"):
+        batch = PreparedBatch.from_dict(event.get("batch"))
+        return {
+            "project_dir": batch.project_dir, "session_id": batch.session_id,
+            "agent_id": batch.agent_id, "parent_agent_id": batch.parent_agent_id,
+        }
+    kind = event.get("event")
+    if kind == "bash":
+        command = event.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError("invalid command")
+        cwd = event.get("cwd")
+        if cwd is not None and (not isinstance(cwd, str) or not cwd.strip()):
+            raise ValueError("invalid cwd")
+        return _lifecycle_identity(event, {"command", "cwd"})
+    if kind == "subagent":
+        name = event.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("invalid subagent name")
+        return _lifecycle_identity(event, {"name"})
+    if kind == "advisor":
+        if event.get("kind") not in ("cost_changed", "yielded"):
+            raise ValueError("invalid advisor kind")
+        cost = event.get("cost")
+        if cost is not None and (not isinstance(cost, (int, float)) or not math.isfinite(cost)):
+            raise ValueError("invalid advisor cost")
+        return _lifecycle_identity(event, {"kind", "cost"})
+    if kind not in ("session_start", "session_stop"):
+        raise ValueError("invalid event")
+    return _lifecycle_identity(event, set())
 
 
 def handle_event(event: dict) -> dict:
@@ -115,13 +140,16 @@ def handle_event(event: dict) -> dict:
         return _failure("invalid_event", batch)
 
 
-def _audit(event: dict, *, decision: str, reason: str, decision_id: str, **extra) -> bool:
+def _audit(
+    event: dict, *, decision: str, reason: str, decision_id: str,
+    signal_source: str = "omp_bridge", **extra,
+) -> bool:
     from src.hooks import audit_log
 
     context = _context(event)
     row = audit_log.new_event(
         tool_name=f"omp:{event['event']}", decision=decision, reason=reason,
-        decision_id=decision_id, signal_source="omp_bridge",
+        decision_id=decision_id, signal_source=signal_source,
         agent_id=context["agent_id"], parent_agent_id=context["parent_agent_id"],
         **extra,
     )
@@ -364,6 +392,93 @@ def _result(event: dict) -> dict:
         return {"decision": "allowed", "reason": reason, "decision_id": identifier}
 
 
+def _bash_event(event: dict) -> dict:
+    from src.hooks import pre_bash_guard as guard
+
+    identifier = uuid.uuid4().hex[:12]
+    code, message = guard.screen_command(
+        event["command"], event["cwd"] or event["project_dir"],
+    )
+    if code == 0:
+        decision, reason = "allowed", message.strip() or "bash_screen_passed"
+    elif code == 2:
+        decision, reason = "blocked", message.strip() or "bash_screen_blocked"
+    else:
+        decision, reason = "blocked", "bash_screen_error"
+    if not _audit(
+        event, decision=decision, reason=reason, decision_id=identifier,
+        command_sha256=hashlib.sha256(event["command"].encode("utf-8")).hexdigest(),
+    ):
+        return _failure("bridge_audit_unavailable")
+    return {"decision": decision, "reason": reason, "decision_id": identifier}
+
+
+def _subagent_event(event: dict) -> dict:
+    identifier = uuid.uuid4().hex[:12]
+    if not _audit(
+        event, decision="allowed", reason="subagent_spawn_recorded",
+        decision_id=identifier, subagent_name=event["name"],
+    ):
+        return _failure("bridge_audit_unavailable")
+    return {"decision": "allowed", "reason": "subagent_spawn_recorded", "decision_id": identifier}
+
+
+def _session_stop_event(event: dict) -> dict:
+    identifier = uuid.uuid4().hex[:12]
+    if os.environ.get("RC_DUP_ORACLE") != "1":
+        if not _audit(
+            event, decision="allowed", reason="session_stop", decision_id=identifier,
+        ):
+            return _failure("bridge_audit_unavailable")
+        return {"decision": "allowed", "reason": "session_stop", "decision_id": identifier}
+    decision = None
+    try:
+        from src.duplicate_detection import findings as ledger
+        from src.duplicate_detection.review import stop_decision
+
+        repo_root = ledger.resolve_repo_root(event["project_dir"])
+        advise = os.environ.get("RC_MODE", "").strip().lower() == "advise"
+        decision = stop_decision(
+            repo_root, ledger.ledger_path(repo_root), count_blocks=not advise,
+        )
+    except Exception:  # noqa: BLE001 - session end must not trap on a broken check
+        decision = None
+    if decision is None:
+        if not _audit(
+            event, decision="allowed", reason="dup_stop_fail_open", decision_id=identifier,
+        ):
+            return _failure("bridge_audit_unavailable")
+        return {"decision": "allowed", "reason": "dup_stop_fail_open", "decision_id": identifier}
+    fields = dict(
+        extract_ids=[item["id"] for item in decision.extract],
+        escalated_ids=decision.escalated, resolved_ids=decision.resolved,
+    )
+    if decision.block and os.environ.get("RC_MODE", "").strip().lower() != "advise":
+        if not _audit(
+            event, decision="blocked", reason="open_extract_duplicate",
+            decision_id=identifier, **fields,
+        ):
+            return _failure("bridge_audit_unavailable")
+        return {
+            "decision": "blocked", "reason": decision.message, "decision_id": identifier,
+        }
+    if not _audit(
+        event, decision="allowed", reason="dup_stop_advisory", decision_id=identifier, **fields,
+    ):
+        return _failure("bridge_audit_unavailable")
+    return {"decision": "allowed", "reason": "dup_stop_advisory", "decision_id": identifier}
+
+
+def _advisor_event(event: dict) -> dict:
+    identifier = uuid.uuid4().hex[:12]
+    if not _audit(
+        event, decision="allowed", reason=f"advisor_{event['kind']}",
+        decision_id=identifier, signal_source="omp-advisor", cost=event["cost"],
+    ):
+        return _failure("bridge_audit_unavailable")
+    return {"decision": "allowed", "reason": f"advisor_{event['kind']}", "decision_id": identifier}
+
+
 def _evaluate_event(event: dict) -> dict:
     _context(event)
     if event["event"] == "prepare":
@@ -372,6 +487,14 @@ def _evaluate_event(event: dict) -> dict:
         return _prepare(event)
     if event["event"] == "result":
         return _result(event)
+    if event["event"] == "bash":
+        return _bash_event(event)
+    if event["event"] == "subagent":
+        return _subagent_event(event)
+    if event["event"] == "advisor":
+        return _advisor_event(event)
+    if event["event"] == "session_stop":
+        return _session_stop_event(event)
     identifier = uuid.uuid4().hex[:12]
     if not _audit(
         event, decision="allowed", reason=event["event"], decision_id=identifier,

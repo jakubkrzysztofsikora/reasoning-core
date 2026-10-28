@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -74,6 +75,27 @@ def qualify(project: Path) -> dict:
             row.get("session_id") == child and row.get("tool_call_id") == "rc-qualify-child"
             and row.get("decision") == "blocked" for row in rows
         )
+        probe = Path(__file__).with_name("omp_extension_probe.ts")
+        bun = shutil.which("bun")
+        if not bun:
+            raise ValueError("bun unavailable for extension probe")
+        probe_environment = dict(os.environ, RC_AUDIT_ROOT=str(root / "audit"), RC_MODE="copilot")
+        probe_run = subprocess.run(
+            [bun, str(probe), str(root)], capture_output=True, text=True,
+            env=probe_environment, cwd=root, timeout=120, check=False,
+        )
+        if probe_run.returncode != 0:
+            raise ValueError("extension probe failed: " + probe_run.stderr.strip()[-300:])
+        try:
+            summary = json.loads(probe_run.stdout.strip().splitlines()[-1])
+        except ValueError as exc:
+            raise ValueError("extension probe produced no summary") from exc
+        evidence["extension_bash_screened"] = (
+            summary.get("bash_allowed") is True and summary.get("bash_blocked") is True
+        )
+        evidence["extension_write_roundtrip"] = summary.get("write_roundtrip") is True
+        evidence["extension_subagent_recorded"] = summary.get("subagent_recorded") is True
+        evidence["extension_advisor_recorded"] = summary.get("advisor_recorded") is True
         if not all(evidence.get(name) is True for name in REQUIRED_EVIDENCE):
             raise ValueError("qualification evidence incomplete: " + json.dumps(evidence, sort_keys=True))
         return {
@@ -81,7 +103,9 @@ def qualify(project: Path) -> dict:
             "binding": qualification_binding(project, runtime), "evidence": evidence,
             "baseline_context": "baseline-2026-08-09",
             "model": {"provider": "rc-qualification", "id": "rc-no-provider", "invoked": False},
-            "coverage": ["native_hashline_edit", "whole_batch_deny", "receipt", "sdk_child"],
+            "coverage": ["native_hashline_edit", "whole_batch_deny", "receipt", "sdk_child",
+                         "extension_bash_screened", "extension_write_roundtrip",
+                         "extension_subagent_recorded", "extension_advisor_recorded"],
             "exclusions": ["task_spawn", "isolated_merge", "shell", "eval", "plain_write",
                            "external_filesystem_races", "model_behavior"],
             "receipt_sha256": hashlib.sha256(json.dumps(receipt, sort_keys=True).encode()).hexdigest(),

@@ -14,6 +14,7 @@ from src import data
 
 EXTENSION = ".omp/extensions/reasoning_core_gate.ts"
 COMPATIBILITY = ".omp/reasoning-core.compatibility.json"
+RUNTIME = ".reasoning-core/omp-runtime.json"
 OWNERSHIP = ".reasoning-core/omp-owned.json"
 _ASSETS = {EXTENSION, COMPATIBILITY}
 _SHA = re.compile(r"[0-9a-f]{64}")
@@ -110,8 +111,15 @@ def install_omp(target: Path, manifest: Path, substitutions: dict[str, str], res
         serialized = (json.dumps(ownership, sort_keys=True, indent=2) + "\n").encode()
         if not state_path.exists() or state_path.read_bytes() != serialized:
             _atomic(state_path, serialized)
+        runtime_path = _safe(root, RUNTIME)
+        runtime = (json.dumps({"python": substitutions["RC_PYTHON"],
+                               "repo_root": substitutions["RC_REPO"]}, sort_keys=True) + "\n").encode()
+        if not runtime_path.exists() or runtime_path.read_bytes() != runtime:
+            _atomic(runtime_path, runtime)
+            result.wrote.append(RUNTIME)
         from src._init import _record
         _record(manifest, OWNERSHIP)
+        _record(manifest, RUNTIME)
         executable = shutil.which("omp")
         detail = executable or "OMP executable unavailable"
         result.warned.append(f"OMP assets installed; loaded/authenticated/qualified runtime unverified: {detail}")

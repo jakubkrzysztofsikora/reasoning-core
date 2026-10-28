@@ -22,6 +22,8 @@ POLICY_FILES = (".omp/settings.json", ".omp/config.yml", ".omp/config.yaml",
 REQUIRED_EVIDENCE = (
     "allowed_write", "denied_unchanged", "receipt_verified",
     "child_guard_retained", "restrictions_verified",
+    "extension_bash_screened", "extension_write_roundtrip", "extension_subagent_recorded",
+    "extension_advisor_recorded",
 )
 _HASH = re.compile(r"[0-9a-f]{64}")
 
@@ -129,6 +131,80 @@ def _host_verified(runtime: dict, compatibility: dict) -> bool:
         return False
 
 
+PLUGIN_PACKAGE = "reasoning-core"
+PLUGIN_DIR = "integrations/omp-plugin"
+PLUGIN_GATE = "extensions/reasoning_core_gate.ts"
+
+
+def _plugin_expected_mode(project: Path) -> str:
+    rc_dir = project / ".reasoning-core"
+    if not rc_dir.is_dir():
+        return "dormant"
+    try:
+        runtime = json.loads((rc_dir / "omp-runtime.json").read_text())
+    except (OSError, ValueError):
+        return "failclosed"
+    if isinstance(runtime, dict) and runtime.get("python") and runtime.get("repo_root"):
+        return "active"
+    return "failclosed"
+
+
+def _plugin_installed() -> tuple[bool, str]:
+    try:
+        plugin = Path(_install_paths.rc_repo_path()) / PLUGIN_DIR
+        gate = plugin / PLUGIN_GATE
+        pkg = json.loads((plugin / "package.json").read_text())
+        manifest = json.loads((plugin / "plugin.json").read_text())
+        link = Path.home() / ".omp/plugins/node_modules" / PLUGIN_PACKAGE
+        entry = f"./{PLUGIN_GATE}"
+        installed = (
+            gate.is_file()
+            and entry in (pkg.get("omp") or {}).get("extensions", [])
+            and entry in manifest.get("extensions", [])
+            and manifest.get("integrity", {}).get(Path(PLUGIN_GATE).name) == _sha(gate)
+            and link.is_symlink()
+            and link.resolve() == plugin.resolve()
+        )
+        return installed, ("user-scope plugin link, manifest entries, and gate digest verified" if installed
+                           else "plugin link, manifest entries, or gate digest mismatch")
+    except (OSError, ValueError, KeyError):
+        return False, "plugin assets unreadable"
+
+
+def _plugin_loaded(project: Path) -> tuple[bool, str]:
+    executable = shutil.which("omp")
+    if not executable:
+        return False, "omp executable unavailable"
+    logs = Path.home() / ".omp/logs"
+    try:
+        proc = subprocess.Popen([executable, "--print", "reasoning-core plugin load probe"], cwd=project,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as err:
+        return False, f"probe spawn failed: {err}"
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    matches = [p for p in logs.glob(f"omp.*.{proc.pid}.log")] if logs.is_dir() else []
+    for log in matches:
+        try:
+            for line in log.read_text(errors="replace").splitlines():
+                if "reasoning-core gate loaded" not in line:
+                    continue
+                record = json.loads(line)
+                if record.get("message") != "reasoning-core gate loaded":
+                    continue
+                mode = record.get("mode")
+                expected = _plugin_expected_mode(project)
+                if mode == expected:
+                    return True, f"session probe loaded the plugin gate (mode {mode})"
+                return False, f"gate loaded with mode {mode}, expected {expected}"
+        except (OSError, ValueError):
+            continue
+    return False, "session probe produced no gate load record"
+
+
 def check_omp(project: Path) -> list[dict]:
     project = project.resolve()
     checks = []
@@ -169,6 +245,11 @@ def check_omp(project: Path) -> list[dict]:
     )
     append("omp_loaded", loaded, "actual host loaded the owned adapter and native protocol 1"
            if loaded else "executable unavailable, discovery disabled, wrong native build, or invalid host probe", "loaded")
+
+    plugin_installed, plugin_detail = _plugin_installed()
+    append("omp_plugin_installed", plugin_installed, plugin_detail, "installed")
+    plugin_loaded, plugin_loaded_detail = _plugin_loaded(project) if plugin_installed else (False, "plugin not installed")
+    append("omp_plugin_loaded", plugin_loaded, plugin_loaded_detail, "loaded")
 
     auth = _authentication_probe(project) if installed else None
     authenticated = False

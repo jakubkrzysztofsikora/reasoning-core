@@ -46,15 +46,37 @@ def test_canonical_asset_parity():
     assert json.loads(data.read_text("omp.compatibility.json"))["native_protocol"] == 1
 
 
-def test_source_checkout_has_no_omp_autoload_path():
+def test_source_checkout_autoload_path_absent_or_owned():
     repo_root = Path(__file__).resolve().parents[1]
     autoload = repo_root / ".omp" / "extensions"
-    assert not autoload.exists(), (
+    if not autoload.exists():
+        return
+    from src import _install_paths, data
+    m = module()
+    try:
+        ownership = m.read_ownership(repo_root)
+        expected = m.render_extension({
+            "RC_PYTHON": _install_paths.python_executable(),
+            "RC_REPO": _install_paths.rc_repo_path(),
+        }).encode()
+        owned = (
+            set(ownership["files"]) == {m.EXTENSION, m.COMPATIBILITY}
+            and all(
+                hashlib.sha256((repo_root / name).read_bytes()).hexdigest() == row["sha256"]
+                for name, row in ownership["files"].items()
+            )
+            and (repo_root / m.EXTENSION).read_bytes() == expected
+            and (repo_root / m.COMPATIBILITY).read_text() == data.read_text("omp.compatibility.json")
+        )
+    except (OSError, ValueError, KeyError):
+        owned = False
+    assert owned, (
         "reasoning-core source checkout contains an OMP autoload path at "
-        f"{autoload}. omp would auto-load any *.ts extensions from this "
+        f"{autoload} without valid owned-asset ownership. omp would auto-load any *.ts extensions from this "
         "directory and re-brick local dev sessions (see "
         "docs/DIAGNOSIS_OMP_GATE_TEMPLATE_2026-10-10.md §2, §5). The canonical "
-        "template source lives at integrations/omp/reasoning_core_gate.ts."
+        "template source lives at integrations/omp/reasoning_core_gate.ts. "
+        "A rendered, ownership-verified install (rc install_omp) is the deliberate end-state."
     )
 
 

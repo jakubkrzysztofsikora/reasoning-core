@@ -34,9 +34,10 @@ def states(checks):
 
 def healthy_runtime(root):
     from src import data
+    compat = json.loads(data.read_text("omp.compatibility.json"))
     return {"host_kind": "source", "host_files": json.loads(data.read_text("omp.host-files.json")), "host_sha256": "c" * 64,
-            "schema_version": 1, "version": "18.8.8", "native_protocol": 1,
-            "source_sha": "aafb6551616fccec65cbfb264298e7f98df8ce5f",
+            "schema_version": 1, "version": compat["upstream_version"], "native_protocol": 1,
+            "source_sha": compat["upstream_source_sha"],
             "adapter_path": str(root / EXTENSION),
             "adapter_sha256": hashlib.sha256((root / EXTENSION).read_bytes()).hexdigest(),
             "native_sha256": "a" * 64, "loaded": True, "model_invoked": False}
@@ -46,9 +47,13 @@ def healthy_runtime(root):
 def probes(project, monkeypatch):
     doctor = module()
     state = {"runtime": healthy_runtime(project), "auth": {"authenticated": True,
-        "python": sys.executable, "bridge_path": str(Path(__file__).resolve().parents[1] / "src/hooks/omp_bridge.py")}}
+        "python": sys.executable, "bridge_path": str(Path(__file__).resolve().parents[1] / "src/hooks/omp_bridge.py")},
+        "plugin_installed": (True, "user-scope plugin link, manifest entries, and gate digest verified"),
+        "plugin_loaded": (True, "session probe loaded the plugin gate (mode active)")}
     monkeypatch.setattr(doctor, "_runtime_probe", lambda _project: state["runtime"])
     monkeypatch.setattr(doctor, "_authentication_probe", lambda _project: state["auth"])
+    monkeypatch.setattr(doctor, "_plugin_installed", lambda: state["plugin_installed"])
+    monkeypatch.setattr(doctor, "_plugin_loaded", lambda _project: state["plugin_loaded"])
     return state
 
 
@@ -56,9 +61,19 @@ def test_installed_loaded_authenticated_still_need_bound_qualification(project, 
     checks = states(module().check_omp(project))
     assert checks["omp_installed"]["ok"]
     assert checks["omp_loaded"]["ok"]
+    assert checks["omp_plugin_installed"]["ok"]
+    assert checks["omp_plugin_loaded"]["ok"]
     assert checks["omp_authenticated"]["ok"]
     assert not checks["omp_qualified"]["ok"]
     assert checks["omp_qualified"]["state"] == "qualified"
+
+
+def test_uninstalled_plugin_skips_load_probe_and_fails_loaded(project, probes):
+    probes["plugin_installed"] = (False, "plugin link, manifest entries, or gate digest mismatch")
+    probes["plugin_loaded"] = (True, "session probe loaded the plugin gate (mode active)")
+    checks = states(module().check_omp(project))
+    assert not checks["omp_plugin_installed"]["ok"]
+    assert not checks["omp_plugin_loaded"]["ok"]
 
 
 @pytest.mark.parametrize("field,value", [
@@ -104,8 +119,33 @@ def test_cli_omp_host_does_not_require_claude_wiring(project, probes, capsys):
     assert rc_cli.main(["doctor", "--host", "omp", "--project-dir", str(project), "--json"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert {row["name"] for row in report["checks"]} == {
-        "omp_installed", "omp_loaded", "omp_authenticated", "omp_qualified",
+        "omp_installed", "omp_loaded", "omp_plugin_installed", "omp_plugin_loaded",
+        "omp_authenticated", "omp_qualified",
     }
+
+
+def test_status_host_omp_reports_gate_state_and_advisor_ledger(project, probes, monkeypatch, capsys):
+    from src import rc_cli
+    import audit_log
+    monkeypatch.setenv("RC_RUN_DIR", str(project))
+    monkeypatch.setenv("RC_AUDIT_ROOT", str(project / "audit"))
+    monkeypatch.setattr(audit_log, "_AUDIT_ROOT", project / "audit")
+    monkeypatch.setattr(rc_cli, "_audit_root", lambda: project / "audit")
+    monkeypatch.setattr(rc_cli, "_today_dir", lambda: project / "audit" / "2026-10-28")
+    day = project / "audit/2026-10-28"
+    day.mkdir(parents=True)
+    (day / "s1.jsonl").write_text(
+        json.dumps({"tool_name": "omp:advisor", "kind": "cost_changed", "cost": 0.25}) + "\n"
+        + json.dumps({"tool_name": "omp:edit", "decision": "allow"}) + "\n"
+        + json.dumps({"tool_name": "omp:advisor", "kind": "yielded", "cost": None}) + "\n")
+    monkeypatch.setenv("RC_MODE", "copilot")
+    assert rc_cli.main(["status", "--host", "omp"]) == 0
+    out = capsys.readouterr().out
+    assert "mode                             active" in out
+    assert "RC_MODE                          copilot" in out
+    assert "advisor_ledger_rows_today        2" in out
+    assert "today_rows                       3" in out
+    assert "qualification                    <absent>" in out
 
 
 @pytest.mark.parametrize("name", ["RC_PLAN_GROUNDING", "RC_STRUCTURAL_ALLOW", "RC_LANG_OVERRIDE"])

@@ -355,7 +355,57 @@ def _sidecar_auth_status() -> str:
         return "unreachable"
 
 
-def cmd_status(_args: argparse.Namespace) -> int:
+def _omp_status() -> int:
+    from src._omp_doctor import _plugin_expected_mode, _plugin_installed
+
+    project = _project_dir().expanduser().resolve()
+    sys.stdout.write("== reasoning-core status (host: omp) ==\n\n")
+    sys.stdout.write("gate:\n")
+    _print_kv("mode", _plugin_expected_mode(project))
+    installed, detail = _plugin_installed()
+    _print_kv("plugin_installed", str(installed))
+    if not installed:
+        _print_kv("plugin_detail", detail)
+    qualified = "<absent>"
+    report_path = project / ".reasoning-core" / "omp-qualification.json"
+    if report_path.is_file():
+        try:
+            evidence = json.loads(report_path.read_text()).get("evidence", {})
+            passed = [k for k, v in evidence.items() if v is True]
+            qualified = f"{len(passed)}/{len(evidence)} evidence keys true"
+        except (OSError, ValueError):
+            qualified = "<corrupt>"
+    _print_kv("qualification", qualified)
+    sys.stdout.write("\nenv knobs:\n")
+    for k in _KNOBS:
+        if k.startswith("RC_"):
+            _print_kv(k, os.environ.get(k, "<unset>"))
+    sys.stdout.write("\naudit log:\n")
+    _print_kv("root", str(_audit_root()))
+    today = _today_dir()
+    advisor_rows = 0
+    total_rows = 0
+    if today.exists():
+        for file in today.glob("*.jsonl"):
+            try:
+                for line in file.read_text().splitlines():
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    total_rows += 1
+                    if row.get("tool_name") == "omp:advisor":
+                        advisor_rows += 1
+            except (OSError, ValueError):
+                continue
+    _print_kv("today_rows", str(total_rows))
+    _print_kv("advisor_ledger_rows_today", str(advisor_rows))
+    sys.stdout.write("\ndeep verification: rc doctor --host omp --project-dir . --json\n")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    if getattr(args, "host", None) == "omp":
+        return _omp_status()
     sys.stdout.write("== reasoning-core status ==\n\nenv knobs:\n")
     for k in _KNOBS:
         _print_kv(k, os.environ.get(k, "<unset>"))
@@ -1979,7 +2029,9 @@ def cmd_autonomous(args: argparse.Namespace) -> int:
 def main(argv: list | None = None) -> int:
     p = argparse.ArgumentParser(prog="rc", description="reasoning-core operator CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("status").set_defaults(func=cmd_status)
+    status = sub.add_parser("status")
+    status.add_argument("--host", choices=("omp",), help="show omp host integration state")
+    status.set_defaults(func=cmd_status)
     autonomous = sub.add_parser("autonomous", help="run a bounded coding task in a disposable clone")
     autonomous.add_argument("--task", required=True, help="JSON task specification")
     autonomous.add_argument("--repo", default=".", help="source Git repository")

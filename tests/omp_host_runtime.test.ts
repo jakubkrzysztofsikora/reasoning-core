@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 const upstream = process.env.RC_OMP_SOURCE;
 if (!upstream) throw Error("RC_OMP_SOURCE must name the pinned patched source tree");
+const compat = JSON.parse(readFileSync(join(process.cwd(), "src/data/templates/omp.compatibility.json"), "utf8"));
 const { EditTool } = await import(join(upstream, "packages/coding-agent/src/edit/index.ts"));
 const { Settings } = await import(join(upstream, "packages/coding-agent/src/config/settings.ts"));
 test("real EditTool requests whole batch before any write and publishes failure result", async () => {
@@ -256,7 +257,7 @@ test("normal CLI probe discovers installed guard without invoking a model", asyn
   const result = JSON.parse(probe.stdout);
   expect(result.loaded).toBe(true);
   expect(result.native_protocol).toBe(1);
-  expect(result.version).toBe("18.8.8");
+  expect(result.version).toBe(compat.upstream_version);
   expect(result.model_invoked).toBe(false);
   expect(result.adapter_path).toBe(join(realpathSync(cwd), ".omp/extensions/reasoning_core_gate.ts"));
   expect(result.native_sha256).toMatch(/^[0-9a-f]{64}$/);
