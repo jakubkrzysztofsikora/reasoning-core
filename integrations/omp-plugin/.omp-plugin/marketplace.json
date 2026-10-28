@@ -1,0 +1,10 @@
+{
+  "name": "reasoning-core",
+  "description": "reasoning-core enforcement gates for omp: native edit batch approval, bash/eval/subagent/session gates, duplicate detection, advisor evidence feed",
+  "version": "1.0.0",
+  "source": {
+    "type": "git",
+    "url": "https://github.com/craving-for-alignment/reasoning-core",
+    "path": "integrations/omp-plugin"
+  }
+}

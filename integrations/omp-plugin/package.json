@@ -1,0 +1,8 @@
+{
+  "name": "reasoning-core",
+  "version": "1.0.0",
+  "description": "reasoning-core enforcement gates for omp: native edit batch approval, bash/eval/subagent/session gates, duplicate detection, advisor evidence feed",
+  "omp": {
+    "extensions": ["./extensions/reasoning_core_gate.ts"]
+  }
+}

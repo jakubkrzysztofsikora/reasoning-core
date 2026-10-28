@@ -1,0 +1,18 @@
+# reasoning-core advisor evidence feed for omp.
+# Copy to <project>/WATCHDOG.yml (project scope) or ~/.omp/agent/WATCHDOG.yml (user scope).
+# Project scope shadows user scope per slug. Activate with /advisor on.
+instructions: |
+  reasoning-core is the deterministic evidence backend for gate decisions in
+  this repo. Consult the rc audit log before asserting gate outcomes; verify
+  any claim with `rc explain <decision_id>`. rc is evidence, not an advisor
+  model — never substitute it for the advisor LLM.
+maxNotesPerUpdate: 2
+advisors:
+  - name: reasoning-core
+    tools: [read, grep, glob]
+    instructions: |
+      Consult the rc audit log (RC_AUDIT_ROOT, default
+      ~/.local/share/reasoning-core/events) and `rc explain <decision_id>`.
+      Report gate denials with their decision ids; never speculate beyond
+      recorded evidence.
+    enabled: true
