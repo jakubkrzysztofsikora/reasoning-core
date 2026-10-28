@@ -337,6 +337,36 @@ flags to children.
 | `RC_PROJECT_DIR` | _auto_ | Override project root (takes precedence over `<HOST>_PROJECT_DIR`) |
 | `RC_SESSION_ID` | _auto_ | Stable per-launch session id; synthesised if unset and re-exported for child processes |
 
+### omp host integration
+
+omp (oh-my-pi) integrates through the plugin in `integrations/omp-plugin/`:
+a TS extension gates `tool_call`/`before_subagent_spawn`/session events and
+spawns the same Python bridge worker per event. Knob surface:
+
+- **Where knobs live**: rc reads environment variables only. omp's
+  `config.yml` has no rc settings. Set rc knobs in the project `.envrc` /
+  `.envrc.local` or the session environment; the bridge worker inherits them
+  from the omp process.
+- **omp-side knobs** (`~/.omp/config.yml` or project `.omp/config.yml`):
+  `tools.approvalMode` (approval posture), `tools.approval.<tool>` (per-tool
+  approval), `tools.restrictedFolders` (fs sandbox), `ttsr.*` (subagent
+  trust), `advisor.*` (advisor model/roster), `mcp.enableProjectConfig`
+  (project MCP config). These control omp's own behavior; rc knobs are
+  separate and env-only.
+- **Agent-visible, read-only**: `rc status --host omp` — gate mode
+  (`dormant`/`failclosed`/`active`), plugin install state, qualification
+  evidence count, effective `RC_*` values, today's audit and advisor-ledger
+  row counts. Deep verification: `rc doctor --host omp --project-dir . --json`.
+- **Operator-only mutations**: `rc bypass-next` (authenticated one-shot),
+  `rc enable-enforcement --hard` / `rc disable-enforcement`,
+  `rc init --host omp`. Agents never mutate enforcement state.
+- **Advisor cost ledger**: omp's `advisor_cost_changed` / `advisor_yielded`
+  session events append `omp:advisor` audit rows
+  (`signal_source=omp-advisor`). Observational only — advisor notes never
+  feed gate decisions; gates read deterministic checks and the rc audit log.
+- **Bridge budget**: `RC_OMP_BRIDGE_TIMEOUT_S` (default 30, clamp 1–120)
+  bounds each extension→bridge subprocess.
+
 ## Neural-gate scoring flags (round-3 documentation pass)
 
 These four env vars control the neural side of the gate. They were
