@@ -205,7 +205,7 @@ Dry-run + real apply with `--fuzz=0`, `-p1`. PIN NOT bumped (dry-run only).
   | File | Failed | Upstream cause | Rebase |
   |---|---|---|---|
   | `edit/index.ts` | 2/6 | import style `import * as fs`; `details:{diff,errorKind}` added to isError return | adapt imports to namespace; keep guard block, new trailing context |
-  | `extensibility/extensions/types.ts` | 1/2 | new events after `tool_approval_resolved` (plan_review, mode_changed, tool_call/result, user_bash/python) shift anchor | insert 3 `on()` lines after `tool_approval_resolved` (now line 1805) |
+  | `extensibility/extensions/types.ts` | 1/2 | new `plan_review_requested/resolved` + `mode_changed` events inserted between `tool_approval_resolved` and `tool_call` shift anchor | insert 3 `on()` lines after `tool_approval_resolved` (now line 1805) |
   | `tools/index.ts` | 1/1 | `ToolSession` gained `costGate?` field | insert 3 optional methods before `/** Current working directory */` |
   | `natives/native/index.js` | 1/2 | new `editErrorKinds` export shifts anchor | insert `editPrecommitProtocol` export between `editInspect`(81) and `enclosingBlockBoundaries`(82) |
   | `natives/native/index.d.ts` | 1/3 | sixel doc-comment rewrite | cosmetic; skip or re-trivial |
