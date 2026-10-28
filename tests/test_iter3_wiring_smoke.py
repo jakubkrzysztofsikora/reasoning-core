@@ -40,9 +40,10 @@ def _run_hook(hook_path: Path, env_extra: dict, stdin: str = "{}") -> subprocess
            if not k.startswith("RC_") and not k.startswith("S2_")}
     env.update({"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")})
     env.update(env_extra)
+    proj = env_extra.get("RC_PROJECT_DIR") or env_extra.get("RC_RUN_DIR")
     return subprocess.run(
         [sys.executable, str(hook_path)],
-        input=stdin, capture_output=True, text=True, env=env, timeout=15,
+        input=stdin, capture_output=True, text=True, env=env, cwd=proj, timeout=15,
     )
 
 

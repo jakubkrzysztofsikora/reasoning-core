@@ -126,7 +126,9 @@ def test_no_plan_md_emits_audit_only(monkeypatch, tmp_path):
     detect silent evaporation; the edit is NOT blocked."""
     monkeypatch.setenv("RC_PLAN_GROUNDING", "2")
     monkeypatch.setenv("RC_RUN_DIR", str(tmp_path))
+    monkeypatch.setenv("RC_PROJECT_DIR", str(tmp_path))
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
     # No PLAN.md in tmp_path; gate must NOT block but MUST emit audit event.
     out = _dispatch.gate_plan_grounding(file_path="src/anything.py")
     assert out.action == "audit_only"

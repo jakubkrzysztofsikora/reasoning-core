@@ -77,6 +77,7 @@ def _run_hook(project_dir: Path, file_path: str, old: str, new: str, env_extra: 
         capture_output=True,
         text=True,
         env=env,
+        cwd=str(project_dir),
         timeout=15,
     )
 
