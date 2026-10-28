@@ -138,12 +138,13 @@ to `rc doctor --host omp`). Extension env-write grep: zero matches. Doctor tests
 for the 6-check check_omp (plugin probes patched in fixtures; 85 pass / 25.7 s across
 extension_gates + bridge + qualification + doctor).
 
-### Phase 5 — Verification + parity — PARTIAL 2026-10-28
+### Phase 5 — Verification + parity — COMPLETE 2026-10-28
 
 Done:
-- `rc doctor --host omp --json`: 2/6 pass — `omp_plugin_installed` + `omp_plugin_loaded`
-  (failclosed session probe) green. `omp_installed`/`omp_loaded`/`omp_authenticated`/
-  `omp_qualified` red as expected on unpatched 18.11.3 (native-patch items → Phase 6).
+- `rc doctor --host omp --json`: 6/6 pass on the patched 18.11.3 active install
+  (installed/loaded/plugin_installed/plugin_loaded/authenticated/qualified);
+  `--rc-native-probe` qualified; `eval.host_enforcement_qualification.omp` full pass
+  (9/9 evidence flags, report bound at `.reasoning-core/omp-qualification.json`).
 - `rc benchmark --after 2026-10-26`: 1297 events, 976 allow / 11 block / 4 warn,
   omp_bridge source=124 rows, median latency 8ms, p95 13ms, fail-open 0.
 - New immutable baseline `baseline-2026-10-28-omp-integration` captured;
@@ -188,7 +189,37 @@ standalone), not a scratch checkout:
   assets must be (re)installed with the venv interpreter so `RC_PYTHON` bakes correctly.
 - Guard-hash re-init still pending operator keychain access (see PIN.json
   `guard_hash_interim` note); `rc_cli.py` interim hash is stale vs current src.
-- Acceptance #5 (dry run against 18.13.2) remains open.
+- Acceptance #5 (dry run against 18.13.2): CLOSED — see next record.
+
+#### Execution record — 2026-10-28, dry-run vs 18.13.2 (e996e1c7, tag v18.13.2)
+
+Scratch checkout `/tmp/omp-1312-scratch` from codeload tarball
+(sha256 `6d86c1455d260d495cc974db18f49eca8930cf4ae2456ea51b1a661097510acc`).
+Dry-run + real apply with `--fuzz=0`, `-p1`. PIN NOT bumped (dry-run only).
+
+- `native-precommit.patch` (Rust): applies CLEAN — 5 files, 0 failed hunks,
+  0 fuzz, 0 offsets.
+- `host-precommit.patch` (TS): 10 files; 5 clean; 6 failed hunks across 5 files,
+  all mechanical anchor drift, zero semantic conflicts:
+
+  | File | Failed | Upstream cause | Rebase |
+  |---|---|---|---|
+  | `edit/index.ts` | 2/6 | import style `import * as fs`; `details:{diff,errorKind}` added to isError return | adapt imports to namespace; keep guard block, new trailing context |
+  | `extensibility/extensions/types.ts` | 1/2 | new events after `tool_approval_resolved` (plan_review, mode_changed, tool_call/result, user_bash/python) shift anchor | insert 3 `on()` lines after `tool_approval_resolved` (now line 1805) |
+  | `tools/index.ts` | 1/1 | `ToolSession` gained `costGate?` field | insert 3 optional methods before `/** Current working directory */` |
+  | `natives/native/index.js` | 1/2 | new `editErrorKinds` export shifts anchor | insert `editPrecommitProtocol` export between `editInspect`(81) and `enclosingBlockBoundaries`(82) |
+  | `natives/native/index.d.ts` | 1/3 | sixel doc-comment rewrite | cosmetic; skip or re-trivial |
+
+- Applied hunks confirm the seam survives: `NativeEditBatch`/`NativeEditPrepareEvent`/
+  `NativeEditResultEvent` land in types.ts; `EditPrecommitDecision`/`editPrecommitProtocol`/
+  `EditPreparedBatch` land in natives .d.ts; `apply(..., precommit?)` signature lands.
+- Upstream 18.13.2 has NO competing native-edit extension protocol — rc's
+  NativeEdit* extension surface remains the only consumer of the precommit hook.
+- restrictedFolders (18.13.1+): approval-layer only (`tools/approval.ts`), default
+  empty list, orthogonal to the rc gate; rc audit dir unaffected unless operator
+  explicitly lists it. No rc skip-file interaction.
+- Estimated rebase effort: ~30 min, 6 hunks, all context-only. No API changes
+  required in rc bridge/gate.
 
 ## Risks
 
