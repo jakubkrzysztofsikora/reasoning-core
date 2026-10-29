@@ -59,7 +59,7 @@ full = [
   "portalocker>=2.7",
   "psutil>=5.9",
   "llama-cpp-python>=0.2.90",
-  "PyYAML>=6.0",
+  "PyYAML>=6.0.3",
 ]
 # CPU-only torch pinning for small VMs / CI without a CUDA host.
 embed-cpu = [
