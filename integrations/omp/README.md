@@ -111,11 +111,12 @@ persisted receipt, and advisor identity. They invoke no model provider.
 
 ## Guarded runtime coverage
 
-The initial profile allows native file editing and the built-in read/grep/glob/find
-tools. It refuses arbitrary shell/eval/Python, plain write, AST/LSP mutation,
-archive/SQLite mutation, custom tools, task/eval spawning and automatic isolated
-merges. User bash/Python execution events receive a refused result. An operator
-can launch an unguarded OMP session; coding tools cannot change this policy.
+The scoped adapter permits native file editing and read/grep/glob/find. It
+refuses shell/eval/Python, plain write, AST/LSP mutation, archive/SQLite
+mutation, custom tools, task/eval spawning and automatic isolated merges.
+User bash/Python execution events receive a refused result.
+The global plugin alone does not qualify bash or plain writes: OMP can rewrite
+paths after the plugin's checks. Keep the scoped adapter loaded for containment.
 
 Guarded EditTool applies complete native batches under a lock keyed by resolved
 project directory across in-process sessions. Its writer uses direct filesystem
@@ -130,20 +131,28 @@ External filesystem races remain outside the in-process lock.
 
 ## Readiness And Qualification
 
+Default `rc init` records only the runtime and removes unchanged, RC-owned
+strict adapter assets from earlier installs. Modified or unowned assets remain
+and are reported. The global plugin gates bash/write/edit. Install the project
+adapter (`.omp/extensions/reasoning_core_gate.ts`) with
+`RC_OMP_STRICT=1 rc init --host omp`; it blocks every tool outside the
+qualified native routes in that project.
+
 Use `rc doctor --host omp --project-dir /absolute/project --json` for distinct
 installed, loaded, authenticated, and qualified states. `rc init --check --host omp`
-uses the same checks. The loaded state invokes the normal OMP CLI diagnostic,
-discovers the owned extension, and hashes the actual loaded native addon.
-No model provider is invoked.
+uses the same checks. The native loaded-state diagnostic discovers the owned
+extension and hashes the loaded native addon without invoking a model provider.
+The separate plugin-load probe uses `omp --print` and may invoke a model.
 
 With the pinned patched OMP on PATH, run
 `python -m eval.host_enforcement_qualification.omp --project-dir /absolute/project`
 from the installed runtime. It exercises native hashline allow, complete-batch
 guard-path denial, actual persisted receipt and inherited SDK-child denial in a
 disposable directory. Restriction handlers and task merge refusal are checked.
-The immutable `.reasoning-core/omp-qualification.json` binds runtime and policy
-digests; changing them invalidates doctor qualification. Existing reports are
-never overwritten. These are containment checks, with model behavior excluded.
+The immutable `.reasoning-core/omp-qualification.json` binds runtime, plugin
+gate, and policy digests; changing them invalidates doctor qualification.
+Existing reports are never overwritten. These are containment checks, with
+model behavior excluded.
 
 The wheel workflow verifies bundled assets, adapter subpackage imports and init
 outside the checkout, then attaches exact source SHA and distribution checksums.

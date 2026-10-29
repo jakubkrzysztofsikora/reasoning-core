@@ -1,9 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import reasoningCoreGate from "../../integrations/omp-plugin/extensions/reasoning_core_gate.ts";
+import { pathToFileURL } from "node:url";
 
 const root = process.argv[2];
-if (!root) throw new Error("usage: bun omp_extension_probe.ts <project-root>");
+const gatePath = process.argv[3];
+if (!root || !gatePath) throw new Error("usage: bun omp_extension_probe.ts <project-root> <plugin-gate>");
+const { default: reasoningCoreGate } = await import(pathToFileURL(path.resolve(gatePath)).href);
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const handlers = new Map<string, Handler[]>();

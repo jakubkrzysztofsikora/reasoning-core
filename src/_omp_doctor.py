@@ -108,6 +108,7 @@ def qualification_binding(project: Path, runtime: dict) -> dict:
         "host_sha256": runtime.get("host_sha256"),
         "host_configuration_sha256": runtime.get("host_configuration_sha256"),
         "adapter_sha256": _sha(project / EXTENSION),
+        "plugin_gate_sha256": _sha(_plugin_path(project) / PLUGIN_GATE),
         "compatibility_sha256": _sha(project / COMPATIBILITY),
         "bridge_sha256": _sha(framework / "src/hooks/omp_bridge.py"),
         "contract_sha256": _sha(framework / "src/omp_contract.py"),
@@ -132,42 +133,49 @@ def _host_verified(runtime: dict, compatibility: dict) -> bool:
 
 
 PLUGIN_PACKAGE = "reasoning-core"
-PLUGIN_DIR = "integrations/omp-plugin"
 PLUGIN_GATE = "extensions/reasoning_core_gate.ts"
 
 
 def _plugin_expected_mode(project: Path) -> str:
     rc_dir = project / ".reasoning-core"
-    if not rc_dir.is_dir():
+    if not (rc_dir / "omp-runtime.json").exists() and not (rc_dir / "omp-owned.json").exists():
         return "dormant"
     try:
         runtime = json.loads((rc_dir / "omp-runtime.json").read_text())
     except (OSError, ValueError):
         return "failclosed"
-    if isinstance(runtime, dict) and runtime.get("python") and runtime.get("repo_root"):
+    if isinstance(runtime, dict) and all(
+        isinstance(value, str) and value and Path(value).is_absolute()
+        for value in (runtime.get("python"), runtime.get("repo_root"))
+    ):
         return "active"
     return "failclosed"
 
 
-def _plugin_installed() -> tuple[bool, str]:
+def _plugin_path(project: Path) -> Path:
+    project_plugin = project / ".omp/plugins/node_modules" / PLUGIN_PACKAGE
+    return project_plugin if project_plugin.exists() or project_plugin.is_symlink() else (
+        Path.home() / ".omp/plugins/node_modules" / PLUGIN_PACKAGE
+    )
+
+
+def _plugin_installed(project: Path) -> tuple[bool, str]:
+    plugin = _plugin_path(project)
     try:
-        plugin = Path(_install_paths.rc_repo_path()) / PLUGIN_DIR
         gate = plugin / PLUGIN_GATE
         pkg = json.loads((plugin / "package.json").read_text())
         manifest = json.loads((plugin / "plugin.json").read_text())
-        link = Path.home() / ".omp/plugins/node_modules" / PLUGIN_PACKAGE
         entry = f"./{PLUGIN_GATE}"
         installed = (
             gate.is_file()
+            and pkg.get("name") == PLUGIN_PACKAGE
             and entry in (pkg.get("omp") or {}).get("extensions", [])
             and entry in manifest.get("extensions", [])
             and manifest.get("integrity", {}).get(Path(PLUGIN_GATE).name) == _sha(gate)
-            and link.is_symlink()
-            and link.resolve() == plugin.resolve()
         )
-        return installed, ("user-scope plugin link, manifest entries, and gate digest verified" if installed
-                           else "plugin link, manifest entries, or gate digest mismatch")
-    except (OSError, ValueError, KeyError):
+        return installed, ("plugin manifest entries and gate digest verified" if installed
+                           else "plugin manifest entries or gate digest mismatch")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False, "plugin assets unreadable"
 
 
@@ -246,7 +254,7 @@ def check_omp(project: Path) -> list[dict]:
     append("omp_loaded", loaded, "actual host loaded the owned adapter and native protocol 1"
            if loaded else "executable unavailable, discovery disabled, wrong native build, or invalid host probe", "loaded")
 
-    plugin_installed, plugin_detail = _plugin_installed()
+    plugin_installed, plugin_detail = _plugin_installed(project)
     append("omp_plugin_installed", plugin_installed, plugin_detail, "installed")
     plugin_loaded, plugin_loaded_detail = _plugin_loaded(project) if plugin_installed else (False, "plugin not installed")
     append("omp_plugin_loaded", plugin_loaded, plugin_loaded_detail, "loaded")
@@ -266,7 +274,7 @@ def check_omp(project: Path) -> list[dict]:
            if authenticated else "authenticated scoring/import readiness not demonstrated", "authenticated")
 
     qualified = False
-    if installed and loaded and authenticated:
+    if installed and loaded and plugin_installed and plugin_loaded and authenticated:
         try:
             report = json.loads((project / ".reasoning-core/omp-qualification.json").read_text())
             qualified = (

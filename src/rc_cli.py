@@ -362,7 +362,7 @@ def _omp_status() -> int:
     sys.stdout.write("== reasoning-core status (host: omp) ==\n\n")
     sys.stdout.write("gate:\n")
     _print_kv("mode", _plugin_expected_mode(project))
-    installed, detail = _plugin_installed()
+    installed, detail = _plugin_installed(project)
     _print_kv("plugin_installed", str(installed))
     if not installed:
         _print_kv("plugin_detail", detail)

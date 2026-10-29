@@ -1,4 +1,4 @@
-"""Immutable, build-specific OMP containment evidence without provider calls."""
+"""Immutable, build-specific OMP containment evidence."""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +14,10 @@ from pathlib import Path
 
 from src import _install_paths
 from src._init import InitResult
-from src._omp_doctor import POLICY_FILES, REQUIRED_EVIDENCE, _json_process, check_omp, qualification_binding
+from src._omp_doctor import (
+    PLUGIN_GATE, POLICY_FILES, REQUIRED_EVIDENCE, _json_process, _plugin_path,
+    check_omp, qualification_binding,
+)
 from src._omp_install import _safe, install_omp
 
 REPORT = ".reasoning-core/omp-qualification.json"
@@ -37,8 +40,10 @@ def write_report(project: Path, report: dict) -> Path:
 
 def qualify(project: Path) -> dict:
     project = project.resolve()
-    checks = check_omp(project)
-    if not all(row["ok"] for row in checks[:3]):
+    checks = {row["name"]: row["ok"] for row in check_omp(project)}
+    if not all(checks.get(name) is True for name in (
+        "omp_installed", "omp_loaded", "omp_plugin_installed", "omp_plugin_loaded", "omp_authenticated",
+    )):
         raise ValueError("installation, loading and authenticated scoring must pass")
     executable = shutil.which("omp")
     if not executable:
@@ -50,7 +55,7 @@ def qualify(project: Path) -> dict:
         manifest.touch()
         install_omp(root, manifest, {
             "RC_PYTHON": _install_paths.python_executable(), "RC_REPO": _install_paths.rc_repo_path(),
-        }, InitResult(root))
+        }, InitResult(root), strict=True)
         for relative in POLICY_FILES:
             source = project / relative
             if source.is_file():
@@ -81,7 +86,7 @@ def qualify(project: Path) -> dict:
             raise ValueError("bun unavailable for extension probe")
         probe_environment = dict(os.environ, RC_AUDIT_ROOT=str(root / "audit"), RC_MODE="copilot")
         probe_run = subprocess.run(
-            [bun, str(probe), str(root)], capture_output=True, text=True,
+            [bun, str(probe), str(root), str(_plugin_path(project) / PLUGIN_GATE)], capture_output=True, text=True,
             env=probe_environment, cwd=root, timeout=120, check=False,
         )
         if probe_run.returncode != 0:

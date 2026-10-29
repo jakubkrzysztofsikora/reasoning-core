@@ -9,9 +9,11 @@ description: Operate reasoning-core enforcement inside omp — check gate state,
 
 The plugin gate resolves per session cwd:
 
-- **dormant** — no `.reasoning-core/` dir. rc does nothing; omp behaves stock.
-- **failclosed** — `.reasoning-core/omp-runtime.json` missing, corrupt, or partial. All mutation routes (edit, write, bash, subagents, user bash/python) are blocked with `reasoning-core runtime unresolved`. Fix: run `rc init --host omp`.
-- **active** — valid runtime json. Edits route through the qualified native precommit protocol (patched builds) or are blocked pending Phase 2 dispatch (unpatched builds); bash/subagents/session lifecycle are gated.
+- **dormant** — neither `.reasoning-core/omp-runtime.json` nor `.reasoning-core/omp-owned.json` exists (no dir, or an rc install for other hosts only). rc does nothing; omp behaves stock.
+- **failclosed** — omp install markers present but `omp-runtime.json` missing, corrupt, or partial. bash, file writes, edits, subagent spawns, and session stop are blocked with `reasoning-core runtime unresolved`. Fix: run `rc init --host omp`.
+- **active** — valid runtime json. bash, file writes, subagent spawns, and session stop are gated; edits route through the native precommit protocol (patched builds) and are blocked on unpatched builds.
+
+Only those routes are gated. Read-only tools, `eval`, `task`, `todo`, `ask`, web tools, non-file `write` targets (`xd://`, `local://`, `ssh://`), and operator `!`/`$` commands pass through rc untouched.
 
 Check state: the omp log line `reasoning-core gate loaded` records the resolved mode (`~/.omp/logs/omp.<date>.<pid>.log`).
 

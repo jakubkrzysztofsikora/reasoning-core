@@ -3,6 +3,7 @@
 import hashlib
 import importlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -24,7 +25,7 @@ def project(tmp_path):
     manifest.touch()
     install_omp(tmp_path, manifest, {
         "RC_PYTHON": _install_paths.python_executable(), "RC_REPO": _install_paths.rc_repo_path(),
-    }, InitResult(tmp_path))
+    }, InitResult(tmp_path), strict=True)
     return tmp_path
 
 
@@ -52,7 +53,7 @@ def probes(project, monkeypatch):
         "plugin_loaded": (True, "session probe loaded the plugin gate (mode active)")}
     monkeypatch.setattr(doctor, "_runtime_probe", lambda _project: state["runtime"])
     monkeypatch.setattr(doctor, "_authentication_probe", lambda _project: state["auth"])
-    monkeypatch.setattr(doctor, "_plugin_installed", lambda: state["plugin_installed"])
+    monkeypatch.setattr(doctor, "_plugin_installed", lambda _project: state["plugin_installed"])
     monkeypatch.setattr(doctor, "_plugin_loaded", lambda _project: state["plugin_loaded"])
     return state
 
@@ -169,4 +170,75 @@ def test_same_version_host_implementation_change_invalidates_qualification(proje
     (project / ".reasoning-core/omp-qualification.json").write_text(json.dumps(report))
     assert states(doctor.check_omp(project))["omp_qualified"]["ok"]
     runtime["host_sha256"] = "d" * 64
+    assert not states(doctor.check_omp(project))["omp_qualified"]["ok"]
+
+
+@pytest.mark.parametrize("python,root", [
+    ("relative/python", "/absolute/root"),
+    ("/absolute/python", "relative/root"),
+    (["python"], "/absolute/root"),
+])
+def test_plugin_mode_rejects_invalid_runtime_paths(tmp_path, python, root):
+    rc_dir = tmp_path / ".reasoning-core"
+    rc_dir.mkdir()
+    (rc_dir / "omp-runtime.json").write_text(json.dumps({"python": python, "repo_root": root}))
+    assert module()._plugin_expected_mode(tmp_path) == "failclosed"
+
+
+@pytest.mark.parametrize("files,expected", [
+    ({}, "dormant"),
+    ({"install.manifest": ""}, "dormant"),
+    ({"omp-owned.json": "{}"}, "failclosed"),
+    ({"omp-runtime.json": "not json"}, "failclosed"),
+])
+def test_plugin_mode_requires_omp_install_markers(tmp_path, files, expected):
+    rc_dir = tmp_path / ".reasoning-core"
+    rc_dir.mkdir()
+    for name, content in files.items():
+        (rc_dir / name).write_text(content)
+    assert module()._plugin_expected_mode(tmp_path) == expected
+
+
+@pytest.mark.parametrize("scope", ["user", "project"])
+def test_plugin_doctor_accepts_installed_package_without_source_checkout(tmp_path, monkeypatch, scope):
+    project = tmp_path / "project"
+    project.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    doctor = module()
+    monkeypatch.setattr(doctor._install_paths, "rc_repo_path", lambda: str(tmp_path / "wheel"))
+    monkeypatch.setattr(doctor, "_plugin_loaded", lambda _project: (True, "loaded"))
+    root = home / ".omp/plugins" if scope == "user" else project / ".omp/plugins"
+    installed = root / "node_modules/reasoning-core"
+    source = Path(__file__).resolve().parents[1] / "integrations/omp-plugin"
+    shutil.copytree(source, installed)
+    checks = states(doctor.check_omp(project))
+    assert checks["omp_plugin_installed"]["ok"]
+    assert checks["omp_plugin_loaded"]["ok"]
+    (installed / "extensions/reasoning_core_gate.ts").write_text("tampered")
+    assert not states(doctor.check_omp(project))["omp_plugin_installed"]["ok"]
+
+
+def test_changing_plugin_invalidates_qualification(project, probes):
+    doctor = module()
+    gate = project / ".omp/plugins/node_modules/reasoning-core/extensions/reasoning_core_gate.ts"
+    gate.parent.mkdir(parents=True)
+    gate.write_text("first gate")
+    report = {"schema_version": 1, "binding": doctor.qualification_binding(project, probes["runtime"]),
+              "evidence": {name: True for name in doctor.REQUIRED_EVIDENCE}}
+    (project / ".reasoning-core/omp-qualification.json").write_text(json.dumps(report))
+    assert states(doctor.check_omp(project))["omp_qualified"]["ok"]
+    gate.write_text("changed gate")
+    assert not states(doctor.check_omp(project))["omp_qualified"]["ok"]
+
+
+@pytest.mark.parametrize("name", ["plugin_installed", "plugin_loaded"])
+def test_qualification_requires_current_plugin_health(project, probes, name):
+    doctor = module()
+    report = {"schema_version": 1, "binding": doctor.qualification_binding(project, probes["runtime"]),
+              "evidence": {key: True for key in doctor.REQUIRED_EVIDENCE}}
+    (project / ".reasoning-core/omp-qualification.json").write_text(json.dumps(report))
+    assert states(doctor.check_omp(project))["omp_qualified"]["ok"]
+    probes[name] = (False, "not available")
     assert not states(doctor.check_omp(project))["omp_qualified"]["ok"]

@@ -114,3 +114,162 @@ test.each(["policy", "timeout", "malformed"])("safe denial diagnostic: %s", asyn
   if (mode === "policy") expect(result.decisionId).toBe("audit123");
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
+
+test.each(["scoped", "plugin"])("%s adapter blocks session stop with the review reason", async kind => {
+ const f = fixture();
+ try {
+  mkdirSync(join(f.cwd, ".reasoning-core"));
+  writeFileSync(join(f.cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
+   python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
+  }));
+  const extension = kind === "scoped"
+   ? (await import("../integrations/omp/reasoning_core_gate")).default
+   : (await import("../integrations/omp-plugin/extensions/reasoning_core_gate")).default;
+  const handlers = new Map<string, any>();
+  let reply: any = { decision: "blocked", reason: "open duplicate finding", decision_id: "audit123" };
+  let unavailable = false;
+  extension({ on: (name: string, handler: any) => handlers.set(name, handler) }, async () => {
+   if (unavailable) throw Error("bridge down");
+   return reply;
+  });
+  const stop = handlers.get("session_stop");
+  expect(typeof stop).toBe("function");
+  expect(await stop({}, f.ctx)).toEqual({ decision: "block", reason: "open duplicate finding" });
+  reply = { decision: "allowed", reason: "session_stop", decision_id: "audit123" };
+  expect(await stop({}, f.ctx)).toBeUndefined();
+  reply = {};
+  expect(await stop({}, f.ctx)).toEqual({ decision: "block", reason: "reasoning-core session audit unavailable" });
+  unavailable = true;
+  expect(await stop({}, f.ctx)).toEqual({ decision: "block", reason: "reasoning-core session audit unavailable" });
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("plugin stays dormant for non-omp rc repos and blocks stop for broken omp installs", async () => {
+ const f = fixture();
+ try {
+  const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+  const handlers = new Map<string, any>();
+  extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
+  const stop = handlers.get("session_stop");
+  const call = handlers.get("tool_call");
+  expect(await stop({}, f.ctx)).toBeUndefined();
+  mkdirSync(join(f.cwd, ".reasoning-core"));
+  writeFileSync(join(f.cwd, ".reasoning-core", "install.manifest"), "");
+  expect(await stop({}, f.ctx)).toBeUndefined();
+  expect(await call({ toolName: "task", input: {} }, f.ctx)).toBeUndefined();
+  writeFileSync(join(f.cwd, ".reasoning-core", "omp-owned.json"), "{}");
+  expect(await stop({}, f.ctx)).toEqual({
+   decision: "block", reason: "reasoning-core runtime unresolved (run `rc init --host omp`)",
+  });
+  expect(await call({ toolName: "task", input: {} }, f.ctx)).toBeUndefined();
+  expect(await call({ toolName: "bash", input: { command: "ls" } }, f.ctx)).toEqual({
+   block: true, reason: "reasoning-core runtime unresolved (run `rc init --host omp`)",
+  });
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("plugin screens a relative bash cwd against its project", async () => {
+ const f = fixture();
+ const priorOverride = process.env.RC_ALLOW_GUARD_EDIT;
+ const priorAudit = process.env.RC_AUDIT_ROOT;
+ try {
+  delete process.env.RC_ALLOW_GUARD_EDIT;
+  process.env.RC_AUDIT_ROOT = join(f.cwd, "audit");
+  mkdirSync(join(f.cwd, ".reasoning-core"));
+  writeFileSync(join(f.cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
+   python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
+  }));
+  const guarded = join(f.cwd, "build/nested/src/hooks/pre_edit_guard.py");
+  mkdirSync(join(f.cwd, "build/nested/src/hooks"), { recursive: true });
+  writeFileSync(guarded, "guard\n");
+  const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+  const handlers = new Map<string, any>();
+  extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
+  const result = await handlers.get("tool_call")({
+   toolName: "bash", input: { command: "rm -rf nested", cwd: "build" },
+  }, f.ctx);
+  expect(result?.block).toBe(true);
+  expect(result?.reason).toContain("guarded file");
+ } finally {
+  if (priorOverride === undefined) delete process.env.RC_ALLOW_GUARD_EDIT;
+  else process.env.RC_ALLOW_GUARD_EDIT = priorOverride;
+  if (priorAudit === undefined) delete process.env.RC_AUDIT_ROOT;
+  else process.env.RC_AUDIT_ROOT = priorAudit;
+  rmSync(f.cwd, { recursive: true, force: true });
+ }
+});
+
+function activePlugin(cwd: string) {
+ mkdirSync(join(cwd, ".reasoning-core"));
+ writeFileSync(join(cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
+  python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
+ }));
+ return import("../integrations/omp-plugin/extensions/reasoning_core_gate").then(({ default: extension }) => {
+  const handlers = new Map<string, any>();
+  extension({ on: (name: string, handler: any) => handlers.set(name, handler) }, async () => {
+   throw Error("bridge must not be called");
+  });
+  return handlers.get("tool_call");
+ });
+}
+
+test.each(["[.envrc.local]", "[.envrc.local#ABCD]", "[notes.txt#1A2B] ", "file:///tmp/x"])("plugin refuses unbindable write target %s", async path => {
+ const f = fixture();
+ try {
+  const call = await activePlugin(f.cwd);
+  expect(await call({ toolName: "write", toolCallId: "uri", input: { path, content: "{}" } }, f.ctx))
+   .toEqual({ block: true, reason: "reasoning-core: non-file write targets are refused" });
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("plugin leaves non-mutation routes ungated while active", async () => {
+ const f = fixture();
+ try {
+  const call = await activePlugin(f.cwd);
+  for (const toolName of ["eval", "task", "todo", "ask", "web_search", "context_notes", "read", "grep"])
+   expect(await call({ toolName, input: {} }, f.ctx)).toBeUndefined();
+  for (const path of ["xd://mcp__service_change", "ssh://host/path", "local://notes.md"])
+   expect(await call({ toolName: "write", toolCallId: "uri", input: { path, content: "{}" } }, f.ctx)).toBeUndefined();
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("plugin stop gate blocks a real duplicate until it is resolved", async () => {
+ const f = fixture();
+ const names = ["AccountMenu", "BasemapControl", "SortMenu"];
+ const keys = ["RC_DUP_ORACLE", "RC_CACHE_DIR", "RC_AUDIT_ROOT", "RC_MODE"] as const;
+ const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+ try {
+  process.env.RC_DUP_ORACLE = "1";
+  process.env.RC_CACHE_DIR = join(f.cwd, "cache");
+  process.env.RC_AUDIT_ROOT = join(f.cwd, "audit");
+  process.env.RC_MODE = "copilot";
+  mkdirSync(join(f.cwd, ".reasoning-core"));
+  const python = join(process.cwd(), ".venv/bin/python");
+  writeFileSync(join(f.cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
+   python, repo_root: process.cwd(),
+  }));
+  const setup = Bun.spawnSync([python, "-c",
+   "import sys; from pathlib import Path; from tests.test_dup_review import _menus; " +
+   "from src.duplicate_detection import findings; from src.duplicate_detection.review import stop_decision; " +
+   "root=Path(sys.argv[1]); path=findings.ledger_path(str(root)); " +
+   "findings.record(path, _menus(root)); print(stop_decision(str(root), path, count_blocks=False).block)", f.cwd],
+   { env: { ...process.env } });
+  expect(setup.exitCode).toBe(0);
+  expect(setup.stdout.toString().trim()).toBe("True");
+  const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+  const handlers = new Map<string, any>();
+  extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
+  const stop = handlers.get("session_stop");
+  const denied = await stop({}, f.ctx);
+  expect(denied?.decision).toBe("block");
+  expect(denied?.reason).toContain("DUPLICATE CHECK");
+  for (const name of names) writeFileSync(join(f.cwd, `${name}.ts`), `export const ${name} = 1;\n`);
+  expect(await stop({}, f.ctx)).toBeUndefined();
+ } finally {
+  for (const key of keys) {
+   if (previous[key] === undefined) delete process.env[key];
+   else process.env[key] = previous[key];
+  }
+  rmSync(f.cwd, { recursive: true, force: true });
+ }
+});

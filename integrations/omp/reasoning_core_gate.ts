@@ -127,8 +127,18 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
       if (reply?.decision !== "allowed") throw Error("reasoning-core receipt unavailable");
     },
     async lifecycle(event: string, ctx: any) {
-      const reply = await bridge({ event, ...identity(ctx) });
-      if (reply?.decision !== "allowed") throw Error("reasoning-core session audit unavailable");
+      try {
+        const reply = await bridge({ event, ...identity(ctx) });
+        if (reply?.decision === "allowed" && typeof reply.reason === "string"
+          && typeof reply.decision_id === "string" && reply.decision_id) return;
+        if (event === "session_stop" && reply?.decision === "blocked"
+          && typeof reply.reason === "string" && reply.reason.trim()
+          && typeof reply.decision_id === "string" && reply.decision_id)
+          return { decision: "block", reason: reply.reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512) };
+      } catch {}
+      if (event === "session_stop")
+        return { decision: "block", reason: "reasoning-core session audit unavailable" };
+      throw Error("reasoning-core session audit unavailable");
     },
   };
 }
@@ -138,7 +148,7 @@ export default function reasoningCoreGate(api: any, bridge: (event: any) => Prom
   api.on("native_edit_prepare", (event: any, ctx: any) => gate.prepare(event, ctx));
   api.on("native_edit_result", (event: any, ctx: any) => gate.result(event, ctx));
   api.on("session_start", (_event: any, ctx: any) => gate.lifecycle("session_start", ctx));
-  api.on("session_shutdown", (_event: any, ctx: any) => gate.lifecycle("session_stop", ctx));
+  api.on("session_stop", (_event: any, ctx: any) => gate.lifecycle("session_stop", ctx));
   const restriction = "reasoning-core: this route has no qualified prepared-mutation boundary";
   api.on("tool_call", (event: any) => {
     if (!["edit", "read", "grep", "glob", "find"].includes(event.toolName))

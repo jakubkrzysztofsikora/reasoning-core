@@ -133,6 +133,12 @@ def test_advisor_rejects_non_finite_cost(tmp_path, gate_env):
         )
 
 
+@pytest.mark.parametrize("cost", [True, False])
+def test_advisor_rejects_boolean_cost(tmp_path, gate_env, cost):
+    with pytest.raises(ValueError):
+        bridge()._evaluate_event(base_event(tmp_path, "advisor", kind="cost_changed", cost=cost))
+
+
 def test_handle_event_advisor_roundtrip_subprocess(tmp_path, gate_env):
     result = bridge().handle_event(
         base_event(tmp_path, "advisor", kind="cost_changed", cost=1.5),

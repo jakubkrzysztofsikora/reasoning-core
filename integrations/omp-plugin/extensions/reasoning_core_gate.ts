@@ -35,9 +35,11 @@ export function runtimeConfig(cwd: string): Runtime {
   if (!PYTHON.startsWith("__") && !ROOT.startsWith("__"))
     return { python: PYTHON, root: ROOT, active: true };
   if (!isAbsolute(cwd)) throw Error("rc runtime unresolved");
-  if (!existsSync(join(cwd, ".reasoning-core"))) return { python: "", root: "", active: false };
+  const rc = join(cwd, ".reasoning-core");
+  if (!existsSync(join(rc, "omp-runtime.json")) && !existsSync(join(rc, "omp-owned.json")))
+    return { python: "", root: "", active: false };
   try {
-    const config: unknown = JSON.parse(readFileSync(join(cwd, ".reasoning-core", "omp-runtime.json"), "utf8"));
+    const config: unknown = JSON.parse(readFileSync(join(rc, "omp-runtime.json"), "utf8"));
     const python = strField(config, "python");
     const root = strField(config, "repo_root");
     if (python && root && isAbsolute(python) && isAbsolute(root))
@@ -165,15 +167,26 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
       if (reply?.decision !== "allowed") throw Error("reasoning-core receipt unavailable");
     },
     async lifecycle(event: string, ctx: any) {
-      const reply = await bridge({ event, ...identity(ctx) });
-      if (reply?.decision !== "allowed") throw Error("reasoning-core session audit unavailable");
+      try {
+        const reply = await bridge({ event, ...identity(ctx) });
+        if (reply?.decision === "allowed" && typeof reply.reason === "string"
+          && typeof reply.decision_id === "string" && reply.decision_id) return;
+        if (event === "session_stop" && reply?.decision === "blocked"
+          && typeof reply.reason === "string" && reply.reason.trim()
+          && typeof reply.decision_id === "string" && reply.decision_id)
+          return { decision: "block", reason: clean(reply.reason) };
+      } catch {}
+      if (event === "session_stop")
+        return { decision: "block", reason: "reasoning-core session audit unavailable" };
+      throw Error("reasoning-core session audit unavailable");
     },
     async bash(event: any, ctx: any) {
       const input = objField(event, "input");
       const command = strField(input, "command");
       if (!command.trim()) return { block: true, reason: "reasoning-core: missing bash command" };
+      const cwd = strField(input, "cwd");
       const reply = await bridge({ event: "bash", ...identity(ctx), command,
-        cwd: strField(input, "cwd") || null });
+        cwd: cwd ? (isAbsolute(cwd) ? cwd : join(ctx.cwd, cwd)) : null });
       if (reply && reply.decision === "allowed" && typeof reply.reason === "string"
         && typeof reply.decision_id === "string" && reply.decision_id) return;
       if (reply && reply.decision === "blocked" && typeof reply.reason === "string" && reply.reason.trim()
@@ -186,8 +199,7 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
       const path = strField(input, "path");
       const content = strField(input, "content");
       if (!path.trim()) return { block: true, reason: "reasoning-core: missing write path" };
-      if (path.startsWith("xd://")) return;
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path))
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path) || /^\[.*\]\s*$/s.test(path))
         return { block: true, reason: "reasoning-core: non-file write targets are refused" };
       const absolute = isAbsolute(path) ? path : join(ctx.cwd, path);
       let before: string | null = null;
@@ -280,19 +292,23 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     if (mode(ctx) !== "active") return;
     return gate.lifecycle("session_start", ctx);
   });
-  api.on("session_shutdown", (_event: unknown, ctx: unknown) => {
-    if (mode(ctx) !== "active") return;
+  api.on("session_stop", (_event: unknown, ctx: unknown) => {
+    const state = mode(ctx);
+    if (state === "dormant") return;
+    if (state === "failclosed") return { decision: "block", reason: unresolved };
     return gate.lifecycle("session_stop", ctx);
   });
-  const restriction = "reasoning-core: this route has no qualified prepared-mutation boundary";
   api.on("tool_call", (event: unknown, ctx: unknown) => {
-    if (mode(ctx) === "dormant") return;
     const toolName = strField(event, "toolName");
+    if (!["bash", "write", "edit"].includes(toolName)) return;
+    const state = mode(ctx);
+    if (state === "dormant") return;
+    const path = strField(objField(event, "input"), "path");
+    if (toolName === "write" && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path) && !/^file:/i.test(path)) return;
+    if (state === "failclosed") return { block: true, reason: unresolved };
     if (toolName === "bash") return gate.bash(event, ctx);
     if (toolName === "write") return gate.writePrepare(event, ctx);
-    if (!["edit", "read", "grep", "glob", "find"].includes(toolName))
-      return { block: true, reason: restriction };
-    if (toolName === "edit" && api.nativeEditProtocol !== 1)
+    if (api.nativeEditProtocol !== 1)
       return { block: true, reason: "reasoning-core requires the qualified native precommit build" };
   });
   api.on("tool_result", (event: unknown, ctx: unknown) => {
@@ -310,16 +326,5 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
   api.on("advisor_yielded", (event: unknown, ctx: unknown) => {
     if (mode(ctx) !== "active") return;
     return gate.advisor(event, ctx);
-  });
-  const refusedExecution = () => ({ result: { output: restriction, exitCode: 1, cancelled: false,
-    truncated: false, totalLines: 1, totalBytes: Buffer.byteLength(restriction),
-    outputLines: 1, outputBytes: Buffer.byteLength(restriction), displayOutputs: [] } });
-  api.on("user_bash", (_event: unknown, ctx: unknown) => {
-    if (mode(ctx) === "dormant") return;
-    return refusedExecution();
-  });
-  api.on("user_python", (_event: unknown, ctx: unknown) => {
-    if (mode(ctx) === "dormant") return;
-    return refusedExecution();
   });
 }

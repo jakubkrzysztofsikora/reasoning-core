@@ -18,13 +18,64 @@ def module():
     return importlib.import_module("src._omp_install")
 
 
-def install(root, python="/opt/runtime python", package="/opt/package root"):
+def install(root, python="/opt/runtime python", package="/opt/package root", strict=True):
     manifest = root / ".reasoning-core/install.manifest"
     manifest.parent.mkdir(exist_ok=True)
     manifest.touch(exist_ok=True)
     result = InitResult(root)
-    module().install_omp(root, manifest, {"RC_PYTHON": python, "RC_REPO": package}, result)
+    module().install_omp(root, manifest, {"RC_PYTHON": python, "RC_REPO": package}, result, strict=strict)
     return result
+
+
+def test_default_install_records_runtime_without_strict_adapter(tmp_path, monkeypatch):
+    monkeypatch.delenv("RC_OMP_STRICT", raising=False)
+    result = install(tmp_path, strict=None)
+    assert not (tmp_path / ".omp").exists()
+    assert not (tmp_path / STATE).exists()
+    runtime = json.loads((tmp_path / ".reasoning-core/omp-runtime.json").read_text())
+    assert runtime == {"python": "/opt/runtime python", "repo_root": "/opt/package root"}
+    assert ".reasoning-core/omp-runtime.json" in result.wrote
+    monkeypatch.setenv("RC_OMP_STRICT", "1")
+    assert EXT in install(tmp_path, strict=None).wrote
+    monkeypatch.delenv("RC_OMP_STRICT", raising=False)
+    result = install(tmp_path, strict=None)
+    assert not (tmp_path / EXT).exists()
+    assert not (tmp_path / META).exists()
+    assert not (tmp_path / STATE).exists()
+    assert (tmp_path / ".reasoning-core/omp-runtime.json").is_file()
+    assert any("Removed previous owned OMP strict assets" in item for item in result.warned)
+
+
+def test_default_reinit_preserves_unowned_strict_assets(tmp_path, monkeypatch):
+    monkeypatch.delenv("RC_OMP_STRICT", raising=False)
+    extension = tmp_path / EXT
+    metadata = tmp_path / META
+    extension.parent.mkdir(parents=True)
+    extension.write_text("// unowned strict asset")
+    metadata.write_text('{"unowned": true}')
+
+    result = install(tmp_path, strict=None)
+
+    assert extension.read_text() == "// unowned strict asset"
+    assert metadata.read_text() == '{"unowned": true}'
+    warnings = "\n".join(result.warned)
+    assert "without verified ownership" in warnings
+    assert EXT in warnings
+    assert META in warnings
+
+
+def test_default_reinit_preserves_modified_strict_asset(tmp_path, monkeypatch):
+    monkeypatch.setenv("RC_OMP_STRICT", "1")
+    install(tmp_path, strict=None)
+    extension = tmp_path / EXT
+    extension.write_text("// operator change")
+    monkeypatch.delenv("RC_OMP_STRICT", raising=False)
+
+    result = install(tmp_path, strict=None)
+
+    assert extension.read_text() == "// operator change"
+    assert EXT in json.loads((tmp_path / STATE).read_text())["files"]
+    assert any("Preserved modified or unsafe OMP strict assets" in item for item in result.warned)
 
 
 def test_fresh_and_reinit_are_idempotent_with_exact_asset_ownership(tmp_path):
@@ -159,11 +210,12 @@ def test_absent_omp_installs_but_does_not_claim_load_or_qualification(tmp_path, 
     assert any("installed" in item and "unverified" in item for item in result.warned)
 
 
-def test_default_init_and_uninstall_use_owned_lifecycle(tmp_path, monkeypatch):
+def test_strict_init_and_uninstall_use_owned_lifecycle(tmp_path, monkeypatch):
     from src import _init
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("RC_OMP_STRICT", "1")
     root = tmp_path / "repo"
     root.mkdir()
     _init.init(root, install_sidecar=False, install_model=False)
@@ -188,7 +240,8 @@ def test_legacy_shell_uses_owned_assets_and_preserves_modified_files(tmp_path):
     direnv = tools / "direnv"
     direnv.write_text("#!/bin/sh\nexit 0\n")
     direnv.chmod(0o755)
-    environment = dict(os.environ, HOME=str(home), RC_REPO=str(repo), RC_PYTHON=sys.executable)
+    environment = dict(os.environ, HOME=str(home), RC_REPO=str(repo), RC_PYTHON=sys.executable,
+                       RC_OMP_STRICT="1")
     environment["PATH"] = str(tools) + os.pathsep + environment["PATH"]
     installed = subprocess.run(
         ["bash", str(repo / "install.sh")], cwd=root, env=environment,

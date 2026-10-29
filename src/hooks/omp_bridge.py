@@ -77,7 +77,7 @@ def _context(event: dict[str, Any]) -> dict[str, str | None]:
         if event.get("kind") not in ("cost_changed", "yielded"):
             raise ValueError("invalid advisor kind")
         cost = event.get("cost")
-        if cost is not None and (not isinstance(cost, (int, float)) or not math.isfinite(cost)):
+        if cost is not None and (type(cost) not in (int, float) or not math.isfinite(cost)):
             raise ValueError("invalid advisor cost")
         return _lifecycle_identity(event, {"kind", "cost"})
     if kind not in ("session_start", "session_stop"):

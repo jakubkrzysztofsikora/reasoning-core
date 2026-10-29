@@ -247,11 +247,14 @@ test("normal CLI probe discovers installed guard without invoking a model", asyn
  const profile = join(cwd, "profile"); mkdirSync(profile);
  try {
   const installed = spawnSync(join(process.cwd(), ".venv/bin/python"), ["-c",
-    "import sys; from pathlib import Path; from src._init import InitResult; from src._omp_install import install_omp; p=Path(sys.argv[1]); m=p/'.reasoning-core/install.manifest'; m.parent.mkdir(); m.touch(); install_omp(p,m,{'RC_PYTHON':sys.executable,'RC_REPO':sys.argv[2]},InitResult(p))", cwd, process.cwd()], { encoding: "utf8" });
+    "import sys; from pathlib import Path; from src._init import InitResult; from src._omp_install import install_omp; p=Path(sys.argv[1]); m=p/'.reasoning-core/install.manifest'; m.parent.mkdir(); m.touch(); install_omp(p,m,{'RC_PYTHON':sys.executable,'RC_REPO':sys.argv[2]},InitResult(p),strict=True)", cwd, process.cwd()], { encoding: "utf8" });
   expect(installed.status).toBe(0);
+  const probeEnv = { ...process.env };
+  delete probeEnv.RC_ALLOW_GUARD_EDIT;
+  delete probeEnv.RC_LANG_OVERRIDE;
   const probe = spawnSync(process.execPath, [join(upstream, "packages/coding-agent/src/cli.ts"), "--rc-native-probe"], {
     cwd, input: JSON.stringify({ project_dir: cwd, qualify: true }), encoding: "utf8", timeout: 40000,
-    env: { ...process.env, PI_CODING_AGENT_DIR: profile, OMP_PROFILE: "qualification" },
+    env: { ...probeEnv, PI_CODING_AGENT_DIR: profile, OMP_PROFILE: "qualification" },
   });
   expect(probe.status).toBe(0);
   const result = JSON.parse(probe.stdout);

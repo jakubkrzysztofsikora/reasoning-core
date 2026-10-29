@@ -366,6 +366,14 @@ spawns the same Python bridge worker per event. Knob surface:
   feed gate decisions; gates read deterministic checks and the rc audit log.
 - **Bridge budget**: `RC_OMP_BRIDGE_TIMEOUT_S` (default 30, clamp 1–120)
   bounds each extension→bridge subprocess.
+- **Strict project adapter**: `RC_OMP_STRICT=1 rc init --host omp` also
+  installs `.omp/extensions/reasoning_core_gate.ts`, which blocks every omp
+  tool outside the qualified native precommit routes (eval, task, todo, web,
+  MCP devices included). Default `rc init` records only
+  `.reasoning-core/omp-runtime.json` and removes unchanged, RC-owned strict
+  adapter assets from earlier installs. Modified or unowned assets remain and
+  are reported. The global plugin then gates bash/write/edit.
+  `rc doctor --host omp` qualification requires the strict adapter.
 
 ## Neural-gate scoring flags (round-3 documentation pass)
 
