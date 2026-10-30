@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGate, bindings, runBridge } from "../integrations/omp/reasoning_core_gate";
@@ -489,7 +489,7 @@ test("operator /rc flips mode and on-error, persists them, and takes live effect
    expect(last()).toContain("on-error=open [default]");
    await rc.handler("mode enable", ctx);
    expect(last()).toContain("mode=enforce [session]");
-   expect(last()).toContain("exported for this session: RC_GATE");
+   expect(last()).toContain("session env: RC_GATE");
    expect(process.env.RC_GATE).toBe("enforce");
    expect(JSON.parse(readFileSync(settings, "utf8")).mode).toBe("enforce");
    await rc.handler("RC_GATE_ON_ERROR closed", ctx);
@@ -535,6 +535,54 @@ test("operator /rc exports the gate env for the session and reset restores the i
    await rc.handler("reset", ctx);
    expect(process.env.RC_GATE).toBe("advisory");
    expect(last()).toContain("mode=advisory [env]");
+  });
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("operator /rc lists, sets and unsets any RC_* variable for the session only", async () => {
+ const f = fixture();
+ try {
+  const settings = join(f.cwd, "gate-settings.json");
+  await withEnv({ RC_GATE: undefined, RC_GATE_ON_ERROR: undefined, RC_GATE_SETTINGS: settings,
+    RC_PYTHON: "/usr/bin/python3", RC_API_TOKEN: "hunter2" }, async () => {
+   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+   const commands = new Map<string, any>();
+   extension({ on: () => {}, registerCommand: (name: string, command: any) => commands.set(name, command) },
+     async () => { throw Error("bridge unavailable"); });
+   const notes: string[] = [];
+   const ctx = { ...f.ctx, ui: { notify: (message: string) => notes.push(message) } };
+   const rc = commands.get("rc");
+   const last = () => notes[notes.length - 1];
+   await rc.handler("env", ctx);
+   expect(last()).toContain("RC_PYTHON=/usr/bin/python3");
+   expect(last()).toContain("RC_API_TOKEN=***");
+   expect(last()).not.toContain("hunter2");
+   await rc.handler("env RC_MODEL sonnet", ctx);
+   expect(process.env.RC_MODEL).toBe("sonnet");
+   expect(last()).toContain("RC_MODEL=sonnet [session]");
+   await rc.handler("env RC_ARGS a b c", ctx);
+   expect(process.env.RC_ARGS).toBe("a b c");
+   expect(existsSync(settings)).toBe(false);
+   await rc.handler("env RC_MODEL", ctx);
+   expect(last()).toContain("RC_MODEL=sonnet [session]");
+   await rc.handler("env RC_GATE enforce", ctx);
+   expect(process.env.RC_GATE).toBe("enforce");
+   expect(last()).toContain("mode=enforce [session]");
+   expect(existsSync(settings)).toBe(false);
+   await rc.handler("unset RC_MODEL", ctx);
+   expect(process.env.RC_MODEL).toBeUndefined();
+   expect(last()).toContain("RC_MODEL reverted (unset)");
+   await rc.handler("unset RC_PYTHON", ctx);
+   expect(process.env.RC_PYTHON).toBe("/usr/bin/python3");
+   await rc.handler("env PATH nope", ctx);
+   expect(last()).toContain("is not an RC_* variable name");
+   await rc.handler("unset", ctx);
+   expect(last()).toContain("rc unset <RC_NAME>");
+   await rc.handler("reset", ctx);
+   expect(process.env.RC_GATE).toBeUndefined();
+   expect(process.env.RC_MODEL).toBeUndefined();
+   expect(process.env.RC_PYTHON).toBe("/usr/bin/python3");
+   expect(last()).toContain("mode=advisory");
   });
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });

@@ -292,7 +292,7 @@ export interface ResolvedSettings extends GateSettings {
 }
 
 const MODES: Mode[] = ["off", "advisory", "enforce"];
-const USAGE = "rc: (no args) status | mode off|advisory|enforce|enable|disable | on-error open|closed | RC_GATE <mode> | RC_GATE_ON_ERROR <open|closed> | reset | help - mode and on-error also export their env var for this session";
+const USAGE = "rc: (no args) status | mode off|advisory|enforce|enable|disable | on-error open|closed | RC_GATE <mode> | RC_GATE_ON_ERROR <open|closed> | env [RC_NAME [value]] | unset RC_NAME | reset | help - mode/on-error persist to the settings file; env/unset change any RC_* variable for this session only";
 
 export const settingsPath = (): string =>
   process.env.RC_GATE_SETTINGS || join(process.env.HOME || ".", ".omp", "agent", "reasoning-core-gate.json");
@@ -358,7 +358,9 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
   let announced = "";
   let degraded = false;
   // Captured before any /rc write so `reset` restores what this session inherited.
-  const inherited = { mode: process.env.RC_GATE, onError: process.env.RC_GATE_ON_ERROR };
+  const inherited = new Map<string, string>(
+    Object.entries(process.env).filter((entry): entry is [string, string] =>
+      entry[0].startsWith("RC_") && typeof entry[1] === "string"));
   const sessionEnv = new Set<string>();
   const announce = (reason: string) => {
     if (announced === reason) return;
@@ -408,27 +410,80 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     else api.logger?.info?.(message);
   };
   const status = () => {
-    const exported = [...sessionEnv];
-    const overrides = exported.length
-      ? ` (exported for this session: ${exported.join(", ")})`
-      : inherited.mode !== undefined || inherited.onError !== undefined
-        ? " (env override present: /rc persists for later sessions, env wins at load)"
+    const names = [...sessionEnv].sort();
+    const overrides = names.length
+      ? ` (session env: ${names.slice(0, 6).join(", ")}${names.length > 6 ? `, +${names.length - 6}` : ""})`
+      : inherited.size
+        ? " (env overrides present: /rc persists for later sessions, env wins at load)"
         : "";
     return `reasoning-core gate: mode=${state.mode} [${state.source.mode}] on-error=${state.onError} [${state.source.onError}] settings=${state.path}${overrides}`;
   };
   // /rc is the operator lever, so it also writes the env var the gate reads:
   // child processes and nested sessions inherit the decision without a shell dance.
-  const exportEnv = (name: "RC_GATE" | "RC_GATE_ON_ERROR", value: string) => {
+  const exportEnv = (name: string, value: string) => {
     process.env[name] = value;
     sessionEnv.add(name);
   };
   const restoreEnv = () => {
     for (const name of sessionEnv) {
-      const prior = name === "RC_GATE" ? inherited.mode : inherited.onError;
+      const prior = inherited.get(name);
       if (prior === undefined) delete process.env[name];
       else process.env[name] = prior;
     }
     sessionEnv.clear();
+  };
+  const RC_ENV = /^RC_[A-Z0-9_]+$/;
+  const SECRET_ENV = /(TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL)/;
+  const shown = (name: string) => `${name}=${SECRET_ENV.test(name) ? "***" : process.env[name] ?? ""}`;
+  const envNames = () => [...new Set([...inherited.keys(), ...Object.keys(process.env), ...sessionEnv])]
+    .filter((name) => RC_ENV.test(name)).sort();
+  const listEnv = () => {
+    const names = envNames();
+    if (!names.length) return "rc env: no RC_* variables in this session";
+    return `rc env (* = set by /rc this session): ${names.map((name) => `${sessionEnv.has(name) ? "*" : ""}${shown(name)}`).join("  ")}`;
+  };
+  const reload = () => {
+    const resolved = resolveSettings();
+    state.mode = resolved.mode;
+    state.onError = resolved.onError;
+    state.source = resolved.source;
+    degraded = false;
+    emitted.clear();
+    announced = "";
+    if (state.mode !== "enforce") announce("rc_gate_advisory");
+  };
+  const setEnv = (ctx: any, rawName: string, value: string | undefined) => {
+    const name = rawName.trim().toUpperCase();
+    if (!RC_ENV.test(name)) return notify(ctx, `rc: "${rawName}" is not an RC_* variable name`, "warning");
+    if (value === undefined) {
+      if (process.env[name] === undefined) return notify(ctx, `rc: ${name} is not set`, "warning");
+      return notify(ctx, `${shown(name)}${sessionEnv.has(name) ? " [session]" : " [env]"}`);
+    }
+    if (name === "RC_GATE") {
+      const mode = applyMode(value.trim().toLowerCase());
+      if (!mode) return notify(ctx, `unknown mode "${value}" - use off, advisory, enforce`, "warning");
+      exportEnv(name, mode);
+      return notify(ctx, status());
+    }
+    if (name === "RC_GATE_ON_ERROR") {
+      const onError = applyOnError(value.trim().toLowerCase());
+      if (!onError) return notify(ctx, `unknown on-error "${value}" - use open or closed`, "warning");
+      exportEnv(name, onError);
+      return notify(ctx, status());
+    }
+    exportEnv(name, value);
+    return notify(ctx, `rc: ${shown(name)} [session]`);
+  };
+  const unsetEnv = (ctx: any, rawName: string) => {
+    const name = rawName.trim().toUpperCase();
+    if (!RC_ENV.test(name)) return notify(ctx, `rc: "${rawName}" is not an RC_* variable name`, "warning");
+    if (process.env[name] === undefined && !sessionEnv.has(name)) return notify(ctx, `rc: ${name} is not set`, "warning");
+    sessionEnv.add(name);
+    const prior = inherited.get(name);
+    if (prior === undefined) delete process.env[name];
+    else process.env[name] = prior;
+    if (name === "RC_GATE" || name === "RC_GATE_ON_ERROR") reload();
+    return notify(ctx, `rc: ${name} reverted${prior === undefined ? " (unset)" : " to inherited value"}${sessionEnv.has(name) ? " [session]" : ""}`);
   };
   const applyMode = (raw: string): Mode | null => {
     const value = raw === "enable" || raw === "on" ? "enforce" : raw === "disable" || raw === "none" ? "off" : raw;
@@ -464,14 +519,7 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
   const reset = (ctx: any) => {
     clearSettings();
     restoreEnv();
-    const defaults = resolveSettings();
-    state.mode = defaults.mode;
-    state.onError = defaults.onError;
-    state.source = defaults.source;
-    degraded = false;
-    emitted.clear();
-    announced = "";
-    if (state.mode !== "enforce") announce("rc_gate_advisory");
+    reload();
     return notify(ctx, `settings cleared · ${status()}`);
   };
 
@@ -479,7 +527,7 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     description: "reasoning-core gate: show state, set mode (off|advisory|enforce) or on-error (open|closed)",
     getArgumentCompletions: (prefix: string) => {
       const options = ["status", "off", "advisory", "enforce", "enable", "disable",
-        "on-error open", "on-error closed", "reset", "help"];
+        "on-error open", "on-error closed", "env", "env RC_GATE ", "unset ", "reset", "help"];
       const matches = options.filter((option) => option.startsWith(String(prefix ?? "").trim()));
       return matches.length ? matches.map((value) => ({ label: value, value })) : null;
     },
@@ -487,7 +535,18 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
       const raw = String(args ?? "").trim();
       if (!raw) return notify(ctx, status());
       const tokens = raw.split(/\s+/);
-      let name = tokens[0].toLowerCase();
+      const head = tokens[0].toLowerCase();
+      if (head === "env" || head === "set") {
+        if (tokens.length < 2) return notify(ctx, listEnv());
+        const [rawName, inline] = tokens[1].includes("=") ? tokens[1].split(/=(.*)/s) : [tokens[1], undefined];
+        const value = inline ?? (tokens.length > 2 ? tokens.slice(2).join(" ") : undefined);
+        return setEnv(ctx, rawName, value);
+      }
+      if (head === "unset") {
+        if (tokens.length < 2) return notify(ctx, "rc unset <RC_NAME>", "warning");
+        return unsetEnv(ctx, tokens[1]);
+      }
+      let name = head;
       let value = (tokens[1] ?? "").toLowerCase();
       if (name.includes("=")) {
         const [inlineName, inlineValue] = name.split("=");
