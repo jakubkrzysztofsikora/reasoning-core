@@ -5,17 +5,19 @@ description: Operate reasoning-core enforcement inside omp — check gate state,
 
 # reasoning-core controls (omp plugin)
 
-## Gate states
+## Gate modes
 
-The plugin gate resolves per session cwd:
+`RC_GATE` picks the mode for the session:
 
-- **dormant** — neither `.reasoning-core/omp-runtime.json` nor `.reasoning-core/omp-owned.json` exists (no dir, or an rc install for other hosts only). rc does nothing; omp behaves stock.
-- **failclosed** — omp install markers present but `omp-runtime.json` missing, corrupt, or partial. bash, file writes, edits, subagent spawns, and session stop are blocked with `reasoning-core runtime unresolved`. Fix: run `rc init --host omp`.
-- **active** — valid runtime json. bash, file writes, subagent spawns, and session stop are gated; edits route through the native precommit protocol (patched builds) and are blocked on unpatched builds.
+- **off** — no handlers registered; omp behaves stock.
+- **advisory** (default) — routes are evaluated, nothing blocks. A refusal appears as `reasoning-core advisory (policy_downgraded): would have blocked: <reason>` in the tool result; infrastructure failures (unresolved runtime, bridge down/timeout, malformed reply, official build without the native edit boundary) log once and the call proceeds.
+- **enforce** (`RC_GATE=enforce`) — a policy refusal blocks. Infrastructure failures still allow, so a broken bridge degrades to advisory rather than stopping work. Needs `.reasoning-core/omp-runtime.json`; without it the session runs advisory.
 
-Only those routes are gated. Read-only tools, `eval`, `task`, `todo`, `ask`, web tools, non-file `write` targets (`xd://`, `local://`, `ssh://`), and operator `!`/`$` commands pass through rc untouched.
+Gated routes: `bash`, `write`, native edits, subagent spawns, session stop. Edits are governed only on builds exposing `api.nativeEditProtocol === 1` (patched); on official builds they are ungated with one advisory note.
 
-Check state: the omp log line `reasoning-core gate loaded` records the resolved mode (`~/.omp/logs/omp.<date>.<pid>.log`).
+Everything else passes untouched: read-only tools, `eval`, `task`, `todo`, `ask`, web tools, non-file `write` targets (`xd://`, `local://`, `ssh://`), and operator `!`/`$` commands.
+
+Check state: the omp log line `reasoning-core gate loaded` records the requested mode (`~/.omp/logs/omp.<date>.<pid>.log`); `rc status --host omp` prints it directly.
 
 ## Verify installation
 
@@ -33,7 +35,7 @@ rc doctor --host omp --project-dir . --json
 
 ## State and knobs (read-only for agents)
 
-omp-side knobs live in `~/.omp/config.yml` (or project `.omp/config.yml`):
+omp-side knobs live in `~/.omp/agent/config.yml` (or project `.omp/config.yml`):
 `tools.approvalMode`, `tools.approval.<tool>`, `tools.restrictedFolders`,
 `ttsr.*`, `advisor.*`, `mcp.enableProjectConfig`. Read them; never write them.
 

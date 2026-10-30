@@ -2,8 +2,10 @@
   "name": "reasoning-core",
   "version": "1.0.0",
   "description": "reasoning-core enforcement gates for omp",
-  "extensions": ["./extensions/reasoning_core_gate.ts"],
+  "extensions": [
+    "./extensions/reasoning_core_gate.ts"
+  ],
   "integrity": {
-    "reasoning_core_gate.ts": "c03b8434f6c4926ff77621fabb33e7aa1bca44f5c75b41c0747abcef4716f6ce"
+    "reasoning_core_gate.ts": "4a193a42e2c00b9665186c495abd6ba017de9ea516fde28f68908aa629ba7ab2"
   }
 }

@@ -85,6 +85,7 @@ def qualify(project: Path) -> dict:
         if not bun:
             raise ValueError("bun unavailable for extension probe")
         probe_environment = dict(os.environ, RC_AUDIT_ROOT=str(root / "audit"), RC_MODE="copilot")
+        probe_environment.pop("RC_ALLOW_GUARD_EDIT", None)
         probe_run = subprocess.run(
             [bun, str(probe), str(root), str(_plugin_path(project) / PLUGIN_GATE)], capture_output=True, text=True,
             env=probe_environment, cwd=root, timeout=120, check=False,

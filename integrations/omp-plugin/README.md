@@ -4,11 +4,13 @@ Enforcement gates + advisor evidence feed for the [omp](https://github.com/badlo
 
 ## What it does
 
-- **Gate extension** (`extensions/reasoning_core_gate.ts`) — loads in every omp session, resolves per-cwd state:
-  - `dormant` — no omp install markers (`.reasoning-core/omp-runtime.json` or `omp-owned.json`): stock omp behavior. rc installs for other hosts stay dormant.
-  - `failclosed` — omp markers present but runtime json missing/corrupt: bash, file writes, edits, subagent spawns, and session stop are blocked.
-  - `active` — valid runtime: bash, file writes, edits, subagent spawns, and session stop are gated. Edits use the native precommit protocol (patched builds only; blocked on unpatched builds); writes use the extension's write prepare/result events.
-  - Every other route is ungated: read-only tools, `eval`, `task`, `todo`, `ask`, web tools, non-file `write` targets (`xd://` devices, `local://`, `ssh://`, `agent://`), and operator `!`/`$` commands. Mutations through those routes (for example `eval` writing files or `xd://ast_edit`) bypass rc.
+- **Gate extension** (`extensions/reasoning_core_gate.ts`) — loads in every omp session. `RC_GATE` picks the mode:
+  - `off` — registers no handlers; stock omp behavior.
+  - `advisory` (default) — every gated route is evaluated and nothing blocks. A policy refusal comes back as `additionalContext` (`reasoning-core advisory (policy_downgraded): would have blocked: <reason>`); infrastructure failures (unresolved runtime, bridge down, timeout, malformed reply, host build without the native edit boundary) are logged once and the call proceeds.
+  - `enforce` (`RC_GATE=enforce`) — a policy refusal blocks. Infrastructure failures still allow: a gate that cannot decide reports, it does not stop work. Needs a resolved runtime; without `.reasoning-core/omp-runtime.json` the session degrades to `advisory`.
+  - Gated routes in `advisory`/`enforce`: `bash`, `write`, native edits, `before_subagent_spawn`, `session_stop`.
+  - Edits route through `native_edit_prepare`/`native_edit_result` only on builds that expose `api.nativeEditProtocol === 1`. Official builds have no such API: edits are not governed there — one advisory note, never a block.
+  - Every other route is ungated: read-only tools, `eval`, `task`, `todo`, `ask`, web tools, non-file `write` targets (`xd://` devices, `local://`, `ssh://`, `agent://`), `write` targets that resolve outside the session project root or exceed the 4 MiB governed text limit (reported as `not_governed`, never blocked), and operator `!`/`$` commands. Mutations through those routes (for example `eval` writing files or `xd://ast_edit`) bypass rc.
 - **Skill** `rc-controls` — auto-discovered; how to check gate state, read audit evidence, repair.
 - **Advisor roster template** (`WATCHDOG.yml.example`) — gives the omp advisor read-only access to rc audit evidence.
 - **Advisor cost ledger** — `advisor_cost_changed` / `advisor_yielded` session events append `omp:advisor` audit rows (`signal_source=omp-advisor`) so advisor spend and yield are part of the same evidence chain. Observational only: these events never gate.
@@ -26,7 +28,7 @@ The marketplace manifest lives at `integrations/omp-plugin/.omp-plugin/`; omp cl
 - **User (default)** — `~/.omp/plugins/`: active in every project.
 - **Project** — `<project>/.omp/plugins/`: active in that project only; shadows the user-scope copy.
 
-The gate is dormant unless the project has omp install markers from `rc init --host omp`, so user-scope install is safe everywhere, including repos initialized for other hosts only.
+Advisory is the default, so a user-scope install cannot block work in any project: where `rc init --host omp` has not run, the gate logs the unresolved runtime once and every call proceeds.
 
 ### Local development
 
@@ -46,13 +48,13 @@ rc doctor --host omp --project-dir . --json
 
 ## Requirements
 
-- omp 18.11.3 with `session_stop` support; advisor cost events use `advisor_cost_changed` / `advisor_yielded`.
+- omp 18.11.3+ for `session_stop`; advisor cost events use `advisor_cost_changed` / `advisor_yielded`. Verified advisory on official 18.14.0.
 - reasoning-core CLI on PATH (`rc`), initialized per project (`rc init --host omp`).
-- Native edit batch approval additionally requires a patched omp build (see `../omp/`); on unpatched builds writes are gated by the extension's write prepare/result events instead.
+- Native edit batch approval needs a patched omp build (see `../omp/`). On official builds edits are ungated (advisory note only); writes stay gated through the extension's write prepare/result events.
 
 ## Failure semantics
 
-Every gate decision crosses the extension → bridge → worker boundary. The table below is the contract for what happens when each stage fails. "Fail-closed" means the action is blocked; "fail-open" means the action proceeds.
+Every gate decision crosses the extension → bridge → worker boundary. The table below is the `enforce` contract for what happens when each stage fails; in `advisory` every row is allow plus one warning, because nothing in this gate is allowed to stop work. "Fail-closed" means the action is blocked; "fail-open" means the action proceeds.
 
 | Event | Failure | Outcome |
 | --- | --- | --- |
@@ -75,4 +77,4 @@ rejects unknown URI-like write targets before dispatch.
 Two asymmetries are deliberate:
 
 1. **`tool_call` throws block, `before_subagent_spawn` throws do not.** omp's runner fail-closes tool calls on handler exceptions but fail-opens subagent spawns, so the gate wraps the subagent path and converts every error into an explicit block.
-2. **`session_stop` dup-review errors fail open, audit errors fail closed.** Losing a duplicate-detection verdict costs a review opportunity; losing the audit row breaks the evidence chain every other guarantee rests on.
+2. **`session_stop` dup-review errors fail open, audit errors fail closed only in `enforce`.** Losing a duplicate-detection verdict costs a review opportunity; losing the audit row breaks the evidence chain every other guarantee rests on.

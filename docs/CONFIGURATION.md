@@ -347,14 +347,14 @@ spawns the same Python bridge worker per event. Knob surface:
   `config.yml` has no rc settings. Set rc knobs in the project `.envrc` /
   `.envrc.local` or the session environment; the bridge worker inherits them
   from the omp process.
-- **omp-side knobs** (`~/.omp/config.yml` or project `.omp/config.yml`):
+- **omp-side knobs** (`~/.omp/agent/config.yml` or project `.omp/config.yml`):
   `tools.approvalMode` (approval posture), `tools.approval.<tool>` (per-tool
   approval), `tools.restrictedFolders` (fs sandbox), `ttsr.*` (subagent
   trust), `advisor.*` (advisor model/roster), `mcp.enableProjectConfig`
   (project MCP config). These control omp's own behavior; rc knobs are
   separate and env-only.
 - **Agent-visible, read-only**: `rc status --host omp` — gate mode
-  (`dormant`/`failclosed`/`active`), plugin install state, qualification
+  (`off`/`advisory`/`enforce`, from `RC_GATE`), plugin install state, qualification
   evidence count, effective `RC_*` values, today's audit and advisor-ledger
   row counts. Deep verification: `rc doctor --host omp --project-dir . --json`.
 - **Operator-only mutations**: `rc bypass-next` (authenticated one-shot),

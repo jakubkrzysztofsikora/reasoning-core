@@ -142,7 +142,7 @@ def test_status_host_omp_reports_gate_state_and_advisor_ledger(project, probes, 
     monkeypatch.setenv("RC_MODE", "copilot")
     assert rc_cli.main(["status", "--host", "omp"]) == 0
     out = capsys.readouterr().out
-    assert "mode                             active" in out
+    assert "mode                             advisory" in out
     assert "RC_MODE                          copilot" in out
     assert "advisor_ledger_rows_today        2" in out
     assert "today_rows                       3" in out
@@ -173,29 +173,20 @@ def test_same_version_host_implementation_change_invalidates_qualification(proje
     assert not states(doctor.check_omp(project))["omp_qualified"]["ok"]
 
 
-@pytest.mark.parametrize("python,root", [
-    ("relative/python", "/absolute/root"),
-    ("/absolute/python", "relative/root"),
-    (["python"], "/absolute/root"),
+@pytest.mark.parametrize("requested,expected", [
+    (None, "advisory"),
+    ("", "advisory"),
+    ("advisory", "advisory"),
+    ("enforce", "enforce"),
+    ("ENFORCE", "enforce"),
+    ("off", "off"),
+    ("bogus", "advisory"),
 ])
-def test_plugin_mode_rejects_invalid_runtime_paths(tmp_path, python, root):
-    rc_dir = tmp_path / ".reasoning-core"
-    rc_dir.mkdir()
-    (rc_dir / "omp-runtime.json").write_text(json.dumps({"python": python, "repo_root": root}))
-    assert module()._plugin_expected_mode(tmp_path) == "failclosed"
-
-
-@pytest.mark.parametrize("files,expected", [
-    ({}, "dormant"),
-    ({"install.manifest": ""}, "dormant"),
-    ({"omp-owned.json": "{}"}, "failclosed"),
-    ({"omp-runtime.json": "not json"}, "failclosed"),
-])
-def test_plugin_mode_requires_omp_install_markers(tmp_path, files, expected):
-    rc_dir = tmp_path / ".reasoning-core"
-    rc_dir.mkdir()
-    for name, content in files.items():
-        (rc_dir / name).write_text(content)
+def test_plugin_expected_mode_follows_gate_switch(tmp_path, monkeypatch, requested, expected):
+    if requested is None:
+        monkeypatch.delenv("RC_GATE", raising=False)
+    else:
+        monkeypatch.setenv("RC_GATE", requested)
     assert module()._plugin_expected_mode(tmp_path) == expected
 
 

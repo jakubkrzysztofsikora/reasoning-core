@@ -26,10 +26,10 @@
   "active_installs": {
     "primary": {
       "path": "~/.local/bin/omp",
-      "version": "18.11.3",
-      "kind": "compiled standalone",
-      "patched": true,
-      "probe_result": "--rc-native-probe qualified 2026-10-28 (doctor 6/6, omp-qualification.json bound)"
+      "version": "18.14.0",
+      "kind": "compiled standalone, official build",
+      "patched": false,
+      "probe_result": "no api.nativeEditProtocol in the 18.14.0 bundle; the extension cannot govern edits on this build (advisory only)"
     },
     "npm_source": {
       "path": "/opt/homebrew/lib/node_modules/@oh-my-pi/pi-coding-agent",
@@ -39,7 +39,7 @@
     }
   },
   "upstream": {
-    "latest_known": "18.13.2 (2026-10-27)",
+    "latest_known": "18.14.0 (2026-10-30)",
     "drift_runbook": "plan Phase 6"
   },
   "guard_hash_interim": {
@@ -60,5 +60,8 @@
       "<state>/kill_switches.json.mac": "6a77034d6d6a4280aefba73b7ff1f5095a3439e76e27a0711aa4a063c2ec30cb"
     }
   },
-  "baseline": "baseline-2026-10-28-omp-integration-pre"
+  "baseline": "baseline-2026-10-28-omp-integration-pre",
+  "verified_at": "2026-10-30",
+  "patched_build_present": false,
+  "patched_build_note": "The 18.11.3 patched standalone is no longer the active binary. Nothing on this host exposes api.nativeEditProtocol, so the native edit boundary is a capability, not a requirement: the gate negotiates it at registration and never blocks on its absence (docs/superpowers/specs/2026-10-30-omp-gate-never-block-research.md)."
 }

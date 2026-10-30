@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 const root = process.argv[2];
 const gatePath = process.argv[3];
 if (!root || !gatePath) throw new Error("usage: bun omp_extension_probe.ts <project-root> <plugin-gate>");
+process.env.RC_GATE = "enforce";
 const { default: reasoningCoreGate } = await import(pathToFileURL(path.resolve(gatePath)).href);
 
 type Handler = (event: unknown, ctx: unknown) => unknown;

@@ -8,6 +8,10 @@ const PYTHON = "__RC_PYTHON__";
 const ROOT = "__RC_ROOT__";
 const BOOTSTRAP = "import sys; sys.path.insert(0,sys.argv[1]); from src.hooks.omp_bridge import main; raise SystemExit(main())";
 const MAX_BYTES = 32 * 1024 * 1024;
+
+// Must stay well under the host's extensionHandlers.toolCallTimeoutMs (30s default);
+// the host fails a tool call closed when a handler outruns that budget.
+const BRIDGE_TIMEOUT_MS = 8000;
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
 function canonical(value: any): string {
@@ -49,7 +53,7 @@ export async function runBridge(event: any, options: { argv?: string[]; timeoutM
       settled = true; clearTimeout(timer);
       if (error) { child.kill("SIGKILL"); reject(error); } else resolve(value);
     };
-    const timer = setTimeout(() => finish(Error("bridge timeout")), options.timeoutMs ?? 35000);
+    const timer = setTimeout(() => finish(Error("bridge timeout")), options.timeoutMs ?? BRIDGE_TIMEOUT_MS);
     child.on("error", () => finish(Error("bridge unavailable")));
     child.stdin.on("error", () => finish(Error("bridge stdin failed")));
     child.stdout.on("data", chunk => {
@@ -137,29 +141,88 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
           return { decision: "block", reason: reply.reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512) };
       } catch {}
       if (event === "session_stop")
-        return { decision: "block", reason: "reasoning-core session audit unavailable" };
+        return { decision: "block", reason: "reasoning-core session audit unavailable", infra: true };
       throw Error("reasoning-core session audit unavailable");
     },
   };
 }
 
+export type Mode = "off" | "advisory" | "enforce";
+
+const requestedMode = (): Mode => {
+  const value = String(process.env.RC_GATE ?? "").trim().toLowerCase();
+  return value === "off" || value === "advisory" ? value : "enforce";
+};
+
 export default function reasoningCoreGate(api: any, bridge: (event: any) => Promise<any> = runBridge) {
+  const requested = requestedMode();
+  if (requested === "off") {
+    api.logger?.info?.("reasoning-core gate off (RC_GATE=off)");
+    return;
+  }
   const gate = createGate(bridge);
-  api.on("native_edit_prepare", (event: any, ctx: any) => gate.prepare(event, ctx));
-  api.on("native_edit_result", (event: any, ctx: any) => gate.result(event, ctx));
-  api.on("session_start", (_event: any, ctx: any) => gate.lifecycle("session_start", ctx));
-  api.on("session_stop", (_event: any, ctx: any) => gate.lifecycle("session_stop", ctx));
   const restriction = "reasoning-core: this route has no qualified prepared-mutation boundary";
-  api.on("tool_call", (event: any) => {
-    if (!["edit", "read", "grep", "glob", "find"].includes(event.toolName))
-      return { block: true, reason: restriction };
-    if (event.toolName === "edit" && api.nativeEditProtocol !== 1)
-      return { block: true, reason: "reasoning-core requires the qualified native precommit build" };
+  let enforce = requested === "enforce";
+  const announce = (reason: string) => {
+    api.logger?.warn?.(`reasoning-core gate advisory mode (${reason}): no reasoning-core decision blocks work`);
+  };
+  if (!enforce) announce("rc_gate_advisory");
+  const emitted = new Set<string>();
+  const advisory = (reason: string, detail: string) => {
+    const key = `${reason}:${detail}`;
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    return { additionalContext: `reasoning-core advisory (${reason}): ${detail}`.slice(0, 1024) };
+  };
+  const blockOrNote = (reason: string) => (enforce ? { block: true, reason } : advisory("policy_downgraded", reason));
+
+  const infraDenial = new Set(["bridge_unavailable", "bridge_timeout", "invalid_bridge_response"]);
+  api.on("native_edit_prepare", async (event: any, ctx: any) => {
+    const finalInput = String(event?.batch?.finalInputSha256 ?? "");
+    if (!enforce) return { allowed: true, finalInputSha256: finalInput };
+    const reply = await gate.prepare(event, ctx);
+    if (reply.allowed || !infraDenial.has(String(reply.reason))) return reply;
+    api.logger?.warn?.(`reasoning-core edit unreviewed (${reply.reason})`);
+    return { allowed: true, finalInputSha256: finalInput };
   });
-  api.on("before_subagent_spawn", () => ({ block: true, reason: restriction }));
-  const refusedExecution = () => ({ result: { output: restriction, exitCode: 1, cancelled: false,
-    truncated: false, totalLines: 1, totalBytes: Buffer.byteLength(restriction),
-    outputLines: 1, outputBytes: Buffer.byteLength(restriction), displayOutputs: [] } });
+  api.on("native_edit_result", async (event: any, ctx: any) => {
+    if (!enforce) return;
+    try { await gate.result(event, ctx); }
+    catch (error: any) { api.logger?.warn?.(`reasoning-core receipt unavailable: ${String(error?.message ?? error)}`); }
+  });
+  api.on("session_start", async (_event: any, ctx: any) => {
+    if (!enforce) return;
+    try { await gate.lifecycle("session_start", ctx); }
+    catch (error: any) {
+      enforce = false;
+      announce("bridge_unavailable");
+      api.logger?.warn?.(`reasoning-core session start unavailable: ${String(error?.message ?? error)}`);
+    }
+  });
+  api.on("session_stop", async (_event: any, ctx: any) => {
+    if (!enforce) return;
+    try {
+      const refusal = await gate.lifecycle("session_stop", ctx);
+      if (refusal && refusal.decision === "block" && !refusal.infra) return refusal;
+      if (refusal?.infra) api.logger?.warn?.(`reasoning-core session audit unavailable: ${refusal.reason}`);
+    } catch (error: any) {
+      api.logger?.warn?.(`reasoning-core session audit unavailable: ${String(error?.message ?? error)}`);
+    }
+  });
+  api.on("tool_call", (event: any) => {
+    if (event.toolName === "edit") {
+      if (api.nativeEditProtocol === 1) return;
+      return advisory("native_edit_unavailable", "this host build exposes no native edit boundary, so edits are not governed.");
+    }
+    if (["read", "grep", "glob", "find"].includes(event.toolName)) return;
+    return blockOrNote(restriction);
+  });
+  api.on("before_subagent_spawn", () => blockOrNote(restriction));
+  const refusedExecution = () => (enforce
+    ? { result: { output: restriction, exitCode: 1, cancelled: false,
+      truncated: false, totalLines: 1, totalBytes: Buffer.byteLength(restriction),
+      outputLines: 1, outputBytes: Buffer.byteLength(restriction), displayOutputs: [] } }
+    : advisory("policy_downgraded", restriction));
   api.on("user_bash", refusedExecution);
   api.on("user_python", refusedExecution);
 }

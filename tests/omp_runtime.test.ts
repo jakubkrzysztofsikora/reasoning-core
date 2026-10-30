@@ -96,7 +96,9 @@ test("qualified adapter restricts unprepared mutation and delegated routes", asy
  expect(handlers.get("user_python")({ code: "write()" })?.result.exitCode).toBe(1);
  const oldHandlers = new Map<string, any>();
  extension({ on: (name: string, handler: any) => oldHandlers.set(name, handler) });
- expect(oldHandlers.get("tool_call")({ toolName: "edit" })?.block).toBe(true);
+ const ungated = oldHandlers.get("tool_call")({ toolName: "edit" });
+ expect(ungated?.block).toBeUndefined();
+ expect(ungated?.additionalContext).toContain("native_edit_unavailable");
 });
 
 test.each(["policy", "timeout", "malformed"])("safe denial diagnostic: %s", async mode => {
@@ -115,22 +117,25 @@ test.each(["policy", "timeout", "malformed"])("safe denial diagnostic: %s", asyn
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
 
-test.each(["scoped", "plugin"])("%s adapter blocks session stop with the review reason", async kind => {
+test.each(["scoped", "plugin"])("%s adapter blocks session stop only for a policy refusal", async kind => {
  const f = fixture();
  try {
   mkdirSync(join(f.cwd, ".reasoning-core"));
   writeFileSync(join(f.cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
    python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
   }));
-  const extension = kind === "scoped"
-   ? (await import("../integrations/omp/reasoning_core_gate")).default
-   : (await import("../integrations/omp-plugin/extensions/reasoning_core_gate")).default;
-  const handlers = new Map<string, any>();
   let reply: any = { decision: "blocked", reason: "open duplicate finding", decision_id: "audit123" };
   let unavailable = false;
-  extension({ on: (name: string, handler: any) => handlers.set(name, handler) }, async () => {
-   if (unavailable) throw Error("bridge down");
-   return reply;
+  const handlers = await withMode("enforce", async () => {
+   const extension = kind === "scoped"
+    ? (await import("../integrations/omp/reasoning_core_gate")).default
+    : (await import("../integrations/omp-plugin/extensions/reasoning_core_gate")).default;
+   const registered = new Map<string, any>();
+   extension({ on: (name: string, handler: any) => registered.set(name, handler) }, async () => {
+    if (unavailable) throw Error("bridge down");
+    return reply;
+   });
+   return registered;
   });
   const stop = handlers.get("session_stop");
   expect(typeof stop).toBe("function");
@@ -138,34 +143,42 @@ test.each(["scoped", "plugin"])("%s adapter blocks session stop with the review 
   reply = { decision: "allowed", reason: "session_stop", decision_id: "audit123" };
   expect(await stop({}, f.ctx)).toBeUndefined();
   reply = {};
-  expect(await stop({}, f.ctx)).toEqual({ decision: "block", reason: "reasoning-core session audit unavailable" });
+  expect(await stop({}, f.ctx)).toBeUndefined();
   unavailable = true;
-  expect(await stop({}, f.ctx)).toEqual({ decision: "block", reason: "reasoning-core session audit unavailable" });
+  expect(await stop({}, f.ctx)).toBeUndefined();
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
 
-test("plugin stays dormant for non-omp rc repos and blocks stop for broken omp installs", async () => {
+test("plugin never blocks when the runtime is missing or broken", async () => {
  const f = fixture();
+ const prior = process.env.RC_GATE;
  try {
-  const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
-  const handlers = new Map<string, any>();
-  extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
-  const stop = handlers.get("session_stop");
-  const call = handlers.get("tool_call");
-  expect(await stop({}, f.ctx)).toBeUndefined();
-  mkdirSync(join(f.cwd, ".reasoning-core"));
-  writeFileSync(join(f.cwd, ".reasoning-core", "install.manifest"), "");
-  expect(await stop({}, f.ctx)).toBeUndefined();
-  expect(await call({ toolName: "task", input: {} }, f.ctx)).toBeUndefined();
-  writeFileSync(join(f.cwd, ".reasoning-core", "omp-owned.json"), "{}");
-  expect(await stop({}, f.ctx)).toEqual({
-   decision: "block", reason: "reasoning-core runtime unresolved (run `rc init --host omp`)",
-  });
-  expect(await call({ toolName: "task", input: {} }, f.ctx)).toBeUndefined();
-  expect(await call({ toolName: "bash", input: { command: "ls" } }, f.ctx)).toEqual({
-   block: true, reason: "reasoning-core runtime unresolved (run `rc init --host omp`)",
-  });
- } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+  for (const mode of ["advisory", "enforce"]) {
+   process.env.RC_GATE = mode;
+   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+   const handlers = new Map<string, any>();
+   extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
+   const stop = handlers.get("session_stop");
+   const start = handlers.get("session_start");
+   const call = handlers.get("tool_call");
+   expect(await stop({}, f.ctx)).toBeUndefined();
+   mkdirSync(join(f.cwd, ".reasoning-core"), { recursive: true });
+   writeFileSync(join(f.cwd, ".reasoning-core", "install.manifest"), "");
+   expect(await stop({}, f.ctx)).toBeUndefined();
+   expect(await call({ toolName: "task", input: {} }, f.ctx)).toBeUndefined();
+   writeFileSync(join(f.cwd, ".reasoning-core", "omp-owned.json"), "{}");
+   expect(await start({}, f.ctx)).toBeUndefined();
+   expect(await stop({}, f.ctx)).toBeUndefined();
+   expect(await call({ toolName: "bash", input: { command: "ls" } }, f.ctx)).toBeUndefined();
+   expect(await call({ toolName: "edit", input: {} }, f.ctx)).toEqual({
+    additionalContext: expect.stringContaining("reasoning-core advisory (native_edit_unavailable)"),
+   });
+  }
+ } finally {
+  if (prior === undefined) delete process.env.RC_GATE;
+  else process.env.RC_GATE = prior;
+  rmSync(f.cwd, { recursive: true, force: true });
+ }
 });
 
 test("plugin screens a relative bash cwd against its project", async () => {
@@ -182,9 +195,13 @@ test("plugin screens a relative bash cwd against its project", async () => {
   const guarded = join(f.cwd, "build/nested/src/hooks/pre_edit_guard.py");
   mkdirSync(join(f.cwd, "build/nested/src/hooks"), { recursive: true });
   writeFileSync(guarded, "guard\n");
-  const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
-  const handlers = new Map<string, any>();
-  extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
+  const handlers = await withMode("enforce", async () => {
+   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+   const registered = new Map<string, any>();
+   extension({ on: (name: string, handler: any) => registered.set(name, handler) });
+   await registered.get("session_start")({}, f.ctx);
+   return registered;
+  });
   const result = await handlers.get("tool_call")({
    toolName: "bash", input: { command: "rm -rf nested", cwd: "build" },
   }, f.ctx);
@@ -199,33 +216,105 @@ test("plugin screens a relative bash cwd against its project", async () => {
  }
 });
 
-function activePlugin(cwd: string) {
- mkdirSync(join(cwd, ".reasoning-core"));
+test("plugin reports a policy block without blocking in advisory mode", async () => {
+ const f = fixture();
+ const priorAudit = process.env.RC_AUDIT_ROOT;
+ const priorOverride = process.env.RC_ALLOW_GUARD_EDIT;
+ try {
+  delete process.env.RC_ALLOW_GUARD_EDIT;
+  process.env.RC_AUDIT_ROOT = join(f.cwd, "audit");
+  mkdirSync(join(f.cwd, ".reasoning-core"));
+  writeFileSync(join(f.cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
+   python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
+  }));
+  mkdirSync(join(f.cwd, "build/nested/src/hooks"), { recursive: true });
+  writeFileSync(join(f.cwd, "build/nested/src/hooks/pre_edit_guard.py"), "guard\n");
+  const call = await withMode("advisory", async () => {
+   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+   const registered = new Map<string, any>();
+   extension({ on: (name: string, handler: any) => registered.set(name, handler) });
+   return registered.get("tool_call");
+  });
+  const result = await call({
+   toolName: "bash", input: { command: "rm -rf nested", cwd: "build" },
+  }, f.ctx);
+  expect(result?.block).toBeUndefined();
+  expect(result?.additionalContext).toContain("would have blocked");
+  expect(result?.additionalContext).toContain("guarded file");
+ } finally {
+  if (priorAudit === undefined) delete process.env.RC_AUDIT_ROOT;
+  else process.env.RC_AUDIT_ROOT = priorAudit;
+  if (priorOverride === undefined) delete process.env.RC_ALLOW_GUARD_EDIT;
+  else process.env.RC_ALLOW_GUARD_EDIT = priorOverride;
+  rmSync(f.cwd, { recursive: true, force: true });
+ }
+});
+
+async function withMode<T>(mode: string, run: () => Promise<T>): Promise<T> {
+ const prior = process.env.RC_GATE;
+ process.env.RC_GATE = mode;
+ try { return await run(); } finally {
+  if (prior === undefined) delete process.env.RC_GATE;
+  else process.env.RC_GATE = prior;
+ }
+}
+
+function activePlugin(cwd: string, mode = "enforce") {
+ mkdirSync(join(cwd, ".reasoning-core"), { recursive: true });
  writeFileSync(join(cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
   python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
  }));
- return import("../integrations/omp-plugin/extensions/reasoning_core_gate").then(({ default: extension }) => {
+ return withMode(mode, async () => {
+  const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
   const handlers = new Map<string, any>();
   extension({ on: (name: string, handler: any) => handlers.set(name, handler) }, async () => {
    throw Error("bridge must not be called");
   });
-  return handlers.get("tool_call");
+  return handlers;
  });
 }
 
 test.each(["[.envrc.local]", "[.envrc.local#ABCD]", "[notes.txt#1A2B] ", "file:///tmp/x"])("plugin refuses unbindable write target %s", async path => {
  const f = fixture();
  try {
-  const call = await activePlugin(f.cwd);
+  const call = (await activePlugin(f.cwd)).get("tool_call");
   expect(await call({ toolName: "write", toolCallId: "uri", input: { path, content: "{}" } }, f.ctx))
    .toEqual({ block: true, reason: "reasoning-core: non-file write targets are refused" });
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("plugin leaves writes outside the project root ungoverned", async () => {
+ const f = fixture();
+ try {
+  mkdirSync(join(f.cwd, ".reasoning-core"), { recursive: true });
+  writeFileSync(join(f.cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
+   python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
+  }));
+  let calls = 0;
+  const handlers = await withMode("enforce", async () => {
+   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+   const registered = new Map<string, any>();
+   extension({ on: (name: string, handler: any) => registered.set(name, handler) },
+     async () => { calls += 1; throw Error("bridge unavailable"); });
+   return registered;
+  });
+  const result = await handlers.get("tool_call")(
+   { toolName: "write", toolCallId: "outside", input: { path: "/tmp/rc-outside-target.txt", content: "x\n" } }, f.ctx);
+  expect(result?.block).toBeUndefined();
+  expect(result?.additionalContext).toContain("outside the project root");
+  expect(calls).toBe(0);
+  const large = await handlers.get("tool_call")(
+   { toolName: "write", toolCallId: "large", input: { path: join(f.cwd, "big.txt"), content: "x".repeat(4 * 1024 * 1024 + 1) } }, f.ctx);
+  expect(large?.block).toBeUndefined();
+  expect(large?.additionalContext).toContain("exceeds the governed text limit");
+  expect(calls).toBe(0);
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
 
 test("plugin leaves non-mutation routes ungated while active", async () => {
  const f = fixture();
  try {
-  const call = await activePlugin(f.cwd);
+  const call = (await activePlugin(f.cwd)).get("tool_call");
   for (const toolName of ["eval", "task", "todo", "ask", "web_search", "context_notes", "read", "grep"])
    expect(await call({ toolName, input: {} }, f.ctx)).toBeUndefined();
   for (const path of ["xd://mcp__service_change", "ssh://host/path", "local://notes.md"])
@@ -256,9 +345,13 @@ test("plugin stop gate blocks a real duplicate until it is resolved", async () =
    { env: { ...process.env } });
   expect(setup.exitCode).toBe(0);
   expect(setup.stdout.toString().trim()).toBe("True");
+  const handlers = await withMode("enforce", async () => {
   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
-  const handlers = new Map<string, any>();
-  extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
+  const registered = new Map<string, any>();
+  extension({ on: (name: string, handler: any) => registered.set(name, handler) });
+  await registered.get("session_start")({}, f.ctx);
+  return registered;
+ });
   const stop = handlers.get("session_stop");
   const denied = await stop({}, f.ctx);
   expect(denied?.decision).toBe("block");

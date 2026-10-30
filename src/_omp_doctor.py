@@ -137,19 +137,10 @@ PLUGIN_GATE = "extensions/reasoning_core_gate.ts"
 
 
 def _plugin_expected_mode(project: Path) -> str:
-    rc_dir = project / ".reasoning-core"
-    if not (rc_dir / "omp-runtime.json").exists() and not (rc_dir / "omp-owned.json").exists():
-        return "dormant"
-    try:
-        runtime = json.loads((rc_dir / "omp-runtime.json").read_text())
-    except (OSError, ValueError):
-        return "failclosed"
-    if isinstance(runtime, dict) and all(
-        isinstance(value, str) and value and Path(value).is_absolute()
-        for value in (runtime.get("python"), runtime.get("repo_root"))
-    ):
-        return "active"
-    return "failclosed"
+    requested = os.environ.get("RC_GATE", "").strip().lower()
+    if requested in ("off", "advisory", "enforce"):
+        return requested
+    return "advisory"
 
 
 def _plugin_path(project: Path) -> Path:
