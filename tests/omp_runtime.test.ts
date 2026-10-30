@@ -489,9 +489,12 @@ test("operator /rc flips mode and on-error, persists them, and takes live effect
    expect(last()).toContain("on-error=open [default]");
    await rc.handler("mode enable", ctx);
    expect(last()).toContain("mode=enforce [session]");
+   expect(last()).toContain("exported for this session: RC_GATE");
+   expect(process.env.RC_GATE).toBe("enforce");
    expect(JSON.parse(readFileSync(settings, "utf8")).mode).toBe("enforce");
    await rc.handler("RC_GATE_ON_ERROR closed", ctx);
    expect(last()).toContain("on-error=closed [session]");
+   expect(process.env.RC_GATE_ON_ERROR).toBe("closed");
    expect(JSON.parse(readFileSync(settings, "utf8")).onError).toBe("closed");
    const call = handlers.get("tool_call");
    expect((await call({ toolName: "bash", toolCallId: "a", input: { command: "ls" } }, f.ctx))?.block).toBe(true);
@@ -505,8 +508,33 @@ test("operator /rc flips mode and on-error, persists them, and takes live effect
    expect(last()).toContain("rc: (no args) status");
    await rc.handler("reset", ctx);
    expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual({});
+   expect(process.env.RC_GATE).toBeUndefined();
+   expect(process.env.RC_GATE_ON_ERROR).toBeUndefined();
    expect(last()).toContain("mode=advisory");
    expect(last()).toContain("on-error=open");
+  });
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("operator /rc exports the gate env for the session and reset restores the inherited value", async () => {
+ const f = fixture();
+ try {
+  const settings = join(f.cwd, "gate-settings.json");
+  await withEnv({ RC_GATE: "advisory", RC_GATE_ON_ERROR: undefined, RC_GATE_SETTINGS: settings }, async () => {
+   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+   const commands = new Map<string, any>();
+   extension({ on: () => {}, registerCommand: (name: string, command: any) => commands.set(name, command) },
+     async () => { throw Error("bridge unavailable"); });
+   const notes: string[] = [];
+   const ctx = { ...f.ctx, ui: { notify: (message: string) => notes.push(message) } };
+   const rc = commands.get("rc");
+   const last = () => notes[notes.length - 1];
+   await rc.handler("mode enforce", ctx);
+   expect(process.env.RC_GATE).toBe("enforce");
+   expect(last()).toContain("mode=enforce [session]");
+   await rc.handler("reset", ctx);
+   expect(process.env.RC_GATE).toBe("advisory");
+   expect(last()).toContain("mode=advisory [env]");
   });
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });

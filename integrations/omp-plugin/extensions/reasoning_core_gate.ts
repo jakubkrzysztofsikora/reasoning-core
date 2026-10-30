@@ -292,7 +292,7 @@ export interface ResolvedSettings extends GateSettings {
 }
 
 const MODES: Mode[] = ["off", "advisory", "enforce"];
-const USAGE = "rc: (no args) status | mode off|advisory|enforce|enable|disable | on-error open|closed | RC_GATE <mode> | RC_GATE_ON_ERROR <open|closed> | reset | help";
+const USAGE = "rc: (no args) status | mode off|advisory|enforce|enable|disable | on-error open|closed | RC_GATE <mode> | RC_GATE_ON_ERROR <open|closed> | reset | help - mode and on-error also export their env var for this session";
 
 export const settingsPath = (): string =>
   process.env.RC_GATE_SETTINGS || join(process.env.HOME || ".", ".omp", "agent", "reasoning-core-gate.json");
@@ -357,6 +357,9 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
   });
   let announced = "";
   let degraded = false;
+  // Captured before any /rc write so `reset` restores what this session inherited.
+  const inherited = { mode: process.env.RC_GATE, onError: process.env.RC_GATE_ON_ERROR };
+  const sessionEnv = new Set<string>();
   const announce = (reason: string) => {
     if (announced === reason) return;
     announced = reason;
@@ -405,8 +408,27 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     else api.logger?.info?.(message);
   };
   const status = () => {
-    const overrides = envMode() || envOnError() ? " (env override present: /rc persists for later sessions, env wins at load)" : "";
+    const exported = [...sessionEnv];
+    const overrides = exported.length
+      ? ` (exported for this session: ${exported.join(", ")})`
+      : inherited.mode !== undefined || inherited.onError !== undefined
+        ? " (env override present: /rc persists for later sessions, env wins at load)"
+        : "";
     return `reasoning-core gate: mode=${state.mode} [${state.source.mode}] on-error=${state.onError} [${state.source.onError}] settings=${state.path}${overrides}`;
+  };
+  // /rc is the operator lever, so it also writes the env var the gate reads:
+  // child processes and nested sessions inherit the decision without a shell dance.
+  const exportEnv = (name: "RC_GATE" | "RC_GATE_ON_ERROR", value: string) => {
+    process.env[name] = value;
+    sessionEnv.add(name);
+  };
+  const restoreEnv = () => {
+    for (const name of sessionEnv) {
+      const prior = name === "RC_GATE" ? inherited.mode : inherited.onError;
+      if (prior === undefined) delete process.env[name];
+      else process.env[name] = prior;
+    }
+    sessionEnv.clear();
   };
   const applyMode = (raw: string): Mode | null => {
     const value = raw === "enable" || raw === "on" ? "enforce" : raw === "disable" || raw === "none" ? "off" : raw;
@@ -429,16 +451,19 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     const value = applyMode(raw);
     if (!value) return notify(ctx, `unknown mode "${raw}" - use off, advisory, enforce, enable or disable`, "warning");
     persistSettings({ mode: value });
+    exportEnv("RC_GATE", value);
     return notify(ctx, status());
   };
   const setOnError = (ctx: any, raw: string) => {
     const value = applyOnError(raw);
     if (!value) return notify(ctx, `unknown on-error "${raw}" - use open or closed`, "warning");
     persistSettings({ onError: value });
+    exportEnv("RC_GATE_ON_ERROR", value);
     return notify(ctx, status());
   };
   const reset = (ctx: any) => {
     clearSettings();
+    restoreEnv();
     const defaults = resolveSettings();
     state.mode = defaults.mode;
     state.onError = defaults.onError;

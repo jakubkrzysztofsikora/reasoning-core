@@ -367,6 +367,10 @@ spawns the same Python bridge worker per event. Knob surface:
   `disable`), `/rc on-error open|closed`, `/rc RC_GATE <mode>`,
   `/rc RC_GATE=<mode>`, `/rc RC_GATE_ON_ERROR <open|closed>`, `/rc reset`,
   `/rc help`. Changes apply immediately and persist to the settings file.
+  Each change also exports its env var (`RC_GATE`, `RC_GATE_ON_ERROR`) into
+  the session's process environment, so bash tools, subagents and nested
+  processes inherit the operator's decision; `/rc reset` restores the value
+  the session inherited at start.
   There is no agent-facing skill for this: only the operator's slash command
   changes gate state.
 - **omp-side knobs** (`~/.omp/agent/config.yml` or project `.omp/config.yml`):
