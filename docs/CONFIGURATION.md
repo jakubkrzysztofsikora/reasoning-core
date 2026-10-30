@@ -343,10 +343,32 @@ omp (oh-my-pi) integrates through the plugin in `integrations/omp-plugin/`:
 a TS extension gates `tool_call`/`before_subagent_spawn`/session events and
 spawns the same Python bridge worker per event. Knob surface:
 
-- **Where knobs live**: rc reads environment variables only. omp's
-  `config.yml` has no rc settings. Set rc knobs in the project `.envrc` /
+- **Where knobs live**: omp's `config.yml` has no rc settings. Gate knobs come
+  from the environment or the plugin settings file (below); every other rc
+  knob is environment-only. Set them in the project `.envrc` /
   `.envrc.local` or the session environment; the bridge worker inherits them
   from the omp process.
+- **Gate mode and error policy** (`RC_GATE`, `RC_GATE_ON_ERROR`) — read by
+  the omp plugin, resolved `env > settings file > default`:
+  - `RC_GATE` = `off` | `advisory` (default) | `enforce`.
+  - `RC_GATE_ON_ERROR` = `open` (default) | `closed`. `open` means any
+    infrastructure failure allows the call and logs one warning: bridge down,
+    timeout, malformed reply, unresolved runtime, handler exception, or a
+    worker-side failure (audit append, screen crash, scoring sidecar). `closed`
+    blocks it — only use it when a missing gate decision must stop work. Policy
+    refusals from the worker block in both modes.
+  - Settings file `~/.omp/agent/reasoning-core-gate.json`
+    (`{"mode": "enforce", "onError": "open"}`), path overridable with
+    `RC_GATE_SETTINGS`. Written by the operator command below; a live env var
+    still wins at load.
+- **Operator command `/rc`** (inside an omp session): bare `/rc` prints mode,
+  on-error policy, setting source (`env`/`file`/`default`/`session`) and the
+  settings path. `/rc mode off|advisory|enforce` (aliases `enable`,
+  `disable`), `/rc on-error open|closed`, `/rc RC_GATE <mode>`,
+  `/rc RC_GATE=<mode>`, `/rc RC_GATE_ON_ERROR <open|closed>`, `/rc reset`,
+  `/rc help`. Changes apply immediately and persist to the settings file.
+  There is no agent-facing skill for this: only the operator's slash command
+  changes gate state.
 - **omp-side knobs** (`~/.omp/agent/config.yml` or project `.omp/config.yml`):
   `tools.approvalMode` (approval posture), `tools.approval.<tool>` (per-tool
   approval), `tools.restrictedFolders` (fs sandbox), `ttsr.*` (subagent

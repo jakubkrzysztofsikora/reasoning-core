@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync, readFileSync, lstatSync } from "node:fs";
+import { existsSync, realpathSync, readFileSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, basename, join, isAbsolute, sep } from "node:path";
 
 // Project-scoped installs substitute these literals at delivery time.
@@ -141,7 +141,7 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
   const clean = (reason: string) => reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512);
   return {
     async prepare(event: any, ctx: any) {
-      const denied = { allowed: false, finalInputSha256: event.batch?.finalInputSha256 ?? "", reason: "invalid_bridge_response" };
+      const denied = { allowed: false, finalInputSha256: event.batch?.finalInputSha256 ?? "", reason: "invalid_bridge_response", infra: true };
       try {
         const id = key(ctx, event.toolCallId);
         if (pending.has(id)) throw Error("duplicate prepared call");
@@ -198,7 +198,7 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
     async bash(event: any, ctx: any) {
       const input = objField(event, "input");
       const command = strField(input, "command");
-      if (!command.trim()) return { block: true, reason: "reasoning-core: missing bash command" };
+      if (!command.trim()) return { note: "this bash call carries no command, so reasoning-core does not govern it" };
       const cwd = strField(input, "cwd");
       const reply = await bridge({ event: "bash", ...identity(ctx), command,
         cwd: cwd ? (isAbsolute(cwd) ? cwd : join(ctx.cwd, cwd)) : null });
@@ -207,15 +207,15 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
       if (reply && reply.decision === "blocked" && typeof reply.reason === "string" && reply.reason.trim()
         && typeof reply.decision_id === "string" && reply.decision_id)
         return { block: true, reason: clean(reply.reason) };
-      throw Error("invalid bridge output");
+      return { block: true, reason: "invalid_bridge_response", infra: true };
     },
     async writePrepare(event: any, ctx: any) {
       const input = objField(event, "input");
       const path = strField(input, "path");
       const content = strField(input, "content");
-      if (!path.trim()) return { block: true, reason: "reasoning-core: missing write path" };
+      if (!path.trim()) return { note: "this write call carries no path, so reasoning-core does not govern it" };
       if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path) || /^\[.*\]\s*$/s.test(path))
-        return { block: true, reason: "reasoning-core: non-file write targets are refused" };
+        return { note: "this write targets a non-file destination, so reasoning-core does not govern it" };
       const absolute = isAbsolute(path) ? path : join(ctx.cwd, path);
       const project = resolved(ctx.cwd);
       const target = resolved(absolute);
@@ -238,7 +238,7 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
         || Object.entries(expected).some(([name, value]) => reply[name] !== value)
         || Object.keys(reply).sort().join(",") !==
           "batch_sha256,candidate_sha256,decision,decision_id,final_input_sha256,reason")
-        return { block: true, reason: "reasoning-core: invalid bridge response" };
+        return { block: true, reason: "invalid_bridge_response", infra: true };
       if (reply.decision === "blocked") return { block: true, reason: clean(reply.reason) };
       writePending.set(key(ctx, event.toolCallId), { batch, approval: reply });
     },
@@ -257,7 +257,7 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
     },
     async subagent(event: any, ctx: any): Promise<SubagentDecision> {
       const name = strField(event, "agent");
-      if (!name.trim()) return { block: true, reason: "reasoning-core: missing subagent name" };
+      if (!name.trim()) return { block: false };
       try {
         const reply = await bridge({ event: "subagent", ...identity(ctx), name });
         if (reply && reply.decision === "allowed"
@@ -277,85 +277,258 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
     },
   };
 }
-
 export type Mode = "off" | "advisory" | "enforce";
+export type OnError = "open" | "closed";
+export type SettingSource = "env" | "file" | "default" | "session";
 
-const requestedMode = (): Mode => {
+export interface GateSettings {
+  mode: Mode;
+  onError: OnError;
+}
+
+export interface ResolvedSettings extends GateSettings {
+  path: string;
+  source: { mode: SettingSource; onError: SettingSource };
+}
+
+const MODES: Mode[] = ["off", "advisory", "enforce"];
+const USAGE = "rc: (no args) status | mode off|advisory|enforce|enable|disable | on-error open|closed | RC_GATE <mode> | RC_GATE_ON_ERROR <open|closed> | reset | help";
+
+export const settingsPath = (): string =>
+  process.env.RC_GATE_SETTINGS || join(process.env.HOME || ".", ".omp", "agent", "reasoning-core-gate.json");
+
+const envMode = (): Mode | undefined => {
   const value = String(process.env.RC_GATE ?? "").trim().toLowerCase();
-  return value === "off" || value === "enforce" ? value : "advisory";
+  return MODES.includes(value as Mode) ? value as Mode : undefined;
 };
+
+const envOnError = (): OnError | undefined => {
+  const value = String(process.env.RC_GATE_ON_ERROR ?? "").trim().toLowerCase();
+  return value === "open" || value === "closed" ? value : undefined;
+};
+
+function readSettingsFile(): Partial<GateSettings> {
+  try {
+    const raw = JSON.parse(readFileSync(settingsPath(), "utf8"));
+    const file: Partial<GateSettings> = {};
+    if (MODES.includes(raw?.mode)) file.mode = raw.mode;
+    if (raw?.onError === "open" || raw?.onError === "closed") file.onError = raw.onError;
+    return file;
+  } catch { return {}; }
+}
+
+export function resolveSettings(): ResolvedSettings {
+  const file = readSettingsFile();
+  const fromEnv = envMode();
+  const errorFromEnv = envOnError();
+  return {
+    mode: fromEnv ?? file.mode ?? "advisory",
+    onError: errorFromEnv ?? file.onError ?? "open",
+    path: settingsPath(),
+    source: {
+      mode: fromEnv ? "env" : file.mode ? "file" : "default",
+      onError: errorFromEnv ? "env" : file.onError ? "file" : "default",
+    },
+  };
+}
+
+export function persistSettings(patch: Partial<GateSettings>): void {
+  const next = { ...readSettingsFile(), ...patch };
+  mkdirSync(dirname(settingsPath()), { recursive: true });
+  writeFileSync(settingsPath(), `${JSON.stringify(next, null, 1)}\n`);
+}
+
+export function clearSettings(): void {
+  mkdirSync(dirname(settingsPath()), { recursive: true });
+  writeFileSync(settingsPath(), "{}\n");
+}
 
 // Protocol body above mirrors the qualified project-scoped gate
 // (integrations/omp/reasoning_core_gate.ts) verbatim; only the plugin
-// boundary below adds runtime resolution, mode negotiation and dormancy.
+// boundary below adds runtime resolution, mode negotiation and operator control.
 export default function reasoningCoreGate(api: any, bridge: (event: any, options?: { argv?: string[]; timeoutMs?: number }) => Promise<any> = runBridge) {
-  const requested = requestedMode();
-  api.logger?.debug?.("reasoning-core gate loaded", { mode: requested });
-  if (requested === "off") return;
+  const state: ResolvedSettings = resolveSettings();
+  api.logger?.debug?.("reasoning-core gate loaded", { mode: state.mode, onError: state.onError, source: state.source });
   const gate = createGate((event: any) => {
     const dir = strField(event.batch, "project_dir") || strField(event, "project_dir");
     const runtime = runtimeConfig(dir);
     if (!runtime.active) throw Error("rc runtime unresolved");
     return bridge(event, { argv: [runtime.python, "-I", "-c", BOOTSTRAP, runtime.root] });
   });
-  let enforce = requested === "enforce";
   let announced = "";
+  let degraded = false;
   const announce = (reason: string) => {
     if (announced === reason) return;
     announced = reason;
     api.logger?.warn?.(`reasoning-core gate advisory mode (${reason}): no reasoning-core decision blocks work`);
   };
-  const mode = (ctx: unknown): Mode => {
-    if (requested !== "enforce" || !enforce) return "advisory";
+  const active = () => state.mode !== "off";
+  const enforcing = (ctx: unknown): boolean => {
+    if (state.mode !== "enforce" || degraded) return false;
     const runtime = runtimeConfig(strField(ctx, "cwd"));
-    if (!runtime.active) { announce(runtime.reason); return "advisory"; }
-    return "enforce";
+    if (!runtime.active) { announce(runtime.reason); return false; }
+    return true;
   };
+  const failOpen = () => state.onError === "open";
   const emitted = new Set<string>();
   const advisory = (reason: string, detail: string) => {
-    const key = `${reason}:${detail}`;
-    if (emitted.has(key)) return;
-    emitted.add(key);
+    const id = `${reason}:${detail}`;
+    if (emitted.has(id)) return;
+    emitted.add(id);
     return { additionalContext: `reasoning-core advisory (${reason}): ${detail}`.slice(0, 1024) };
   };
-  if (requested !== "enforce") announce("rc_gate_advisory");
+  const unreviewed = (route: string, ctx: unknown, reason: string, detail: string | null) => {
+    api.logger?.warn?.(`reasoning-core ${route} unreviewed (${reason})${detail ? `: ${detail}` : ""}`);
+    if (enforcing(ctx) && !failOpen()) return { block: true, reason: `reasoning-core: ${reason}` };
+    return advisory(reason, "reasoning-core could not evaluate this call.");
+  };
+  // The worker reports its own failures as plain blocked decisions with no infra
+  // flag, so every reason it can emit for a failure that carried no policy
+  // verdict belongs here; anything absent stays a policy refusal in both modes.
+  const infraDenial = new Set([
+    "bridge_unavailable", "bridge_timeout", "bridge_process_failed",
+    "invalid_bridge_output", "invalid_bridge_response", "invalid_event",
+    "bridge_audit_unavailable", "guard_evaluation_failed", "bash_screen_error",
+    "sidecar_unavailable", "sidecar_auth_failed", "invalid_score_report",
+  ]);
+  // prepare() mirrors the strict protocol and tags every reply infra:true, so
+  // policy blocks there are told apart by reason text, not the flag.
+  const isInfraReason = (reply: any) => infraDenial.has(String(reply?.reason));
+  const isInfra = (reply: any) => reply?.infra === true || isInfraReason(reply);
+  if (state.mode === "enforce") api.logger?.debug?.("reasoning-core gate enforcing", { onError: state.onError });
+  else announce("rc_gate_advisory");
 
-  const infraDenial = new Set(["bridge_unavailable", "bridge_timeout", "invalid_bridge_response", "invalid_event"]);
+  const notify = (ctx: any, message: string, level: "info" | "warning" = "info") => {
+    if (ctx?.ui?.notify) ctx.ui.notify(message, level);
+    else api.logger?.info?.(message);
+  };
+  const status = () => {
+    const overrides = envMode() || envOnError() ? " (env override present: /rc persists for later sessions, env wins at load)" : "";
+    return `reasoning-core gate: mode=${state.mode} [${state.source.mode}] on-error=${state.onError} [${state.source.onError}] settings=${state.path}${overrides}`;
+  };
+  const applyMode = (raw: string): Mode | null => {
+    const value = raw === "enable" || raw === "on" ? "enforce" : raw === "disable" || raw === "none" ? "off" : raw;
+    if (!MODES.includes(value as Mode)) return null;
+    state.mode = value as Mode;
+    state.source = { ...state.source, mode: "session" };
+    degraded = false;
+    emitted.clear();
+    announced = "";
+    if (state.mode !== "enforce") announce("rc_gate_advisory");
+    return state.mode;
+  };
+  const applyOnError = (raw: string): OnError | null => {
+    if (raw !== "open" && raw !== "closed") return null;
+    state.onError = raw;
+    state.source = { ...state.source, onError: "session" };
+    return raw;
+  };
+  const setMode = (ctx: any, raw: string) => {
+    const value = applyMode(raw);
+    if (!value) return notify(ctx, `unknown mode "${raw}" - use off, advisory, enforce, enable or disable`, "warning");
+    persistSettings({ mode: value });
+    return notify(ctx, status());
+  };
+  const setOnError = (ctx: any, raw: string) => {
+    const value = applyOnError(raw);
+    if (!value) return notify(ctx, `unknown on-error "${raw}" - use open or closed`, "warning");
+    persistSettings({ onError: value });
+    return notify(ctx, status());
+  };
+  const reset = (ctx: any) => {
+    clearSettings();
+    const defaults = resolveSettings();
+    state.mode = defaults.mode;
+    state.onError = defaults.onError;
+    state.source = defaults.source;
+    degraded = false;
+    emitted.clear();
+    announced = "";
+    if (state.mode !== "enforce") announce("rc_gate_advisory");
+    return notify(ctx, `settings cleared · ${status()}`);
+  };
+
+  api.registerCommand?.("rc", {
+    description: "reasoning-core gate: show state, set mode (off|advisory|enforce) or on-error (open|closed)",
+    getArgumentCompletions: (prefix: string) => {
+      const options = ["status", "off", "advisory", "enforce", "enable", "disable",
+        "on-error open", "on-error closed", "reset", "help"];
+      const matches = options.filter((option) => option.startsWith(String(prefix ?? "").trim()));
+      return matches.length ? matches.map((value) => ({ label: value, value })) : null;
+    },
+    handler: async (args: string, ctx: any) => {
+      const raw = String(args ?? "").trim();
+      if (!raw) return notify(ctx, status());
+      const tokens = raw.split(/\s+/);
+      let name = tokens[0].toLowerCase();
+      let value = (tokens[1] ?? "").toLowerCase();
+      if (name.includes("=")) {
+        const [inlineName, inlineValue] = name.split("=");
+        name = inlineName;
+        value = (inlineValue || value).toLowerCase();
+      }
+      if (name === "help") return notify(ctx, USAGE);
+      if (name === "status") return notify(ctx, status());
+      if (name === "reset") return reset(ctx);
+      if (name === "mode") return setMode(ctx, value);
+      if (name === "on-error" || name === "onerror" || name === "rc_gate_on_error") return setOnError(ctx, value);
+      if (name === "rc_gate") return setMode(ctx, value);
+      if (name === "open" || name === "closed") return setOnError(ctx, name);
+      if (MODES.includes(name as Mode) || name === "enable" || name === "disable") return setMode(ctx, name);
+      return notify(ctx, USAGE, "warning");
+    },
+  });
+
   api.on("native_edit_prepare", async (event: unknown, ctx: unknown) => {
     const finalInput = strField(objField(event, "batch"), "finalInputSha256");
-    if (mode(ctx) !== "enforce") return { allowed: true, finalInputSha256: finalInput };
-    const reply = await gate.prepare(event, ctx);
-    if (reply.allowed || !infraDenial.has(String(reply.reason))) return reply;
-    api.logger?.warn?.(`reasoning-core edit unreviewed (${reply.reason})`);
-    return { allowed: true, finalInputSha256: finalInput };
+    if (!enforcing(ctx)) return { allowed: true, finalInputSha256: finalInput };
+    let reply: any;
+    try { reply = await gate.prepare(event, ctx); }
+    catch (error: any) {
+      api.logger?.warn?.(`reasoning-core edit unreviewed: ${String(error?.message ?? error)}`);
+      return failOpen() ? { allowed: true, finalInputSha256: finalInput }
+        : { allowed: false, finalInputSha256: finalInput, reason: "reasoning-core: bridge_unavailable" };
+    }
+    if (reply?.allowed) return reply;
+    if (isInfraReason(reply)) {
+      api.logger?.warn?.(`reasoning-core edit unreviewed (${reply.reason})`);
+      return failOpen() ? { allowed: true, finalInputSha256: finalInput }
+        : { allowed: false, finalInputSha256: finalInput, reason: `reasoning-core: ${reply.reason}` };
+    }
+    return reply;
   });
   api.on("native_edit_result", async (event: unknown, ctx: unknown) => {
-    if (mode(ctx) !== "enforce") return;
+    if (!enforcing(ctx)) return;
     try { await gate.result(event, ctx); }
     catch (error: any) { api.logger?.warn?.(`reasoning-core receipt unavailable: ${String(error?.message ?? error)}`); }
   });
   api.on("session_start", async (_event: unknown, ctx: unknown) => {
-    if (requested !== "enforce" || !enforce) return;
-    const runtime = runtimeConfig(strField(ctx, "cwd"));
-    if (!runtime.active) { enforce = false; announce(runtime.reason); return; }
+    if (!enforcing(ctx)) return;
     try { await gate.lifecycle("session_start", ctx); }
     catch (error: any) {
-      enforce = false;
+      degraded = true;
       announce("bridge_unavailable");
       api.logger?.warn?.(`reasoning-core session start unavailable: ${String(error?.message ?? error)}`);
     }
   });
   api.on("session_stop", async (_event: unknown, ctx: unknown) => {
-    if (mode(ctx) !== "enforce") return;
+    if (!enforcing(ctx)) return;
+    const unavailable = () => failOpen() ? undefined
+      : { decision: "block", reason: "reasoning-core session audit unavailable" };
     try {
       const refusal = await gate.lifecycle("session_stop", ctx);
-      if (refusal && refusal.decision === "block" && !refusal.infra) return refusal;
-      if (refusal?.infra) api.logger?.warn?.(`reasoning-core session audit unavailable: ${refusal.reason}`);
+      if (refusal && refusal.decision === "block" && !isInfra(refusal)) return refusal;
+      if (isInfra(refusal)) {
+        api.logger?.warn?.(`reasoning-core session audit unavailable: ${refusal.reason}`);
+        return unavailable();
+      }
     } catch (error: any) {
       api.logger?.warn?.(`reasoning-core session audit unavailable: ${String(error?.message ?? error)}`);
+      return unavailable();
     }
   });
   api.on("tool_call", async (event: unknown, ctx: unknown) => {
+    if (!active()) return;
     const toolName = strField(event, "toolName");
     if (toolName === "edit") {
       if (api.nativeEditProtocol === 1) return;
@@ -366,41 +539,38 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     if (toolName === "write" && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path) && !/^file:/i.test(path)) return;
     const runtime = runtimeConfig(strField(ctx, "cwd"));
     if (!runtime.active) { announce(runtime.reason); return; }
-    const state = requested === "enforce" && enforce ? "enforce" : "advisory";
     let reply: any;
     try {
       reply = toolName === "bash" ? await gate.bash(event, ctx) : await gate.writePrepare(event, ctx);
     } catch (error: any) {
-      api.logger?.warn?.(`reasoning-core ${toolName} unreviewed: ${String(error?.message ?? error)}`);
-      return advisory("bridge_unavailable", "reasoning-core could not evaluate this call.");
+      return unreviewed(toolName, ctx, "bridge_unavailable", String(error?.message ?? error));
     }
-    if (!reply || !reply.block) return reply?.note ? advisory("not_governed", reply.note) : reply;
-    if (reply.reason === "reasoning-core: invalid bridge response") {
-      api.logger?.warn?.("reasoning-core write unreviewed: invalid bridge response");
-      return advisory("bridge_unavailable", "reasoning-core could not evaluate this call.");
-    }
-    return state === "enforce" ? reply : advisory("policy_downgraded", `would have blocked: ${reply.reason}`);
+    if (!reply) return;
+    if (!reply.block) return reply.note ? advisory("not_governed", reply.note) : undefined;
+    if (isInfra(reply)) return unreviewed(toolName, ctx, String(reply.reason), null);
+    return enforcing(ctx) ? { block: true, reason: reply.reason } : advisory("policy_downgraded", `would have blocked: ${reply.reason}`);
   });
   api.on("tool_result", async (event: unknown, ctx: unknown) => {
-    if (mode(ctx) !== "enforce") return;
+    if (!enforcing(ctx)) return;
     if (strField(event, "toolName") !== "write") return;
     try { await gate.writeResult(event, ctx); }
     catch (error: any) { api.logger?.warn?.(`reasoning-core receipt unavailable: ${String(error?.message ?? error)}`); }
   });
   api.on("before_subagent_spawn", async (event: unknown, ctx: unknown) => {
-    if (mode(ctx) !== "enforce") return;
+    if (!enforcing(ctx)) return;
     let reply: SubagentDecision;
     try { reply = await gate.subagent(event, ctx); }
-    catch { return; }
-    if (!reply || !reply.block || reply.infra) return;
+    catch (error: any) { return unreviewed("subagent", ctx, "bridge_unavailable", String(error?.message ?? error)); }
+    if (!reply?.block) return;
+    if (isInfra(reply)) return unreviewed("subagent", ctx, String(reply.reason), null);
     return { block: true, reason: reply.reason };
   });
   api.on("advisor_cost_changed", async (event: unknown, ctx: unknown) => {
-    if (mode(ctx) !== "enforce") return;
+    if (!enforcing(ctx)) return;
     await gate.advisor(event, ctx);
   });
   api.on("advisor_yielded", async (event: unknown, ctx: unknown) => {
-    if (mode(ctx) !== "enforce") return;
+    if (!enforcing(ctx)) return;
     await gate.advisor(event, ctx);
   });
 }

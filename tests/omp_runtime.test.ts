@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGate, bindings, runBridge } from "../integrations/omp/reasoning_core_gate";
@@ -250,36 +250,45 @@ test("plugin reports a policy block without blocking in advisory mode", async ()
  }
 });
 
-async function withMode<T>(mode: string, run: () => Promise<T>): Promise<T> {
- const prior = process.env.RC_GATE;
- process.env.RC_GATE = mode;
+async function withEnv<T>(vars: Record<string, string | undefined>, run: () => Promise<T>): Promise<T> {
+ const prior = Object.fromEntries(Object.keys(vars).map(key => [key, process.env[key]]));
+ for (const [key, value] of Object.entries(vars)) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+ }
  try { return await run(); } finally {
-  if (prior === undefined) delete process.env.RC_GATE;
-  else process.env.RC_GATE = prior;
+  for (const [key, value] of Object.entries(prior)) {
+   if (value === undefined) delete process.env[key];
+   else process.env[key] = value;
+  }
  }
 }
 
-function activePlugin(cwd: string, mode = "enforce") {
+function withMode<T>(mode: string, run: () => Promise<T>): Promise<T> {
+ return withEnv({ RC_GATE: mode, RC_GATE_ON_ERROR: undefined }, run);
+}
+
+function activePlugin(cwd: string, mode = "enforce", extra: Record<string, string | undefined> = {},
+  bridge: (event: any) => Promise<any> = async () => { throw Error("bridge must not be called"); }) {
  mkdirSync(join(cwd, ".reasoning-core"), { recursive: true });
  writeFileSync(join(cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
   python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
  }));
- return withMode(mode, async () => {
+ return withEnv({ RC_GATE: mode, RC_GATE_ON_ERROR: undefined, RC_GATE_SETTINGS: join(cwd, "gate-settings.json"), ...extra }, async () => {
   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
   const handlers = new Map<string, any>();
-  extension({ on: (name: string, handler: any) => handlers.set(name, handler) }, async () => {
-   throw Error("bridge must not be called");
-  });
+  extension({ on: (name: string, handler: any) => handlers.set(name, handler) }, bridge);
   return handlers;
  });
 }
 
-test.each(["[.envrc.local]", "[.envrc.local#ABCD]", "[notes.txt#1A2B] ", "file:///tmp/x"])("plugin refuses unbindable write target %s", async path => {
+test.each(["[.envrc.local]", "[.envrc.local#ABCD]", "[notes.txt#1A2B] ", "file:///tmp/x"])("plugin leaves unbindable write target %s ungoverned", async path => {
  const f = fixture();
  try {
   const call = (await activePlugin(f.cwd)).get("tool_call");
-  expect(await call({ toolName: "write", toolCallId: "uri", input: { path, content: "{}" } }, f.ctx))
-   .toEqual({ block: true, reason: "reasoning-core: non-file write targets are refused" });
+  const result = await call({ toolName: "write", toolCallId: "uri", input: { path, content: "{}" } }, f.ctx);
+  expect(result?.block).toBeUndefined();
+  expect(result?.additionalContext).toContain("non-file destination");
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
 
@@ -365,4 +374,95 @@ test("plugin stop gate blocks a real duplicate until it is resolved", async () =
   }
   rmSync(f.cwd, { recursive: true, force: true });
  }
+});
+
+test.each(["open", "closed"])("plugin fails %s when the bridge cannot answer", async onError => {
+ const f = fixture();
+ try {
+  const call = (await activePlugin(f.cwd, "enforce", { RC_GATE_ON_ERROR: onError })).get("tool_call");
+  const result = await call({ toolName: "bash", toolCallId: "boom", input: { command: "ls" } }, f.ctx);
+  if (onError === "open") {
+   expect(result?.block).toBeUndefined();
+   expect(result?.additionalContext).toContain("could not evaluate");
+  } else {
+   expect(result?.block).toBe(true);
+   expect(result?.reason).toBe("reasoning-core: bridge_unavailable");
+  }
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+const workerBlocked = (reason: string) => async () => ({ decision: "blocked", reason, decision_id: "id123456" });
+
+test.each(["open", "closed"])("plugin fails %s when the worker reports its own infrastructure failure", async onError => {
+  const f = fixture();
+  try {
+    const call = (await activePlugin(f.cwd, "enforce", { RC_GATE_ON_ERROR: onError },
+      workerBlocked("bridge_audit_unavailable"))).get("tool_call");
+    const result = await call({ toolName: "bash", toolCallId: "audit", input: { command: "ls" } }, f.ctx);
+    if (onError === "open") {
+      expect(result?.block).toBeUndefined();
+      expect(result?.additionalContext).toContain("bridge_audit_unavailable");
+    } else {
+      expect(result?.block).toBe(true);
+      expect(result?.reason).toBe("reasoning-core: bridge_audit_unavailable");
+    }
+  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("plugin keeps a worker policy refusal blocking when errors fail open", async () => {
+  const f = fixture();
+  try {
+    const call = (await activePlugin(f.cwd, "enforce", { RC_GATE_ON_ERROR: "open" },
+      workerBlocked("bash_screen_blocked"))).get("tool_call");
+    const result = await call({ toolName: "bash", toolCallId: "screen", input: { command: "ls" } }, f.ctx);
+    expect(result?.block).toBe(true);
+    expect(result?.reason).toBe("bash_screen_blocked");
+  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
+test("operator /rc flips mode and on-error, persists them, and takes live effect", async () => {
+ const f = fixture();
+ try {
+  const settings = join(f.cwd, "gate-settings.json");
+  await withEnv({ RC_GATE: undefined, RC_GATE_ON_ERROR: undefined, RC_GATE_SETTINGS: settings }, async () => {
+   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+   const handlers = new Map<string, any>();
+   const commands = new Map<string, any>();
+   extension({ on: (name: string, handler: any) => handlers.set(name, handler),
+    registerCommand: (name: string, command: any) => commands.set(name, command) },
+    async () => { throw Error("bridge unavailable"); });
+   mkdirSync(join(f.cwd, ".reasoning-core"), { recursive: true });
+   writeFileSync(join(f.cwd, ".reasoning-core", "omp-runtime.json"), JSON.stringify({
+    python: join(process.cwd(), ".venv/bin/python"), repo_root: process.cwd(),
+   }));
+   const notes: string[] = [];
+   const ctx = { ...f.ctx, ui: { notify: (message: string) => notes.push(message) } };
+   const rc = commands.get("rc");
+   const last = () => notes[notes.length - 1];
+   expect(rc).toBeDefined();
+   await rc.handler("", ctx);
+   expect(last()).toContain("mode=advisory [default]");
+   expect(last()).toContain("on-error=open [default]");
+   await rc.handler("mode enable", ctx);
+   expect(last()).toContain("mode=enforce [session]");
+   expect(JSON.parse(readFileSync(settings, "utf8")).mode).toBe("enforce");
+   await rc.handler("RC_GATE_ON_ERROR closed", ctx);
+   expect(last()).toContain("on-error=closed [session]");
+   expect(JSON.parse(readFileSync(settings, "utf8")).onError).toBe("closed");
+   const call = handlers.get("tool_call");
+   expect((await call({ toolName: "bash", toolCallId: "a", input: { command: "ls" } }, f.ctx))?.block).toBe(true);
+   await rc.handler("on-error open", ctx);
+   const soft = await call({ toolName: "bash", toolCallId: "b", input: { command: "ls" } }, f.ctx);
+   expect(soft?.block).toBeUndefined();
+   expect(soft?.additionalContext).toContain("could not evaluate");
+   await rc.handler("disable", ctx);
+   expect(await call({ toolName: "bash", toolCallId: "c", input: { command: "ls" } }, f.ctx)).toBeUndefined();
+   await rc.handler("bogus", ctx);
+   expect(last()).toContain("rc: (no args) status");
+   await rc.handler("reset", ctx);
+   expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual({});
+   expect(last()).toContain("mode=advisory");
+   expect(last()).toContain("on-error=open");
+  });
+ } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
