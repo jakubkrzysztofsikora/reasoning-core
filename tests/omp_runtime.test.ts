@@ -420,6 +420,23 @@ test("plugin keeps a worker policy refusal blocking when errors fail open", asyn
   } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
 
+test.each(["open", "closed"])("plugin degrades to %s after a failed session start", async onError => {
+  const f = fixture();
+  try {
+    const handlers = await activePlugin(f.cwd, "enforce", { RC_GATE_ON_ERROR: onError },
+      workerBlocked("bridge_audit_unavailable"));
+    await handlers.get("session_start")({}, f.ctx);
+    const result = await handlers.get("tool_call")({ toolName: "bash", toolCallId: "after", input: { command: "ls" } }, f.ctx);
+    if (onError === "open") {
+      expect(result?.block).toBeUndefined();
+      expect(result?.additionalContext).toContain("bridge_audit_unavailable");
+    } else {
+      expect(result?.block).toBe(true);
+      expect(result?.reason).toBe("reasoning-core: bridge_audit_unavailable");
+    }
+  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
+});
+
 test("operator /rc flips mode and on-error, persists them, and takes live effect", async () => {
  const f = fixture();
  try {

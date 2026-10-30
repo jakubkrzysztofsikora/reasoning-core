@@ -360,11 +360,13 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
   const announce = (reason: string) => {
     if (announced === reason) return;
     announced = reason;
-    api.logger?.warn?.(`reasoning-core gate advisory mode (${reason}): no reasoning-core decision blocks work`);
+    api.logger?.warn?.(`reasoning-core gate not enforcing (${reason})`);
   };
   const active = () => state.mode !== "off";
   const enforcing = (ctx: unknown): boolean => {
-    if (state.mode !== "enforce" || degraded) return false;
+    // A degraded session must still block under on-error closed: degrading is
+    // itself the fail-open answer, so it cannot outrank a fail-closed policy.
+    if (state.mode !== "enforce" || (degraded && failOpen())) return false;
     const runtime = runtimeConfig(strField(ctx, "cwd"));
     if (!runtime.active) { announce(runtime.reason); return false; }
     return true;

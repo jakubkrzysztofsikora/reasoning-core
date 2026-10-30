@@ -73,6 +73,7 @@ Every gate decision crosses the extension → bridge → worker boundary. The ta
 | `native_edit_prepare` | Policy refusal from rc | Blocked | Blocked |
 | `tool_result` (write) | Missing pending approval or refused receipt | Warning only (receipts never block) | Warning only |
 | `before_subagent_spawn` | Any handler error, including a worker-side infrastructure reply | Spawn allowed + advisory naming the reason | Blocked (`reasoning-core: <reason>`) |
+| `session_start` | Bridge/worker/audit failure | Session degrades to `advisory` for its lifetime — one warning, no later block | Session stays `enforce`: every gated route blocks with the reason |
 | `session_stop` | Bridge/worker/audit failure | Stop allowed + warning | Blocked (`reasoning-core session audit unavailable`) |
 | `session_stop` | Duplicate-review pipeline error | **Fail-open** (`dup_stop_fail_open`) — the dup oracle is advisory; a broken reviewer must not trap the session | Same |
 | `session_stop` | Policy refusal from rc | Blocked | Blocked |
