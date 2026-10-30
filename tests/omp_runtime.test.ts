@@ -149,34 +149,61 @@ test.each(["scoped", "plugin"])("%s adapter blocks session stop only for a polic
  } finally { rmSync(f.cwd, { recursive: true, force: true }); }
 });
 
-test("plugin never blocks when the runtime is missing or broken", async () => {
+const loadGate = async (mode: string, onError: string) => {
+  process.env.RC_GATE = mode;
+  process.env.RC_GATE_ON_ERROR = onError;
+  const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
+  const handlers = new Map<string, any>();
+  extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
+  return handlers;
+};
+
+test.each(["advisory", "enforce"])("%s mode warns and never blocks when the runtime is missing", async mode => {
  const f = fixture();
- const prior = process.env.RC_GATE;
+ const prior = [process.env.RC_GATE, process.env.RC_GATE_ON_ERROR];
  try {
-  for (const mode of ["advisory", "enforce"]) {
-   process.env.RC_GATE = mode;
-   const { default: extension } = await import("../integrations/omp-plugin/extensions/reasoning_core_gate");
-   const handlers = new Map<string, any>();
-   extension({ on: (name: string, handler: any) => handlers.set(name, handler) });
-   const stop = handlers.get("session_stop");
-   const start = handlers.get("session_start");
-   const call = handlers.get("tool_call");
-   expect(await stop({}, f.ctx)).toBeUndefined();
-   mkdirSync(join(f.cwd, ".reasoning-core"), { recursive: true });
-   writeFileSync(join(f.cwd, ".reasoning-core", "install.manifest"), "");
-   expect(await stop({}, f.ctx)).toBeUndefined();
-   expect(await call({ toolName: "task", input: {} }, f.ctx)).toBeUndefined();
-   writeFileSync(join(f.cwd, ".reasoning-core", "omp-owned.json"), "{}");
-   expect(await start({}, f.ctx)).toBeUndefined();
-   expect(await stop({}, f.ctx)).toBeUndefined();
-   expect(await call({ toolName: "bash", input: { command: "ls" } }, f.ctx)).toBeUndefined();
-   expect(await call({ toolName: "edit", input: {} }, f.ctx)).toEqual({
-    additionalContext: expect.stringContaining("reasoning-core advisory (native_edit_unavailable)"),
-   });
-  }
+  const handlers = await loadGate(mode, "open");
+  const stop = handlers.get("session_stop");
+  const start = handlers.get("session_start");
+  const call = handlers.get("tool_call");
+  expect(await stop({}, f.ctx)).toBeUndefined();
+  mkdirSync(join(f.cwd, ".reasoning-core"), { recursive: true });
+  writeFileSync(join(f.cwd, ".reasoning-core", "install.manifest"), "");
+  expect(await stop({}, f.ctx)).toBeUndefined();
+  expect(await call({ toolName: "task", input: {} }, f.ctx)).toBeUndefined();
+  writeFileSync(join(f.cwd, ".reasoning-core", "omp-owned.json"), "{}");
+  expect(await start({}, f.ctx)).toBeUndefined();
+  expect(await stop({}, f.ctx)).toBeUndefined();
+  expect(await call({ toolName: "bash", input: { command: "ls" } }, f.ctx)).toEqual({
+   additionalContext: expect.stringContaining("reasoning-core advisory (runtime_unresolved)"),
+  });
+  expect(await call({ toolName: "edit", input: {} }, f.ctx)).toEqual({
+   additionalContext: expect.stringContaining("reasoning-core advisory (native_edit_unavailable)"),
+  });
  } finally {
-  if (prior === undefined) delete process.env.RC_GATE;
-  else process.env.RC_GATE = prior;
+  if (prior[0] === undefined) delete process.env.RC_GATE; else process.env.RC_GATE = prior[0];
+  if (prior[1] === undefined) delete process.env.RC_GATE_ON_ERROR; else process.env.RC_GATE_ON_ERROR = prior[1];
+  rmSync(f.cwd, { recursive: true, force: true });
+ }
+});
+
+test("an unresolved runtime blocks when errors are closed", async () => {
+ const f = fixture();
+ const prior = [process.env.RC_GATE, process.env.RC_GATE_ON_ERROR];
+ try {
+  const handlers = await loadGate("enforce", "closed");
+  await handlers.get("session_start")({}, f.ctx);
+  expect(await handlers.get("tool_call")({ toolName: "bash", toolCallId: "r1", input: { command: "ls" } }, f.ctx)).toEqual({
+   block: true,
+   reason: "reasoning-core: runtime_unresolved",
+  });
+  expect(await handlers.get("session_stop")({}, f.ctx)).toEqual({
+   decision: "block",
+   reason: "reasoning-core session audit unavailable",
+  });
+ } finally {
+  if (prior[0] === undefined) delete process.env.RC_GATE; else process.env.RC_GATE = prior[0];
+  if (prior[1] === undefined) delete process.env.RC_GATE_ON_ERROR; else process.env.RC_GATE_ON_ERROR = prior[1];
   rmSync(f.cwd, { recursive: true, force: true });
  }
 });

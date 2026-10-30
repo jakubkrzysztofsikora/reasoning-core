@@ -7,7 +7,7 @@ Enforcement gates + advisor evidence feed for the [omp](https://github.com/badlo
 - **Gate extension** (`extensions/reasoning_core_gate.ts`) — loads in every omp session. Two knobs, each resolved `env > settings file > default`:
   - `mode` — `off` (registers no handlers; stock omp behavior), `advisory` (default), `enforce`.
     - `advisory` — every gated route is evaluated and nothing blocks. A policy refusal comes back as `additionalContext` (`reasoning-core advisory (policy_downgraded): would have blocked: <reason>`); infrastructure failures are logged once and the call proceeds.
-    - `enforce` — a policy refusal blocks. Needs a resolved runtime; without `.reasoning-core/omp-runtime.json` the session degrades to `advisory`.
+    - `enforce` — a policy refusal blocks. An unresolved runtime is an infrastructure failure like any other, so it warns and proceeds under `on-error open` and blocks under `on-error closed`.
   - `on-error` — `open` (default) or `closed`. Controls what happens when the gate cannot decide: bridge down, timeout, malformed reply, unresolved runtime, handler exception, or a worker-side failure (audit append, screen crash, scoring sidecar). `open` allows the call and warns with the reason; `closed` blocks it. A gate that cannot decide reports; only `on-error closed` makes that fatal.
   - Env: `RC_GATE=off|advisory|enforce`, `RC_GATE_ON_ERROR=open|closed`.
   - Settings file: `~/.omp/agent/reasoning-core-gate.json` (`{"mode": "...", "onError": "..."}`), written by `/rc`. Override the path with `RC_GATE_SETTINGS`.
@@ -79,7 +79,7 @@ Every gate decision crosses the extension → bridge → worker boundary. The ta
 | `session_stop` | Policy refusal from rc | Blocked | Blocked |
 | `advisor_cost_changed` / `advisor_yielded` | Any failure (bridge, worker, audit) | **Fail-open, always** — observational ledger rows; the gate swallows every error so advisor status updates are never disrupted | Same |
 
-Infrastructure reasons, the ones `on-error` governs, are `bridge_unavailable`, `bridge_timeout`, `bridge_process_failed`, `invalid_bridge_output`, `invalid_bridge_response`, `invalid_event`, `bridge_audit_unavailable`, `guard_evaluation_failed`, `bash_screen_error`, `sidecar_unavailable`, `sidecar_auth_failed` and `invalid_score_report`. Every other blocked reason is a policy refusal and blocks in both `on-error` modes.
+Infrastructure reasons, the ones `on-error` governs, are `bridge_unavailable`, `bridge_timeout`, `bridge_process_failed`, `invalid_bridge_output`, `invalid_bridge_response`, `invalid_event`, `bridge_audit_unavailable`, `guard_evaluation_failed`, `bash_screen_error`, `sidecar_unavailable`, `sidecar_auth_failed`, `invalid_score_report` and `runtime_unresolved`. Every other blocked reason is a policy refusal and blocks in both `on-error` modes.
 
 Known OMP internal URL writes use OMP scheme-specific write approval. OMP
 rejects unknown URI-like write targets before dispatch.

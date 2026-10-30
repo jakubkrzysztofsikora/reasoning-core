@@ -363,13 +363,12 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     api.logger?.warn?.(`reasoning-core gate not enforcing (${reason})`);
   };
   const active = () => state.mode !== "off";
-  const enforcing = (ctx: unknown): boolean => {
+  const enforcing = (_ctx: unknown): boolean => {
     // A degraded session must still block under on-error closed: degrading is
     // itself the fail-open answer, so it cannot outrank a fail-closed policy.
-    if (state.mode !== "enforce" || (degraded && failOpen())) return false;
-    const runtime = runtimeConfig(strField(ctx, "cwd"));
-    if (!runtime.active) { announce(runtime.reason); return false; }
-    return true;
+    // An unresolved runtime is an infrastructure failure, not a mode: the
+    // routes report it as `runtime_unresolved` and on-error decides.
+    return state.mode === "enforce" && !(degraded && failOpen());
   };
   const failOpen = () => state.onError === "open";
   const emitted = new Set<string>();
@@ -392,6 +391,7 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     "invalid_bridge_output", "invalid_bridge_response", "invalid_event",
     "bridge_audit_unavailable", "guard_evaluation_failed", "bash_screen_error",
     "sidecar_unavailable", "sidecar_auth_failed", "invalid_score_report",
+    "runtime_unresolved",
   ]);
   // prepare() mirrors the strict protocol and tags every reply infra:true, so
   // policy blocks there are told apart by reason text, not the flag.
@@ -540,7 +540,7 @@ export default function reasoningCoreGate(api: any, bridge: (event: any, options
     const path = strField(objField(event, "input"), "path");
     if (toolName === "write" && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(path) && !/^file:/i.test(path)) return;
     const runtime = runtimeConfig(strField(ctx, "cwd"));
-    if (!runtime.active) { announce(runtime.reason); return; }
+    if (!runtime.active) return unreviewed(toolName, ctx, "runtime_unresolved", runtime.reason);
     let reply: any;
     try {
       reply = toolName === "bash" ? await gate.bash(event, ctx) : await gate.writePrepare(event, ctx);
