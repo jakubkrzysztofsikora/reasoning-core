@@ -20,7 +20,7 @@ test("real EditTool requests whole batch before any write and publishes failure 
     prepareNativeEdit: async (event: any) => {
       prepared = event;
       expect(readFileSync(join(cwd, "first.py"), "utf8")).toBe("a\n");
-      return { allowed: false, finalInputSha256: event.batch.finalInputSha256 };
+      return { allowed: false, finalInputSha256: event.batch.finalInputSha256, batchSha256: event.batch.batchSha256 };
     },
     resultNativeEdit: async (event: any) => { result = event; },
   };
@@ -86,13 +86,14 @@ test.each(["missing", "throw", "malformed", "stale"])("runner fails closed for %
   identity = { agent: ctx.agent, session: ctx.sessionManager.getSessionId() };
   if (mode === "throw") throw Error("failed");
   if (mode === "missing") return;
-  return { allowed: true, finalInputSha256: mode === "stale" ? "other" : undefined };
+  return { allowed: true, finalInputSha256: mode === "stale" ? "other" : undefined,
+    batchSha256: event.batch.batchSha256 };
  };
  const runner = new ExtensionRunner([{ path: "guard", handlers: new Map([["native_edit_prepare", [handler]]]) }],
   { flagValues: new Map(), pendingProviderRegistrations: [] }, "/tmp", manager, {},
   undefined, undefined, undefined, undefined, { kind: "main", id: "parent", name: "parent", depth: 0 });
  const result = await runner.emitNativeEdit({ type: "native_edit_prepare", toolCallId: "call",
-  batch: { finalInputSha256: "bound", candidates: [] } }, "advisor-session", "advisor");
+  batch: { finalInputSha256: "bound", batchSha256: "bound-batch", candidates: [] } }, "advisor-session", "advisor");
  expect(result.allowed).toBe(false);
  expect(identity.agent.id).toBe("advisor");
  expect(identity.agent.parentId).toBe("parent");
@@ -116,7 +117,7 @@ test("guarded host serializes concurrent sessions in the same project", async ()
    prepareNativeEdit: async (event: any) => {
     calls.push(event.toolCallId);
     if (event.toolCallId === "first") { started(); await pending; }
-    return { allowed: true, finalInputSha256: event.batch.finalInputSha256 };
+    return { allowed: true, finalInputSha256: event.batch.finalInputSha256, batchSha256: event.batch.batchSha256 };
    }, resultNativeEdit: async () => {},
   });
   const input = (file: string) => ({ input: "*** Begin Patch\n*** Update File: " + file + "\n@@\n-x = 1\n+x = 2\n*** End Patch" });
@@ -141,7 +142,7 @@ test("guarded host refuses internal URL resolution and disables automatic model 
    getSessionId: () => "session", getPlanModeState: () => undefined,
    hasNativeEditGuard: () => true,
    modelRegistry: { getAvailable: () => { repairCalls++; throw Error("unqualified provider"); } },
-   prepareNativeEdit: async (event: any) => { approvals++; return { allowed: true, finalInputSha256: event.batch.finalInputSha256 }; },
+   prepareNativeEdit: async (event: any) => { approvals++; return { allowed: true, finalInputSha256: event.batch.finalInputSha256, batchSha256: event.batch.batchSha256 }; },
    resultNativeEdit: async () => {},
   };
   const tool = new EditTool(session, "apply_patch");
@@ -240,27 +241,33 @@ test("actual OS failure publishes the landed prefix through runtime filesystem r
  } finally { chmodSync(blockedDir, 0o755); rmSync(cwd, { recursive: true, force: true }); }
 });
 
-test("normal CLI probe discovers installed guard without invoking a model", async () => {
+test("normal CLI probe honors explicit project registration without invoking a model", async () => {
  const { mkdirSync } = await import("node:fs");
  const { spawnSync } = await import("node:child_process");
  const cwd = mkdtempSync(join(tmpdir(), "rc CLI probe "));
  const profile = join(cwd, "profile"); mkdirSync(profile);
+ const isolatedHome = join(cwd, "home"); mkdirSync(isolatedHome);
  try {
   const installed = spawnSync(join(process.cwd(), ".venv/bin/python"), ["-c",
     "import sys; from pathlib import Path; from src._init import InitResult; from src._omp_install import install_omp; p=Path(sys.argv[1]); m=p/'.reasoning-core/install.manifest'; m.parent.mkdir(); m.touch(); install_omp(p,m,{'RC_PYTHON':sys.executable,'RC_REPO':sys.argv[2]},InitResult(p),strict=True)", cwd, process.cwd()], { encoding: "utf8" });
   expect(installed.status).toBe(0);
-  const probeEnv = { ...process.env };
+  writeFileSync(join(cwd, ".gitignore"), ".omp/extensions/\n");
+  writeFileSync(join(cwd, ".omp/config.yml"),
+    "extensions:\n  - .omp/extensions/reasoning_core_gate.ts\n");
+  const probeEnv = { ...process.env, HOME: isolatedHome,
+    PI_CODING_AGENT_DIR: profile, OMP_PROFILE: "qualification" };
   delete probeEnv.RC_ALLOW_GUARD_EDIT;
   delete probeEnv.RC_LANG_OVERRIDE;
   const probe = spawnSync(process.execPath, [join(upstream, "packages/coding-agent/src/cli.ts"), "--rc-native-probe"], {
     cwd, input: JSON.stringify({ project_dir: cwd, qualify: true }), encoding: "utf8", timeout: 40000,
-    env: { ...probeEnv, PI_CODING_AGENT_DIR: profile, OMP_PROFILE: "qualification" },
+    env: probeEnv,
   });
   expect(probe.status).toBe(0);
   const result = JSON.parse(probe.stdout);
   expect(result.loaded).toBe(true);
   expect(result.native_protocol).toBe(1);
   expect(result.version).toBe(compat.upstream_version);
+  expect(result.source_sha).toBe(compat.upstream_source_sha);
   expect(result.model_invoked).toBe(false);
   expect(result.adapter_path).toBe(join(realpathSync(cwd), ".omp/extensions/reasoning_core_gate.ts"));
   expect(result.native_sha256).toMatch(/^[0-9a-f]{64}$/);

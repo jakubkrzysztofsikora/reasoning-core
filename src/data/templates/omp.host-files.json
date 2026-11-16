@@ -1,12 +1,12 @@
 {
-  "packages/coding-agent/src/edit/index.ts": "3c242cbb299a1403a73cc1c8e41985cffe9312e72bc970d2a328cd62c297e7ed",
-  "packages/coding-agent/src/tools/index.ts": "eb3ceb86a19851a4112fdc88b71f2e69d9144d06ed3c0153f3fe8330653d7b8e",
-  "packages/coding-agent/src/sdk.ts": "852961f24b66e084e099dc896c5ebef3de965e2bfb83b8513e35e286bf6e0547",
-  "packages/coding-agent/src/extensibility/extensions/types.ts": "83e75b31b09cd0dd918a86dcfb0f10fb1e794f29ae03c445b8043887ca48b0c4",
-  "packages/coding-agent/src/extensibility/extensions/runner.ts": "e3aa5f0232350961c12d3ec7b8a3f1492742551525cd08218dc82d3ed98d52f8",
-  "packages/coding-agent/src/extensibility/extensions/loader.ts": "e7f1442943d91a47a8cebe37c8d925eedc0aa6f83cfea1f3c8ef34b64ee54912",
-  "packages/natives/native/index.d.ts": "53641ccf6bd36e69e0cce83d9c7187e061d9b0f6e9bcc9f5bca625b3ba32b8ee",
-  "packages/natives/native/index.js": "34c00a5483143fa53910b3c3cfe75c513652b4487813349633746d04edb86683",
-  "packages/coding-agent/src/cli.ts": "32c785dbc800bfaf82e38f46bd99d3870360a9481d12d0a348d7275ecb1f7f09",
-  "packages/coding-agent/src/cli/rc-native-probe.ts": "fbacedc431e43f9a63e8ff361d36e5ef9136479905835be49fcdf4645224fca1"
+  "packages/coding-agent/src/cli.ts": "adb22772e8a1a6bf51b8ce25d3e555aeaa9302947f4df18cdaa97a664eec2976",
+  "packages/coding-agent/src/cli/rc-native-probe.ts": "291469554aaf591b015c830bb403f081aa44e13656ee917fefad4964e2b73075",
+  "packages/coding-agent/src/edit/index.ts": "aeaefba8f1147364bb72bf3520785fca57f6f67dd64898943fd86c73c9258678",
+  "packages/coding-agent/src/extensibility/extensions/loader.ts": "3436d01d4401a03429f59c9063ee73706290e9b5f70ed931392ceca3342bde6b",
+  "packages/coding-agent/src/extensibility/extensions/runner.ts": "fc1c46d2528f637d1c517e03e31291da6b41978f6aa89310b65f8bb4003dc4dd",
+  "packages/coding-agent/src/extensibility/extensions/types.ts": "fadbc5f5b702b78fd533afda99ae14e0fe02e2cdd07c20f33cbd5f8e6ff67e61",
+  "packages/coding-agent/src/sdk.ts": "af53e16df686697c5c79f418b13b5df77dbe98906cbb87c9c49356031aa709f8",
+  "packages/coding-agent/src/tools/index.ts": "663fd13abe64ded7a1714db142c30373836cab9d8e6e5b77b3ac87f260db00b0",
+  "packages/natives/native/index.d.ts": "8c9fc5c01feebd39ecaddd5c9ffcca46a38326a7a632e402eefa5816fd7cdb63",
+  "packages/natives/native/index.js": "6175bbdee8de2324346913ffb3b82dc15c323fee61e110f719506cea1769cd8a"
 }

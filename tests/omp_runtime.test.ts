@@ -12,7 +12,7 @@ function fixture() {
   const ctx = { cwd, agent: { id: "child", parentId: "parent" },
     sessionManager: { getSessionId: () => "session-child" } };
   const event = { type: "native_edit_prepare", toolCallId: "call",
-    batch: { finalInputSha256: hash("args"), candidates: [{ path: file,
+    batch: { finalInputSha256: hash("args"), batchSha256: hash("batch"), candidates: [{ path: file,
       operation: "write", beforeSrc: "old\n", afterSrc: "new\n",
       expectedBeforeSha256: hash("old\n") }] } };
   return { cwd, file, ctx, event };
@@ -26,7 +26,8 @@ describe("session native guard adapter", () => {
         return { decision: "allowed", reason: "checks", decision_id: "id", ...bindings(wire.batch) };
       });
       const result = await gate.prepare(f.event, f.ctx);
-      expect(result).toEqual({ allowed: true, finalInputSha256: f.event.batch.finalInputSha256 });
+      expect(result).toEqual({ allowed: true, finalInputSha256: f.event.batch.finalInputSha256,
+        batchSha256: f.event.batch.batchSha256 });
       expect(seen.batch.agent_id).toBe("child");
       expect(seen.batch.parent_agent_id).toBe("parent");
       expect(seen.batch.session_id).toBe("session-child");

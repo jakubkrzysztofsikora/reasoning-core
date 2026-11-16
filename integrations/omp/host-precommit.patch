@@ -1,6 +1,8 @@
+diff --git a/packages/coding-agent/src/cli.ts b/packages/coding-agent/src/cli.ts
+index facbe77..350b148 100755
 --- a/packages/coding-agent/src/cli.ts
 +++ b/packages/coding-agent/src/cli.ts
-@@ -537,6 +537,7 @@
+@@ -542,6 +542,7 @@ export async function runCli(argv: string[]): Promise<void> {
  	// typed during initialization stays buffered. Neither graph is needed to
  	// produce that frame.
  	const helpOrVersion =
@@ -8,7 +10,7 @@
  		resolvedArgv[0] === "--help" ||
  		resolvedArgv[0] === "-h" ||
  		resolvedArgv[0] === "--version" ||
-@@ -544,6 +545,12 @@
+@@ -549,6 +550,12 @@ export async function runCli(argv: string[]): Promise<void> {
  		resolvedArgv[0] === "help";
  	await Promise.all([setFullProcessName(), helpOrVersion ? Promise.resolve() : installNetworkBootstrap()]);
  
@@ -21,163 +23,66 @@
  	if (resolvedArgv[0] === "--smoke-test") {
  		await runSmokeTest();
  		return;
---- a/packages/coding-agent/src/cli/rc-native-probe.ts
-+++ b/packages/coding-agent/src/cli/rc-native-probe.ts
-@@ -0,0 +1,120 @@
-+import { createHash } from "node:crypto";
-+import { readFileSync, realpathSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-+import { join, resolve } from "node:path";
-+import { tmpdir } from "node:os";
-+import { Database } from "bun:sqlite";
-+import { buildModel } from "@oh-my-pi/pi-catalog/build";
-+import { editPrecommitProtocol, nativeAddonStatus } from "@oh-my-pi/pi-natives";
-+import { VERSION } from "@oh-my-pi/pi-utils/dirs";
-+import { ModelRegistry } from "../config/model-registry";
-+import { Settings } from "../config/settings";
-+import { AuthStorage, SqliteAuthCredentialStore } from "../session/auth-storage";
-+import { SessionManager } from "../session/session-manager";
-+import { createAgentSession } from "../sdk";
-+
-+const hostFiles = ["packages/coding-agent/src/cli.ts","packages/coding-agent/src/cli/rc-native-probe.ts","packages/coding-agent/src/edit/index.ts","packages/coding-agent/src/extensibility/extensions/loader.ts","packages/coding-agent/src/extensibility/extensions/runner.ts","packages/coding-agent/src/extensibility/extensions/types.ts","packages/coding-agent/src/sdk.ts","packages/coding-agent/src/tools/index.ts","packages/natives/native/index.d.ts","packages/natives/native/index.js"];
-+const sha = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
-+export async function runNativeProbe(): Promise<void> {
-+ let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
-+ let auth: AuthStorage | undefined;
-+ const scratch = mkdtempSync(join(tmpdir(), "omp-rc-probe-"));
-+ try {
-+   const raw = await Bun.stdin.text();
-+   if (Buffer.byteLength(raw) > 65536) throw new Error("probe input limit");
-+   const input = JSON.parse(raw);
-+   const cwd = realpathSync(input.project_dir);
-+   const adapter = join(cwd, ".omp/extensions/reasoning_core_gate.ts");
-+   auth = new AuthStorage(new SqliteAuthCredentialStore(new Database(":memory:")));
-+   const modelRegistry = new ModelRegistry(auth, join(scratch, "models.yml"));
-+   const settings = await Settings.init({ cwd, inMemory: true });
-+   const model = buildModel({ id: "rc-no-provider", name: "RC no-provider probe", api: "openai-completions" as const,
-+     provider: "rc-qualification", baseUrl: "http://127.0.0.1:1",
-+     reasoning: false, input: ["text" as const], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-+     contextWindow: 8192, maxTokens: 1024 });
-+   const created = await createAgentSession({
-+     cwd, authStorage: auth, modelRegistry, model, settings, sessionManager: SessionManager.inMemory(cwd),
-+     skills: [], contextFiles: [], promptTemplates: [], slashCommands: [], enableMCP: false,
-+     enableLsp: false, skipPythonPreflight: true, rules: [], preloadedCustomToolPaths: [],
-+     toolNames: ["read", "edit", "task"], agentId: "rc-native-probe",
-+   });
-+   session = created.session;
-+   const owned = created.extensionsResult.extensions.find(extension => {
-+     try { return extension.resolvedPath && realpathSync(extension.resolvedPath) === adapter; } catch { return false; }
-+   });
-+   const native = nativeAddonStatus();
-+   const compiled = import.meta.url.includes("$bunfs");
-+   const files = compiled ? undefined : Object.fromEntries(hostFiles.map(path =>
-+     [path, sha(resolve(import.meta.dir, "../../../..", path))]));
-+   const hostSha = compiled ? sha(process.execPath) : createHash("sha256")
-+     .update(hostFiles.map(path => path + ":" + files![path]).join("\n")).digest("hex");
-+   const configurationSha = createHash("sha256").update(JSON.stringify({
-+     global: settings.getGlobalSettings(), project: settings.getProjectSettings(),
-+   })).digest("hex");
-+   const report = { host_configuration_sha256: configurationSha, host_kind: compiled ? "binary" : "source", host_sha256: hostSha, host_files: files, schema_version: 1, version: VERSION, source_sha: "96894a6147d8cc64b7e00ad3a7d7178fd93b9531",
-+     native_protocol: editPrecommitProtocol?.() ?? 0, model_invoked: false,
-+     loaded: !!owned && session.hasExtensionHandlers("native_edit_prepare") && session.hasExtensionHandlers("native_edit_result"),
-+     adapter_path: adapter, adapter_sha256: sha(adapter), native_sha256: native ? sha(native.path) : null };
-+   if (input.qualify === true && report.loaded) {
-+     const probeFile = join(cwd, "omp-qualification-probe.py");
-+     writeFileSync(probeFile, "x = 1\n", { flag: "wx" });
-+     let child: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
-+     try {
-+       const edit = session.getToolByName("edit")!;
-+       const header = async (path: string, target = created.session) => {
-+         const result = await target.getToolByName("read")!.execute("rc-read-" + path, { path });
-+         const text = result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
-+         const match = text.match(/\[[^\n]+#[^\]]+\]/);
-+         if (!match) throw new Error("hashline read header unavailable");
-+         return match[0];
-+       };
-+       const allowHeader = await header("omp-qualification-probe.py");
-+       const allow = await edit.execute("rc-qualify-allow", { input: allowHeader + "\nPUT 1:\n+x = 2" });
-+       const beforeDeny = sha(probeFile);
-+       const metadata = join(cwd, ".reasoning-core/omp-owned.json");
-+       const beforeGuard = sha(metadata);
-+       const denyHeader = await header("omp-qualification-probe.py");
-+       const guardHeader = await header(".reasoning-core/omp-owned.json");
-+       const deny = await edit.execute("rc-qualify-deny", {
-+         input: denyHeader + "\nPUT 1:\n+x = 3\n" + guardHeader + "\nPUT 1:\n+{}",
-+       });
-+       const childCwd = join(scratch, "child"); mkdirSync(join(childCwd, ".reasoning-core"), { recursive: true });
-+       writeFileSync(join(childCwd, ".reasoning-core/omp-owned.json"), "{}\n");
-+       ({ session: child } = await createAgentSession({
-+         cwd: childCwd, authStorage: auth, modelRegistry, model, settings,
-+         sessionManager: SessionManager.inMemory(childCwd), skills: [], contextFiles: [],
-+         promptTemplates: [], slashCommands: [], enableMCP: false, enableLsp: false,
-+         skipPythonPreflight: true, rules: [], preloadedCustomToolPaths: [],
-+         toolNames: ["read", "edit"], agentId: "rc-native-child", parentAgentId: "rc-native-probe",
-+         taskDepth: 1, preloadedPreparedExtensions: session.preparedExtensions,
-+       }));
-+       const childHeader = await header(".reasoning-core/omp-owned.json", child);
-+       const childDeny = await child.getToolByName("edit")!.execute("rc-qualify-child", {
-+         input: childHeader + "\nPUT 1:\n+{\"changed\": true}",
-+       });
-+       const handlers = owned!.handlers;
-+       const restricted = ["bash", "python", "write", "ast", "lsp", "task", "custom_mutator"];
-+       const restrictions = await Promise.all(restricted.map(async toolName => {
-+         const results = await Promise.all((handlers.get("tool_call") ?? []).map(handler =>
-+           handler({ type: "tool_call", toolName, toolCallId: "rc-restrict", input: {} } as never, {} as never)));
-+         return results.some(result => result && typeof result === "object" && "block" in result && result.block === true);
-+       }));
-+       let taskBlocked = false;
-+       try { await session.getToolByName("task")!.execute("rc-merge", { agent: "task", task: "modify file", isolated: true }); }
-+       catch (error) { taskBlocked = String(error).includes("no qualified prepared-mutation boundary"); }
-+       Object.assign(report, { evidence: {
-+         allowed_write: allow.isError !== true && readFileSync(probeFile, "utf8") === "x = 2\n",
-+         denied_unchanged: deny.isError === true && sha(probeFile) === beforeDeny && sha(metadata) === beforeGuard,
-+         child_guard_retained: child.hasExtensionHandlers("native_edit_prepare") && childDeny.isError === true &&
-+           readFileSync(join(childCwd, ".reasoning-core/omp-owned.json"), "utf8") === "{}\n",
-+         restrictions_verified: restrictions.every(Boolean) && taskBlocked,
-+       }, session_id: session.sessionId, child_session_id: child.sessionId, edit_mode: "hashline" });
-+     } finally { await child?.dispose(); rmSync(probeFile, { force: true }); }
-+   }
-+   console.log(JSON.stringify(report));
-+ } catch {
-+   console.log(JSON.stringify({ schema_version: 1, loaded: false, model_invoked: false, error: "probe_failed" }));
-+   process.exitCode = 1;
-+ } finally {
-+   await session?.dispose(); auth?.close(); rmSync(scratch, { recursive: true, force: true });
-+ }
-+}
+diff --git a/packages/coding-agent/src/edit/index.ts b/packages/coding-agent/src/edit/index.ts
+index f5402fd..e3983f1 100644
 --- a/packages/coding-agent/src/edit/index.ts
 +++ b/packages/coding-agent/src/edit/index.ts
-@@ -1,4 +1,5 @@
--import { mkdir } from "node:fs/promises";
+@@ -1,3 +1,5 @@
 +import { realpathSync } from "node:fs";
 +import { mkdir, unlink, writeFile } from "node:fs/promises";
+ import * as fs from "node:fs/promises";
  import * as os from "node:os";
  import * as path from "node:path";
- import type {
-@@ -169,6 +170,23 @@
- 			? (editDescriptionCompact(mode) ?? editDescription(mode))
- 			: editDescription(mode);
+@@ -50,6 +52,7 @@ import { attemptEditAutoRepair, type EditAutoRepairOutcome } from "./auto-repair
+ import { type AppliedEditSnapshot, createEditBlackboxRecorder } from "./blackbox";
+ import hashlineCompactPrompt from "./hashline-compact.md" with { type: "text" };
+ import { getLspBatchRequest } from "../lsp/batch";
++import { invalidate as invalidateFsCache } from "../capability/fs";
+ import { type EditToolDetails, type EditToolPerFileResult, type Operation } from "@oh-my-pi/pi-tui/tools/edit";
+ import {
+ 	type ApplyPatchParams,
+@@ -168,6 +171,40 @@ export function resolveEditToolDescription(
  	return prompt.render(source);
-+}
-+
-+const projectEditQueues = new Map<string, Promise<void>>();
-+async function acquireProjectEditLock(cwd: string, signal?: AbortSignal): Promise<() => void> {
-+ const key = realpathSync(cwd);
-+ const previous = projectEditQueues.get(key) ?? Promise.resolve();
-+ let unlock!: () => void;
-+ const held = new Promise<void>(resolve => { unlock = resolve; });
-+ const queued = previous.then(() => held);
-+ projectEditQueues.set(key, queued);
-+ await previous;
-+ const release = () => {
-+   unlock();
-+   if (projectEditQueues.get(key) === queued) projectEditQueues.delete(key);
-+ };
-+ if (signal?.aborted) { release(); throw new Error("Native edit cancelled while queued"); }
-+ return release;
  }
  
++const projectEditQueues = new Map<string, Promise<void>>();
++async function acquireProjectEditLock(cwd: string, signal?: AbortSignal): Promise<() => void> {
++	const key = (() => {
++		try {
++			return realpathSync(cwd);
++		} catch {
++			return path.resolve(cwd);
++		}
++	})();
++	const previous = projectEditQueues.get(key) ?? Promise.resolve();
++	let unlock!: () => void;
++	const held = new Promise<void>(resolve => {
++		unlock = resolve;
++	});
++	const queued = previous.then(() => held);
++	projectEditQueues.set(key, queued);
++	try {
++		await previous;
++	} catch (error) {
++		// A rejected predecessor must not poison the queue for this project.
++		if (projectEditQueues.get(key) === queued) projectEditQueues.delete(key);
++		throw error;
++	}
++	const release = () => {
++		unlock();
++		if (projectEditQueues.get(key) === queued) projectEditQueues.delete(key);
++	};
++	if (signal?.aborted) {
++		release();
++		throw new Error("Native edit cancelled while queued");
++	}
++	return release;
++}
++
  /** Builds the LSP writethrough from the current `lsp.*` settings; called per write so changes apply immediately. */
-@@ -490,27 +508,46 @@
+ function createEditWritethrough(session: ToolSession): WritethroughCallback {
+ 	const enableLsp = session.enableLsp ?? true;
+@@ -540,28 +577,91 @@ export class EditTool implements AgentTool<TInput> {
  			open.native.finish();
  		}
  		const editSession = open.native;
@@ -185,29 +90,62 @@
 +		const guarded = this.session.hasNativeEditGuard?.() === true;
 +		const batch = guarded ? undefined : getLspBatchRequest(context?.toolCall);
  		let outcome;
-+   let release = () => {};
-+   let receiptSent = false;
-+   let denial: { reason?: string; decisionId?: string } | undefined;
-+   const sendReceipt = async (success: boolean, error: string | null) => {
-+     if (!guarded || receiptSent) return;
-+     receiptSent = true;
-+     if (!this.session.resultNativeEdit) throw new Error("Native edit receipt dispatch unavailable");
-+     await this.session.resultNativeEdit({ type: "native_edit_result", toolCallId, success, error });
-+   };
++		let release = () => {};
++		let receiptSent = false;
++		let denial: { reason?: string; decisionId?: string } | undefined;
++		const sendReceipt = async (success: boolean, error: string | null) => {
++			if (!guarded || receiptSent) return;
++			receiptSent = true;
++			if (!this.session.resultNativeEdit) {
++				logger.warn("Native edit receipt dispatch unavailable", { toolCallId });
++				return;
++			}
++			try {
++				await this.session.resultNativeEdit({ type: "native_edit_result", toolCallId, success, error });
++			} catch (receiptError) {
++				// The write already happened; a failed receipt must not be reported
++				// as a failed edit, but it must stay visible.
++				logger.warn("Native edit receipt failed", {
++					toolCallId,
++					error: receiptError instanceof Error ? receiptError.message : String(receiptError),
++				});
++			}
++		};
  		try {
 +			if (guarded) release = await acquireProjectEditLock(this.session.cwd, signal);
  			outcome = await editSession.apply(
  				{ lspBatchId: batch?.id, lspFlush: batch?.flush ?? false },
 -				(_error, request) => this.#write(request, signal),
 +				(_error, request) => this.#write(request, signal, guarded),
-+       guarded ? async (error, batch) => {
-+         if (error || !this.session.prepareNativeEdit) return { allowed: false, finalInputSha256: batch.finalInputSha256 };
-+         const approval = await this.session.prepareNativeEdit({ type: "native_edit_prepare", toolCallId, batch }, signal);
-+         if (approval?.allowed === false) denial = approval;
-+         return approval;
-+       } : undefined,
++				guarded
++					? async (error, prepared) => {
++							if (error) {
++								return {
++									allowed: false,
++									finalInputSha256: prepared.finalInputSha256,
++									batchSha256: prepared.batchSha256,
++								};
++							}
++							if (!this.session.prepareNativeEdit) {
++								throw new Error("Native edit approval adapter unavailable");
++							}
++							const approval = await this.session.prepareNativeEdit(
++								{ type: "native_edit_prepare", toolCallId, batch: prepared },
++								signal,
++							);
++							if (approval?.allowed === false) denial = approval;
++							// The native engine refuses an approval that does not echo
++							// both digests; bind them to the prepared batch here so a
++							// malformed host verdict fails closed instead of silently.
++							return {
++								allowed: approval?.allowed === true,
++								finalInputSha256: approval?.finalInputSha256 ?? prepared.finalInputSha256,
++								batchSha256: approval?.batchSha256 ?? prepared.batchSha256,
++							};
++						}
++					: undefined,
  			);
-+			await sendReceipt(!outcome.isError, outcome.isError ? outcome.text : null);
++			await sendReceipt(!outcome.isError, outcome.isError ? "native_write_failed" : null);
  			if (outcome.isError && batch?.flush) {
  				await flushLspWritethroughBatch(batch.id, this.session.cwd, signal);
  			}
@@ -217,18 +155,30 @@
  			throw error;
  		} finally {
 -			editSession.close();
-+			try { editSession.close(); } finally { release(); }
++			try {
++				editSession.close();
++			} finally {
++				release();
++			}
  			if (this.#sessions.get(toolCallId) === open) this.#sessions.delete(toolCallId);
  			this.#streamedArgs.delete(toolCallId);
  		}
  
  		if (outcome.isError) {
--			return { content: [{ type: "text", text: outcome.text }], isError: true };
-+			return { content: [{ type: "text", text: denial ? `reasoning-core: ${denial.reason ?? "native_approval_denied"}${denial.decisionId ? "; rc explain " + denial.decisionId : ""}` : outcome.text }], isError: true };
- 		}
- 
- 		const details = aggregateDetails(outcome.files, this.mode);
-@@ -521,6 +558,7 @@
+ 			return {
+-				content: [{ type: "text", text: outcome.text }],
++				content: [
++					{
++						type: "text",
++						text: denial
++							? `reasoning-core: ${denial.reason ?? "native_approval_denied"}${denial.decisionId ? "; rc explain " + denial.decisionId : ""}`
++							: outcome.text,
++					},
++				],
+ 				details: { diff: "", errorKind: outcome.errorKind },
+ 				isError: true,
+ 			};
+@@ -575,6 +675,7 @@ export class EditTool implements AgentTool<TInput> {
  		const record = createEditBlackboxRecorder(this.session, this.mode, params);
  		const notes: string[] = [];
  		for (const file of outcome.files) {
@@ -236,44 +186,56 @@
  			if (!file.parseRegressed || file.oldText === undefined || file.newText === undefined) continue;
  			const snapshot: AppliedEditSnapshot = {
  				path: file.moveTo ?? file.path,
-@@ -626,6 +664,7 @@
+@@ -681,6 +782,8 @@ export class EditTool implements AgentTool<TInput> {
  	 * address whole files.
  	 */
  	async #resolveUrl(url: string, context: ResolveContext): Promise<EditUrlResolution> {
-+		if (this.session.hasNativeEditGuard?.()) return { error: "Internal URL edits are not qualified", planWritable: false };
++		if (this.session.hasNativeEditGuard?.())
++			return { error: "Internal URL edits are not qualified", planWritable: false };
  		const router = InternalUrlRouter.instance();
  		try {
  			const target = router.peelWriteSelector(url, "edit");
-@@ -643,7 +682,28 @@
+@@ -698,7 +801,37 @@ export class EditTool implements AgentTool<TInput> {
  		}
  	}
  
 -	async #write(request: EditWriteRequest, signal?: AbortSignal): Promise<EditWriteResponse> {
 +	async #write(request: EditWriteRequest, signal?: AbortSignal, guarded = false): Promise<EditWriteResponse> {
-+   if (guarded) {
-+     if (signal?.aborted) throw new Error("Native edit cancelled");
-+     if (request.op === "delete") {
-+       await unlink(request.path);
-+       invalidateFsScanAfterDelete(request.path);
-+       this.session.bumpFileMutationVersion?.(request.path);
-+       return { written: "" };
-+     }
-+     if (request.content === undefined) throw new Error("Native edit content missing");
-+     const destination = request.op === "move" ? request.moveTo : request.path;
-+     if (!destination) throw new Error("Native edit destination missing");
-+     await mkdir(path.dirname(destination), { recursive: true });
-+     await writeFile(destination, request.content, "utf8");
-+     if (request.op === "move") {
-+       await unlink(request.path);
-+       invalidateFsScanAfterRename(request.path, destination);
-+       this.session.bumpFileMutationVersion?.(request.path);
-+     } else invalidateFsScanAfterWrite(destination);
-+     this.session.bumpFileMutationVersion?.(destination);
-+     return { written: request.content };
-+   }
++		if (guarded) {
++			if (signal?.aborted) throw new Error("Native edit cancelled");
++			if (request.op === "delete") {
++				await unlink(request.path);
++				invalidateFsCache(request.path);
++				this.session.bumpFileMutationVersion?.(request.path);
++				return { written: "" };
++			}
++			if (request.content === undefined) throw new Error("Native edit content missing");
++			const destination = request.op === "move" ? request.moveTo : request.path;
++			if (!destination) throw new Error("Native edit destination missing");
++			await mkdir(path.dirname(destination), { recursive: true });
++			await writeFile(destination, request.content, "utf8");
++			if (request.op === "move") {
++				try {
++					await unlink(request.path);
++				} catch (error) {
++					// The destination already holds the moved content; roll it back so
++					// a failed move cannot leave two copies of the file behind.
++					await unlink(destination).catch(() => {});
++					invalidateFsCache(destination);
++					throw error;
++				}
++				invalidateFsCache(request.path);
++				invalidateFsCache(destination);
++				this.session.bumpFileMutationVersion?.(request.path);
++			} else invalidateFsCache(destination);
++			this.session.bumpFileMutationVersion?.(destination);
++			return { written: request.content };
++		}
  		if (request.op === "delete") {
  			await deleteFileWithFallback(request.path, Bun.file(request.path));
  			if (this.session.enableLsp ?? true) {
+diff --git a/packages/coding-agent/src/extensibility/extensions/loader.ts b/packages/coding-agent/src/extensibility/extensions/loader.ts
+index 30c18d3..757c469 100644
 --- a/packages/coding-agent/src/extensibility/extensions/loader.ts
 +++ b/packages/coding-agent/src/extensibility/extensions/loader.ts
 @@ -1,6 +1,7 @@
@@ -284,22 +246,32 @@
  import type * as fs1 from "node:fs";
  import * as fs from "node:fs/promises";
  import * as path from "node:path";
-@@ -177,6 +178,10 @@
+@@ -197,6 +198,18 @@ export class ExtensionRuntime implements IExtensionRuntime {
   * Action methods delegate to the shared runtime.
   */
  class ConcreteExtensionAPI implements ExtensionAPI, IExtensionRuntime {
 +	get nativeEditProtocol(): number {
-+    try { return NativeEdits.editPrecommitProtocol?.() ?? 0; }
-+    catch { return 0; }
-+  }
++		try {
++			return NativeEdits.editPrecommitProtocol?.() ?? 0;
++		} catch (error) {
++			// A broken native binding must be visible, not silently reported as
++			// "protocol unsupported".
++			logger.warn("Native edit protocol probe failed", {
++				error: error instanceof Error ? error.message : String(error),
++			});
++			return 0;
++		}
++	}
  	readonly logger = logger;
  	readonly typebox = TypeBox;
  	readonly arktype = type;
+diff --git a/packages/coding-agent/src/extensibility/extensions/runner.ts b/packages/coding-agent/src/extensibility/extensions/runner.ts
+index 8aa7944..4715ae8 100644
 --- a/packages/coding-agent/src/extensibility/extensions/runner.ts
 +++ b/packages/coding-agent/src/extensibility/extensions/runner.ts
-@@ -45,6 +45,9 @@
- import { trackUserWaits, type UserWaitTracker } from "./user-wait";
+@@ -46,6 +46,9 @@ import { trackUserWaits, type UserWaitTracker } from "./user-wait";
  import type { ComposerShapeDefinition } from "@oh-my-pi/pi-tui/overlays/composer-shape-registry";
+ import { extensionLinkClicksAvailable } from "@oh-my-pi/pi-tui/render/extension-links";
  import type {
 +	NativeEditPrepareEvent,
 +	NativeEditResultEvent,
@@ -307,171 +279,205 @@
  	AfterProviderResponseEvent,
  	AssistantMessageRewriteEvent,
  	AssistantMessageRewriteResult,
-@@ -1923,6 +1926,43 @@
- 		}
+@@ -2125,6 +2128,91 @@ export class ExtensionRunner {
  		return buildAggregatedToolCallResult(result, aggregated);
  	}
-+
-+ async emitNativeEdit(
-+   event: NativeEditPrepareEvent | NativeEditResultEvent,
-+   sessionId: string | null, agentId: string | null, signal?: AbortSignal,
-+ ): Promise<NativeEditApproval | undefined> {
-+   const denied: NativeEditApproval = { allowed: false,
-+     finalInputSha256: event.type === "native_edit_prepare" ? event.batch.finalInputSha256 : "", reason: "native_handler_unavailable" };
-+   if (!sessionId || !agentId) return denied;
-+   const agent = this.createContext().agent;
-+   const ctx = this.createContext(undefined, undefined, agentId === agent.id ? agent
-+     : { kind: "sub", id: agentId, name: agentId, depth: agent.depth + 1, parentId: agent.id });
-+   ctx.sessionManager = new Proxy(ctx.sessionManager, {
-+     get(target, property) {
-+       if (property === "getSessionId") return () => sessionId;
-+       const value = Reflect.get(target, property);
-+       return typeof value === "function" ? value.bind(target) : value;
-+     },
-+   });
-+   let handled = false;
-+   for (const ext of this.extensions) {
-+     for (const handler of ext.handlers.get(event.type) ?? []) {
-+       handled = true;
-+       const result = await this.#runHandlerWithTimeout(handler, event, ctx, ext, 40000,
-+         () => denied, signal) as NativeEditApproval | undefined;
-+       if (event.type === "native_edit_prepare" && result?.allowed === false
-+         && result.finalInputSha256 === event.batch.finalInputSha256) return { ...denied,
-+           reason: typeof result.reason === "string" ? result.reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512) : "native_handler_denied",
-+           decisionId: typeof result.decisionId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(result.decisionId) ? result.decisionId : undefined };
-+       if (event.type === "native_edit_prepare" && (!result || result.allowed !== true
-+         || result.finalInputSha256 !== event.batch.finalInputSha256)) return denied;
-+       if (event.type === "native_edit_result" && result === denied)
-+         throw new Error("Native edit receipt handler failed");
-+     }
-+   }
-+   if (event.type === "native_edit_prepare")
-+     return handled && !signal?.aborted ? { allowed: true, finalInputSha256: event.batch.finalInputSha256 } : denied;
-+ }
  
++	async emitNativeEdit(
++		event: NativeEditPrepareEvent | NativeEditResultEvent,
++		sessionId: string | null,
++		agentId: string | null,
++		signal?: AbortSignal,
++	): Promise<NativeEditApproval | undefined> {
++		const prepare = event.type === "native_edit_prepare" ? event.batch : undefined;
++		const denial = (reason: string, extra?: Partial<NativeEditApproval>): NativeEditApproval => ({
++			allowed: false,
++			finalInputSha256: prepare?.finalInputSha256 ?? "",
++			batchSha256: prepare?.batchSha256,
++			reason,
++			...extra,
++		});
++		const denied = denial("native_handler_unavailable");
++		if (!sessionId || !agentId) return denied;
++		const agent = this.createContext().agent;
++		const ctx = this.createContext(
++			undefined,
++			undefined,
++			agentId === agent.id
++				? agent
++				: { kind: "sub", id: agentId, name: agentId, depth: agent.depth + 1, parentId: agent.id },
++		);
++		ctx.sessionManager = new Proxy(ctx.sessionManager, {
++			get(target, property) {
++				if (property === "getSessionId") return () => sessionId;
++				const value = Reflect.get(target, property);
++				return typeof value === "function" ? value.bind(target) : value;
++			},
++		});
++		let handled = false;
++		for (const ext of this.extensions) {
++			for (const handler of ext.handlers.get(event.type) ?? []) {
++				const result = (await this.#runHandlerWithTimeout(
++					handler,
++					event,
++					ctx,
++					ext,
++					40000,
++					kind => (kind === "timeout" ? denial("native_handler_timeout") : denial("native_handler_error")),
++					signal,
++				)) as NativeEditApproval | undefined;
++				if (event.type === "native_edit_result") {
++					if (result === undefined || result.allowed === false)
++						throw new Error("Native edit receipt handler failed");
++					continue;
++				}
++				const batch = event.batch;
++				if (!result) return denial("native_handler_no_verdict");
++				if (typeof result.finalInputSha256 !== "string" || typeof result.batchSha256 !== "string")
++					return denial("native_handler_no_verdict");
++				const echoedInput = result.finalInputSha256.trim().toLowerCase();
++				const echoedBatch = result.batchSha256.trim().toLowerCase();
++				if (echoedInput !== batch.finalInputSha256.toLowerCase() || echoedBatch !== batch.batchSha256.toLowerCase())
++					return denial("native_digest_mismatch");
++				if (result.allowed === false) {
++					handled = true;
++					return denial(
++						typeof result.reason === "string"
++							? result.reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512)
++							: "native_handler_denied",
++						{
++							decisionId:
++								typeof result.decisionId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(result.decisionId)
++									? result.decisionId
++									: undefined,
++						},
++					);
++				}
++				if (result.allowed !== true) return denial("native_handler_no_verdict");
++				handled = true;
++			}
++		}
++		if (event.type === "native_edit_prepare") {
++			if (!handled) return denial("native_handler_unavailable");
++			if (signal?.aborted) return denial("native_handler_aborted");
++			return {
++				allowed: true,
++				finalInputSha256: event.batch.finalInputSha256,
++				batchSha256: event.batch.batchSha256,
++			};
++		}
++	}
++
  	async emitUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined> {
  		return this.emitUserEvent<UserBashEventResult>(event, "user_bash");
+ 	}
+diff --git a/packages/coding-agent/src/extensibility/extensions/types.ts b/packages/coding-agent/src/extensibility/extensions/types.ts
+index a5515b9..d58bb9a 100644
 --- a/packages/coding-agent/src/extensibility/extensions/types.ts
 +++ b/packages/coding-agent/src/extensibility/extensions/types.ts
-@@ -1438,10 +1438,25 @@
- ): event is ToolCallEvent & { toolName: TName; input: TInput };
- export function isToolCallEventType(toolName: string, event: ToolCallEvent): boolean {
+@@ -1634,8 +1634,42 @@ export function isToolCallEventType(toolName: string, event: ToolCallEvent): boo
  	return event.toolName === toolName;
+ }
+ 
++export interface NativeEditBatch {
++	finalInputSha256: string;
++	/** Digest over the exact candidate set the host is asked to approve. */
++	batchSha256: string;
++	candidates: Array<{
++		path: string;
++		operation: string;
++		beforeSrc: string | null;
++		afterSrc: string | null;
++		expectedBeforeSha256: string | null;
++	}>;
++}
++export interface NativeEditApproval {
++	allowed: boolean;
++	finalInputSha256: string;
++	/** Must echo the batch digest; a mismatch is refused by the native engine. */
++	batchSha256?: string;
++	reason?: string;
++	decisionId?: string;
++}
++export interface NativeEditPrepareEvent {
++	type: "native_edit_prepare";
++	toolCallId: string;
++	batch: NativeEditBatch;
++}
++export interface NativeEditResultEvent {
++	type: "native_edit_result";
++	toolCallId: string;
++	success: boolean;
++	error: string | null;
 +}
 +
-+export interface NativeEditBatch {
-+ finalInputSha256: string;
-+ candidates: Array<{ path: string; operation: string; beforeSrc: string | null;
-+   afterSrc: string | null; expectedBeforeSha256: string | null }>;
-+}
-+export interface NativeEditApproval { allowed: boolean; finalInputSha256: string; reason?: string; decisionId?: string }
-+export interface NativeEditPrepareEvent {
-+ type: "native_edit_prepare"; toolCallId: string; batch: NativeEditBatch;
- }
-+export interface NativeEditResultEvent {
-+ type: "native_edit_result"; toolCallId: string; success: boolean; error: string | null;
-+}
- 
  /** Union of all event types */
  export type ExtensionEvent =
-+ | NativeEditPrepareEvent
-+ | NativeEditResultEvent
++	| NativeEditPrepareEvent
++	| NativeEditResultEvent
  	| ResourcesDiscoverEvent
  	| SessionEvent
  	| ContextEvent
-@@ -1686,6 +1701,9 @@
+@@ -1880,6 +1914,9 @@ export interface ExtensionAPI {
+ 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+ 	on(event: "tool_approval_requested", handler: ExtensionHandler<ToolApprovalRequestedEvent>): void;
  	on(event: "tool_approval_resolved", handler: ExtensionHandler<ToolApprovalResolvedEvent>): void;
- 	on(event: "plan_review_requested", handler: ExtensionHandler<PlanReviewRequestedEvent>): void;
- 	on(event: "plan_review_resolved", handler: ExtensionHandler<PlanReviewResolvedEvent>): void;
 +	readonly nativeEditProtocol: number;
 +	on(event: "native_edit_prepare", handler: ExtensionHandler<NativeEditPrepareEvent, NativeEditApproval>): void;
 +	on(event: "native_edit_result", handler: ExtensionHandler<NativeEditResultEvent>): void;
- 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
- 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
- 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
+ 	on(event: "plan_review_requested", handler: ExtensionHandler<PlanReviewRequestedEvent>): void;
+ 	on(event: "plan_review_resolved", handler: ExtensionHandler<PlanReviewResolvedEvent>): void;
+ 	on(event: "mode_changed", handler: ExtensionHandler<ModeChangedEvent>): void;
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+index 1c571be..56c2855 100644
 --- a/packages/coding-agent/src/sdk.ts
 +++ b/packages/coding-agent/src/sdk.ts
-@@ -2288,6 +2288,15 @@
+@@ -2403,6 +2403,23 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
  			}
  		};
  		const toolSession: ToolSession = {
-+     hasNativeEditGuard: () => extensionRunner.hasHandlers("native_edit_prepare"),
-+     prepareNativeEdit: function(event, signal) {
-+       return extensionRunner.emitNativeEdit(event, this.getSessionId?.() ?? null,
-+         this.getAgentId?.() ?? null, signal) as Promise<import("./extensibility/extensions/types").NativeEditApproval>;
-+     },
-+     resultNativeEdit: async function(event, signal) {
-+       await extensionRunner.emitNativeEdit(event, this.getSessionId?.() ?? null,
-+         this.getAgentId?.() ?? null, signal);
-+     },
++			hasNativeEditGuard: () => extensionRunner.hasHandlers("native_edit_prepare"),
++			prepareNativeEdit: function (event, signal) {
++				return extensionRunner.emitNativeEdit(
++					event,
++					this.getSessionId?.() ?? null,
++					this.getAgentId?.() ?? null,
++					signal,
++				) as Promise<import("./extensibility/extensions/types").NativeEditApproval>;
++			},
++			resultNativeEdit: async function (event, signal) {
++				await extensionRunner.emitNativeEdit(
++					event,
++					this.getSessionId?.() ?? null,
++					this.getAgentId?.() ?? null,
++					signal,
++				);
++			},
  			get cwd() {
  				return sessionManager.getCwd();
  			},
+diff --git a/packages/coding-agent/src/tools/index.ts b/packages/coding-agent/src/tools/index.ts
+index 7e6027a..08bfaba 100644
 --- a/packages/coding-agent/src/tools/index.ts
 +++ b/packages/coding-agent/src/tools/index.ts
-@@ -207,6 +207,11 @@
+@@ -208,6 +208,15 @@ export interface DeferredDiagnosticsEntry {
  
  /** Session context for tool factories */
  export interface ToolSession {
-+ hasNativeEditGuard?: () => boolean;
-+ prepareNativeEdit?: (event: import("../extensibility/extensions/types").NativeEditPrepareEvent,
-+   signal?: AbortSignal) => Promise<import("../extensibility/extensions/types").NativeEditApproval>;
-+ resultNativeEdit?: (event: import("../extensibility/extensions/types").NativeEditResultEvent,
-+   signal?: AbortSignal) => Promise<void>;
++	hasNativeEditGuard?: () => boolean;
++	prepareNativeEdit?: (
++		event: import("../extensibility/extensions/types").NativeEditPrepareEvent,
++		signal?: AbortSignal,
++	) => Promise<import("../extensibility/extensions/types").NativeEditApproval>;
++	resultNativeEdit?: (
++		event: import("../extensibility/extensions/types").NativeEditResultEvent,
++		signal?: AbortSignal,
++	) => Promise<void>;
  	/** Current working directory */
  	cwd: string;
- 	/** Additional workspace directories beyond cwd (multi-root), forwarded to subagents. */
---- a/packages/natives/native/index.d.ts
-+++ b/packages/natives/native/index.d.ts
-@@ -173,7 +173,7 @@
-    * engine failures: those come back as `isError` outcomes carrying the
-    * model-facing message.
-    */
--  apply(request: EditApplyRequest, writer: (error: Error | null, request: EditWriteRequest) => Promise<EditWriteResponse>): Promise<EditApplyOutcome>
-+  apply(request: EditApplyRequest, writer: (error: Error | null, request: EditWriteRequest) => Promise<EditWriteResponse>, precommit?: ((error: Error | null, batch: EditPreparedBatch) => Promise<EditPrecommitDecision>) | undefined | null): Promise<EditApplyOutcome>
-   /** Stop the preview pump and release buffers. */
-   close(): void
- }
-@@ -1709,6 +1709,26 @@
-   homeDir: string
-   /** The payload is a verbatim custom-format string, not JSON. */
-   rawInput: boolean
-+}
-+
-+export interface EditPrecommitDecision {
-+  allowed: boolean
-+  finalInputSha256: string
-+}
-+
-+export declare function editPrecommitProtocol(): number
-+
-+export interface EditPreparedBatch {
-+  finalInputSha256: string
-+  candidates: Array<EditPreparedCandidate>
-+}
-+
-+export interface EditPreparedCandidate {
-+  path: string
-+  operation: string
-+  beforeSrc: string | null
-+  afterSrc: string | null
-+  expectedBeforeSha256: string | null
- }
- 
- /** A batch of previews for one session generation. */
-@@ -1794,8 +1814,10 @@
-  * the calling thread.
-  *
-  * The input image is decoded and resized to the requested pixel dimensions
-- * before encoding. Prefer [`encode_sixel_async`] unless the caller cannot
-- * wait: the decode, resize and dither block the JS thread.
-+ * (not resampled when it already has them), then encoded in whole 6-pixel
-+ * bands: a partial last band is dropped, see [`band_rows`]. Prefer
-+ * [`encode_sixel_async`] unless the caller cannot wait: the decode, resize
-+ * and dither block the JS thread.
-  *
-  * # Errors
-  * Returns an error if decoding, resizing, or SIXEL encoding fails.
+ 	/** Cost gate of the session tree, forwarded to subagents. */
+diff --git a/packages/natives/native/index.js b/packages/natives/native/index.js
+index da02132..0a67eb0 100644
 --- a/packages/natives/native/index.js
 +++ b/packages/natives/native/index.js
 @@ -1,4 +1,5 @@
@@ -480,11 +486,27 @@
  import { adaptDesktopSession } from "./desktop-adapter.js";
  
  /**
-@@ -73,6 +74,7 @@
- export const editDiffString = nativeBindings.editDiffString ?? missingNativeExport("editDiffString");
+@@ -78,6 +79,7 @@ export const editDiffString = nativeBindings.editDiffString ?? missingNativeExpo
+ export const editErrorKinds = nativeBindings.editErrorKinds ?? missingNativeExport("editErrorKinds");
  export const editGrammar = nativeBindings.editGrammar ?? missingNativeExport("editGrammar");
  export const editInspect = nativeBindings.editInspect ?? missingNativeExport("editInspect");
 +export const editPrecommitProtocol = nativeBindings.editPrecommitProtocol ?? missingNativeExport("editPrecommitProtocol");
  export const enclosingBlockBoundaries = nativeBindings.enclosingBlockBoundaries ?? missingNativeExport("enclosingBlockBoundaries");
  export const encodeSixel = nativeBindings.encodeSixel ?? missingNativeExport("encodeSixel");
  export const encodeSixelAsync = nativeBindings.encodeSixelAsync ?? missingNativeExport("encodeSixelAsync");
+diff --git a/packages/natives/scripts/build-bindings.ts b/packages/natives/scripts/build-bindings.ts
+index 089bfd9..a4e7278 100644
+--- a/packages/natives/scripts/build-bindings.ts
++++ b/packages/natives/scripts/build-bindings.ts
+@@ -172,6 +172,11 @@ async function installGeneratedBindings(outputDir: string): Promise<void> {
+ 	const destPath = path.join(nativeDir, "index.d.ts");
+ 	try {
+ 		await fs.copyFile(sourcePath, destPath);
++		await fs.appendFile(
++			destPath,
++			'\nexport { nativeAddonStatus } from "./loader-state.js";\nexport type { NativeAddonStatus } from "./loader-state.js";\n',
++			"utf8",
++		);
+ 	} catch (err) {
+ 		const message = err instanceof Error ? err.message : String(err);
+ 		throw new Error(`Failed to install generated index.d.ts: ${message}`);

@@ -33,6 +33,27 @@ def states(checks):
     return {row["name"]: row for row in checks}
 
 
+def test_doctor_host_allowlist_matches_pinned_patch_manifest():
+    from src import data
+
+    root = Path(__file__).resolve().parents[1]
+    manifest_path = root / "integrations/omp/host-precommit.json"
+    patch_path = root / "integrations/omp/host-precommit.patch"
+    manifest = json.loads(manifest_path.read_text())
+    expected = {path: record["after_sha256"] for path, record in manifest["files"].items()}
+    runtime_files = json.loads(data.read_text("omp.host-files.json"))
+
+    generated = "packages/natives/native/index.d.ts"
+    expected_runtime_sources = {
+        path: digest for path, digest in expected.items()
+        if path in runtime_files and path != generated
+    }
+    assert {path: digest for path, digest in runtime_files.items() if path != generated} == expected_runtime_sources
+    assert runtime_files[generated] == expected[generated]
+    assert set(expected) - set(runtime_files) == {"packages/natives/scripts/build-bindings.ts"}
+    assert hashlib.sha256(patch_path.read_bytes()).hexdigest() == manifest["patch_sha256"]
+
+
 def healthy_runtime(root):
     from src import data
     compat = json.loads(data.read_text("omp.compatibility.json"))
@@ -86,6 +107,13 @@ def test_disabled_wrong_build_and_stale_adapter_never_load(project, probes, fiel
     assert not states(module().check_omp(project))["omp_loaded"]["ok"]
 
 
+def test_unloaded_project_adapter_has_actionable_registration_hint(project, probes):
+    probes["runtime"]["loaded"] = False
+    check = states(module().check_omp(project))["omp_loaded"]
+    assert not check["ok"]
+    assert "project adapter not discovered/registered" in check["detail"]
+
+
 def test_health_without_authenticated_score_is_not_readiness(project, probes):
     probes["auth"] = {"authenticated": False, "health": True}
     assert not states(module().check_omp(project))["omp_authenticated"]["ok"]
@@ -128,6 +156,11 @@ def test_cli_omp_host_does_not_require_claude_wiring(project, probes, capsys):
 def test_status_host_omp_reports_gate_state_and_advisor_ledger(project, probes, monkeypatch, capsys):
     from src import rc_cli
     import audit_log
+    home = project / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("RC_GATE", raising=False)
+    monkeypatch.delenv("RC_GATE_SETTINGS", raising=False)
     monkeypatch.setenv("RC_RUN_DIR", str(project))
     monkeypatch.setenv("RC_AUDIT_ROOT", str(project / "audit"))
     monkeypatch.setattr(audit_log, "_AUDIT_ROOT", project / "audit")
@@ -183,11 +216,36 @@ def test_same_version_host_implementation_change_invalidates_qualification(proje
     ("bogus", "advisory"),
 ])
 def test_plugin_expected_mode_follows_gate_switch(tmp_path, monkeypatch, requested, expected):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("RC_GATE_SETTINGS", raising=False)
     if requested is None:
         monkeypatch.delenv("RC_GATE", raising=False)
     else:
         monkeypatch.setenv("RC_GATE", requested)
     assert module()._plugin_expected_mode(tmp_path) == expected
+
+
+def test_plugin_expected_mode_honors_persisted_gate_file(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    settings = home / ".omp" / "agent" / "reasoning-core-gate.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({"mode": "off"}))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("RC_GATE", raising=False)
+    monkeypatch.delenv("RC_GATE_SETTINGS", raising=False)
+    doctor = module()
+    assert doctor._plugin_expected_mode(tmp_path) == "off"
+
+    monkeypatch.setenv("RC_GATE", "enforce")
+    assert doctor._plugin_expected_mode(tmp_path) == "enforce"
+
+    custom = tmp_path / "custom-gate.json"
+    custom.write_text(json.dumps({"mode": "advisory"}))
+    monkeypatch.setenv("RC_GATE_SETTINGS", str(custom))
+    monkeypatch.delenv("RC_GATE", raising=False)
+    assert doctor._plugin_expected_mode(tmp_path) == "advisory"
 
 
 @pytest.mark.parametrize("scope", ["user", "project"])

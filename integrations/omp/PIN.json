@@ -1,9 +1,9 @@
 {
-  "recorded_at": "2026-10-28T13:30:00Z",
-  "recorded_by": "rc-omp-integration Phase 6",
+  "recorded_at": "2026-11-15T23:10:00Z",
+  "recorded_by": "OMP 18.14.0 source rebase and isolated qualification",
   "omp_pin": {
-    "version": "18.11.3",
-    "commit": "96894a6147d8cc64b7e00ad3a7d7178fd93b9531",
+    "version": "18.14.0",
+    "commit": "31147f9d1a76608549821c3759f8487b4d66c72d",
     "editPrecommitProtocol": 1,
     "patch_files": [
       "integrations/omp/host-precommit.patch",
@@ -21,15 +21,17 @@
       "packages/natives/native/index.d.ts",
       "packages/natives/native/index.js"
     ],
-    "host_file_digests": "computed at drift-runbook time against a checkout of the pinned commit; no pinned tree present locally at record time"
+    "host_file_digests": "Post-binding-generation hashes recorded in src/data/templates/omp.host-files.json; patched sources bound in host-precommit.json."
   },
   "active_installs": {
     "primary": {
       "path": "~/.local/bin/omp",
       "version": "18.14.0",
-      "kind": "compiled standalone, official build",
-      "patched": false,
-      "probe_result": "no api.nativeEditProtocol in the 18.14.0 bundle; the extension cannot govern edits on this build (advisory only)"
+      "kind": "compiled standalone, patched from the pinned source",
+      "patched": true,
+      "sha256": "a6bcb6b73cffdd4c5bbc1ddf9873dc1f20dc813d7793f663e2d0dfba826c2816",
+      "rollback": "~/.local/bin/omp.official (official build, sha256 608843959ab34295d52460dd09dd7d548b6c903c08a83c67954c2d4c36fd1f5a)",
+      "probe_result": "Native protocol 1 exposed; doctor reports installed/loaded/plugin/authenticated/qualified."
     },
     "npm_source": {
       "path": "/opt/homebrew/lib/node_modules/@oh-my-pi/pi-coding-agent",
@@ -61,7 +63,25 @@
     }
   },
   "baseline": "baseline-2026-10-28-omp-integration-pre",
-  "verified_at": "2026-10-30",
-  "patched_build_present": false,
-  "patched_build_note": "The 18.11.3 patched standalone is no longer the active binary. Nothing on this host exposes api.nativeEditProtocol, so the native edit boundary is a capability, not a requirement: the gate negotiates it at registration and never blocks on its absence (docs/superpowers/specs/2026-10-30-omp-gate-never-block-research.md)."
+  "verified_at": "2026-11-15",
+  "patched_build_present": true,
+  "patched_build_note": "Activated 2026-11-15 after two adversarial-review revisions: the official build is kept at ~/.local/bin/omp.official for instant rollback, the active ~/.local/bin/omp is the qualified patched 18.14.0 build, and the global gate remains \"off\". A pilot project runs the scoped adapter in advisory mode.",
+  "side_by_side_build": {
+    "path": "~/.local/bin/omp (copy also kept at ~/.local/bin/omp-rc-18.14.0)",
+    "sha256": "a6bcb6b73cffdd4c5bbc1ddf9873dc1f20dc813d7793f663e2d0dfba826c2816",
+    "source_sha": "31147f9d1a76608549821c3759f8487b4d66c72d",
+    "version": "18.14.0",
+    "native_sha256": "4b69252cf633dee2a6628310ef8566c62cfd1e3884f7a82e38fc95172a51e650",
+    "installed": true,
+    "active": true,
+    "doctor_states": [
+      "installed",
+      "loaded",
+      "plugin_installed",
+      "plugin_loaded",
+      "authenticated",
+      "qualified"
+    ],
+    "revision": "2026-11-15 adversarial-review revision 2 (length-prefixed batch digest over resolved paths, read-error propagation)"
+  }
 }

@@ -90,7 +90,7 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
   const key = (ctx: any, call: string) => canonical({ ...identity(ctx), call });
   return {
     async prepare(event: any, ctx: any) {
-      const denied = { allowed: false, finalInputSha256: event.batch?.finalInputSha256 ?? "", reason: "invalid_bridge_response" };
+      const denied = { allowed: false, finalInputSha256: event.batch?.finalInputSha256 ?? "", batchSha256: event.batch?.batchSha256, reason: "invalid_bridge_response" };
       try {
         const id = key(ctx, event.toolCallId);
         if (pending.has(id)) throw Error("duplicate prepared call");
@@ -112,7 +112,9 @@ export function createGate(bridge: (event: any) => Promise<any> = runBridge) {
           reason: reply.reason.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 512),
           decisionId: /^[a-zA-Z0-9_-]{1,128}$/.test(reply.decision_id) ? reply.decision_id : undefined };
         pending.set(id, { batch, approval: reply });
-        return { allowed: true, finalInputSha256: batch.final_input_sha256 };
+        // Echo the native batch digest so the engine can prove the approval
+        // binds this exact candidate set.
+        return { allowed: true, finalInputSha256: batch.final_input_sha256, batchSha256: event.batch?.batchSha256 };
       } catch (error: any) { return { ...denied, reason: error?.message === "bridge timeout"
         ? "bridge_timeout" : error?.message === "invalid bridge output"
           ? "invalid_bridge_response" : "bridge_unavailable" }; }
@@ -179,11 +181,13 @@ export default function reasoningCoreGate(api: any, bridge: (event: any) => Prom
   const infraDenial = new Set(["bridge_unavailable", "bridge_timeout", "invalid_bridge_response"]);
   api.on("native_edit_prepare", async (event: any, ctx: any) => {
     const finalInput = String(event?.batch?.finalInputSha256 ?? "");
-    if (!enforce) return { allowed: true, finalInputSha256: finalInput };
+    const batchDigest = String(event?.batch?.batchSha256 ?? "");
+    // The native engine refuses an approval that does not echo both digests.
+    if (!enforce) return { allowed: true, finalInputSha256: finalInput, batchSha256: batchDigest };
     const reply = await gate.prepare(event, ctx);
     if (reply.allowed || !infraDenial.has(String(reply.reason))) return reply;
     api.logger?.warn?.(`reasoning-core edit unreviewed (${reply.reason})`);
-    return { allowed: true, finalInputSha256: finalInput };
+    return { allowed: true, finalInputSha256: finalInput, batchSha256: batchDigest };
   });
   api.on("native_edit_result", async (event: any, ctx: any) => {
     if (!enforce) return;

@@ -237,6 +237,59 @@ coverage/exclusions, and allow/deny/receipt results. No cross-host quality infer
   any remaining limitations. Make no unmeasured quality/comparison claims.
 - [ ] Do not mark the feature complete at any earlier milestone.
 
+## Status Update (2026-11-15) — 18.14.0 Source Rebase, Local Build, Side-by-Side Qualification
+
+Verified on this machine (Jakub's MacBook Pro), in disposable trees only:
+
+- Rebased both integration patches from OMP 18.11.3 to OMP 18.14.0
+  (`31147f9d1a76608549821c3759f8487b4d66c72d`, archive SHA-256
+  `d0f9c301ae8ae6af6414888145eedb151779e477863b7a35e880fd6cb9b31506`).
+  `integrations/omp/native-precommit.patch` and `host-precommit.patch` now apply
+  cleanly to the 18.14.0 archive; both patch digests and every patched-file
+  digest are recorded in the sibling `*.json` manifests.
+- `cargo +nightly-2026-10-06 test -p pi-edit --locked` passed (433 tests) and
+  `cargo +nightly-2026-10-06 build -p pi-natives --lib --locked` succeeded.
+  The macOS development build still stubs Apple Foundation Models (no Swift
+  6.4+/macOS 27 SDK); this is not a release artifact.
+- Rebuilt N-API bindings (the patched generator re-adds the loader-state type
+  exports after regeneration) and built a local 18.14.0 standalone. Binary
+  SHA-256 `faef0d6c2dd6594701db3edc29e57f4df796181d3afbea83b8ea478edbfa3040`.
+- Integration suites against the patched 18.14.0 tree pass: native boundary
+  (20), host runtime (12), extension runtime (37), plus the Python OMP
+  doctor/install/wheel tests and the full Python suite.
+- A disposable pilot project reached all six doctor states with the patched
+  binary on PATH: installed, loaded, plugin installed, plugin loaded,
+  authenticated, qualified. The qualification report is immutable
+  (`O_EXCL`) and bound to runtime, project policy, implementation and
+  environment digests.
+- Fixed two real defects found while qualifying: doctor ignored the persisted
+  gate mode file (false "expected advisory" mismatch), and the qualification
+  binding mixed a disposable-copy configuration digest with the real project,
+  so a valid report could never verify.
+- Two adversarial-review rounds (GPT-6-Astra through the codex CLI, one
+  invocation per changed file) drove the revision: candidate-set digest
+  binding with a length-prefixed pre-image over resolved paths, live-store
+  re-staging after approval, distinct denial reasons, receipt failures that no
+  longer mask successful writes, move rollback, lock-queue cleanup, and bounded
+  probe diagnostics. A regression test now proves an approval for a different
+  candidate batch writes nothing.
+- **Activated 2026-11-15**: `~/.local/bin/omp` is the qualified patched build
+  (sha256 `a6bcb6b73cffdd4c5bbc1ddf9873dc1f20dc813d7793f663e2d0dfba826c2816`);
+  the official build is preserved at `~/.local/bin/omp.official`
+  (sha256 `608843959ab34295d52460dd09dd7d548b6c903c08a83c67954c2d4c36fd1f5a`)
+  for instant rollback. The global gate stays `off`; one pilot project
+  (`~/Repos/personal/omp-pilot`) runs the scoped adapter in advisory mode.
+
+Still open (unchanged gates):
+
+- [ ] GitHub Actions exact-commit artifact and wheel install on both Macs
+  (Tasks 7–9) — not performed; the local build is not the delivered artifact.
+- [x] Activation of the patched OMP as the active `omp` (done, rollback kept);
+  the gate stays `off` globally until the advisory pilot is trusted.
+- [ ] Promote one pilot project from advisory to `enforce` after its receipts
+  are reviewed.
+- [ ] MacBook Pro install/activation report and both-machine acceptance.
+
 ## Plan Review
 
 Self-review must check spec coverage, interface consistency, ownership safety,

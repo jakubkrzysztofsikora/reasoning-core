@@ -1,6 +1,8 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index a5fde75..4c6dfa0 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -6953,6 +6953,7 @@
+@@ -6978,6 +6978,7 @@ dependencies = [
   "regex",
   "serde",
   "serde_json",
@@ -8,9 +10,11 @@
   "tempfile",
   "thiserror 2.0.21",
   "tokio",
+diff --git a/crates/pi-edit/Cargo.toml b/crates/pi-edit/Cargo.toml
+index 1b919f5..9b22001 100644
 --- a/crates/pi-edit/Cargo.toml
 +++ b/crates/pi-edit/Cargo.toml
-@@ -11,6 +11,7 @@
+@@ -11,6 +11,7 @@ repository.workspace = true
  workspace = true
  
  [dependencies]
@@ -18,58 +22,8 @@
  async-trait.workspace = true
  parking_lot.workspace = true
  pi-ast.workspace = true
---- a/crates/pi-edit/src/store.rs
-+++ b/crates/pi-edit/src/store.rs
-@@ -122,6 +122,7 @@
- 	seen
- }
- 
-+#[derive(Clone)]
- struct StoredSnapshot {
- 	snapshot: Snapshot,
- }
-@@ -145,6 +146,7 @@
- 	}
- }
- 
-+#[derive(Clone)]
- struct PathHistory {
- 	versions: Vec<StoredSnapshot>,
- 	touched:  u64,
-@@ -162,6 +164,7 @@
- 	}
- }
- 
-+#[derive(Clone)]
- struct StoreState {
- 	histories:       HashMap<PathBuf, PathHistory>,
- 	clipboard:       Clipboard,
-@@ -195,6 +198,25 @@
- }
- 
- impl EditStore {
-+	/// Publish only the no-op counter of an approved no-write outcome.
-+	pub fn commit_noop_from(&self, fork: &Self, path: &Path) {
-+		let counter = fork.inner.lock().noop.get(path).copied();
-+		let mut state = self.inner.lock();
-+		match counter {
-+			Some(value) => {
-+				state.noop.insert(path.to_path_buf(), value);
-+			},
-+			None => {
-+				state.noop.remove(path);
-+			},
-+		}
-+	}
-+
-+	/// Isolate preparation-time bookkeeping from the shared session store.
-+	pub fn fork(&self) -> Self {
-+		Self { inner: Arc::new(Mutex::new(self.inner.lock().clone())) }
-+	}
-+
- 	/// Construct a store with production retention limits.
- 	pub fn new() -> Self {
- 		Self::default()
+diff --git a/crates/pi-edit/src/session.rs b/crates/pi-edit/src/session.rs
+index b308199..ff726a0 100644
 --- a/crates/pi-edit/src/session.rs
 +++ b/crates/pi-edit/src/session.rs
 @@ -4,9 +4,13 @@
@@ -87,12 +41,10 @@
  
  use crate::{
  	diff_string::{CompactDiffOptions, build_compact_diff_preview},
-@@ -66,11 +70,144 @@
- 	pub written:          String,
- 	/// Diagnostics payload serialized by the host; opaque here.
+@@ -74,9 +78,180 @@ pub struct WriteResponse {
  	pub diagnostics_json: Option<String>,
-+}
-+
+ }
+ 
 +/// Complete final native candidates passed to the host before any write.
 +#[derive(Debug, Clone)]
 +pub struct PreparedCandidate {
@@ -112,6 +64,14 @@
 +
 +fn sha256(text: &str) -> String {
 +	format!("{:x}", Sha256::digest(text.as_bytes()))
++}
++
++/// Append one length-prefixed field to a digest pre-image.
++fn push_digest_field(text: &mut String, field: &[u8]) {
++	text.push_str(&field.len().to_string());
++	text.push(':');
++	text.push_str(&String::from_utf8_lossy(field));
++	text.push('\n');
 +}
 +
 +// Resolve through the deepest existing ancestor, including missing parents.
@@ -134,11 +94,16 @@
 +fn read_source(path: &Path) -> EditResult<Option<String>> {
 +	match std::fs::read_to_string(path) {
 +		Ok(text) => Ok(Some(text)),
-+		Err(err)
-+			if err.kind() == std::io::ErrorKind::NotFound
-+				&& std::fs::symlink_metadata(path).is_err() =>
-+		{
-+			Ok(None)
++		Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
++			// Only a genuine "not found" means "absent"; every other metadata
++			// failure (permissions, I/O) must not be reported as a missing file.
++			match std::fs::symlink_metadata(path) {
++				Ok(_) => Err(EditError::apply("Unreadable prepared source: not a regular file")),
++				Err(meta) if meta.kind() == std::io::ErrorKind::NotFound => Ok(None),
++				Err(meta) => Err(EditError::apply(format!(
++					"Unreadable prepared source: {meta}"
++				))),
++			}
 +		},
 +		Err(err) => Err(EditError::apply(format!("Unreadable prepared source: {err}"))),
 +	}
@@ -175,8 +140,8 @@
 +		}
 +		Ok(())
 +	}
- }
- 
++}
++
 +impl PreparedEdit {
 +	fn from_staged(input: &str, staged: &[StagedFile]) -> EditResult<Self> {
 +		let mut candidates = Vec::new();
@@ -216,6 +181,31 @@
 +		}
 +		Ok(Self { final_input_sha256: sha256(input), candidates })
 +	}
++
++	/// Digest over the exact candidate set the host is asked to approve.
++	///
++	/// The host echoes this value; the engine refuses an approval that binds a
++	/// different candidate list, so an approval can never be replayed onto
++	/// another mutation set derived from the same input. The digest covers the
++	/// resolved target path (not the display spelling) and length-prefixes every
++	/// field, so no path or content can forge a record boundary.
++	pub fn batch_sha256(&self) -> String {
++		let mut text = String::new();
++		push_digest_field(&mut text, self.final_input_sha256.as_bytes());
++		for candidate in &self.candidates {
++			push_digest_field(&mut text, candidate.resolved.to_string_lossy().as_bytes());
++			push_digest_field(&mut text, candidate.operation.as_bytes());
++			push_digest_field(
++				&mut text,
++				candidate.expected_before_sha256.as_deref().unwrap_or("").as_bytes(),
++			);
++			push_digest_field(
++				&mut text,
++				candidate.after_src.as_deref().map(sha256).as_deref().unwrap_or("").as_bytes(),
++			);
++		}
++		sha256(&text)
++	}
 +}
 +
  /// Host-side byte owner.
@@ -232,23 +222,30 @@
  	async fn write(&self, request: WriteRequest) -> EditResult<WriteResponse>;
  }
  
-@@ -295,7 +432,9 @@
+@@ -340,19 +515,76 @@ impl Session {
  		if !snapshot.complete {
  			return Err(EditError::parse("Edit arguments were incomplete"));
  		}
 -		let staged = self.engine.stage(&snapshot, &mut self.files, &self.store)?;
-+		let isolated_store = writer.needs_approval().then(|| self.store.fork());
-+		let stage_store = isolated_store.as_ref().unwrap_or(&self.store);
-+		let staged = self.engine.stage(&snapshot, &mut self.files, stage_store)?;
- 		for file in &staged {
- 			self.files.enforce_write(
- 				&file.display,
-@@ -303,11 +442,37 @@
- 				file.move_to.as_ref().map(|m| m.display.as_str()),
- 			)?;
- 		}
-+
-+		let prepared = if writer.needs_approval() {
+-		for file in &staged {
+-			self.files.enforce_write(
+-				&file.display,
+-				file.op,
+-				file.move_to.as_ref().map(|m| m.display.as_str()),
+-			)?;
+-		}
++		let needs_approval = writer.needs_approval();
++		let (staged, prepared) = if needs_approval {
++			// Preparation runs against a fork so a denied batch publishes no
++			// snapshot, register or no-op bookkeeping.
++			let staged = self.engine.stage(&snapshot, &mut self.files, &self.store.fork())?;
++			for file in &staged {
++				self.files.enforce_write(
++					&file.display,
++					file.op,
++					file.move_to.as_ref().map(|m| m.display.as_str()),
++				)?;
++			}
 +			let batch = PreparedEdit::from_staged(self.args.buffer(), &staged)?;
 +			writer.approve(batch.clone()).await?;
 +			if batch.final_input_sha256 != sha256(self.args.buffer()) {
@@ -257,9 +254,38 @@
 +			for candidate in &batch.candidates {
 +				candidate.verify()?;
 +			}
-+			Some(batch)
++			// Stage again on the live store so an approved batch publishes the
++			// same bookkeeping an unguarded apply would, then prove the
++			// candidate set is still the approved one before anything is written.
++			self.files.clear();
++			let restaged = self.engine.stage(&snapshot, &mut self.files, &self.store)?;
++			for file in &restaged {
++				self.files.enforce_write(
++					&file.display,
++					file.op,
++					file.move_to.as_ref().map(|m| m.display.as_str()),
++				)?;
++			}
++			let rebound = PreparedEdit::from_staged(self.args.buffer(), &restaged)?;
++			if rebound.final_input_sha256 != batch.final_input_sha256
++				|| rebound.batch_sha256() != batch.batch_sha256()
++			{
++				return Err(EditError::apply("Approved edit batch changed before commit"));
++			}
++			for candidate in &batch.candidates {
++				candidate.verify()?;
++			}
++			(restaged, Some(batch))
 +		} else {
-+			None
++			let staged = self.engine.stage(&snapshot, &mut self.files, &self.store)?;
++			for file in &staged {
++				self.files.enforce_write(
++					&file.display,
++					file.op,
++					file.move_to.as_ref().map(|m| m.display.as_str()),
++				)?;
++			}
++			(staged, None)
 +		};
  
  		let last_write = staged.iter().rposition(|file| file.op != FileOp::Noop);
@@ -281,19 +307,11 @@
  			let response = if file.op == FileOp::Noop {
  				WriteResponse::default()
  			} else {
-@@ -332,6 +497,9 @@
- 			match file.op {
- 				FileOp::Delete => self.store.invalidate(&canonical),
- 				FileOp::Noop => {
-+					if let Some(fork) = &isolated_store {
-+						self.store.commit_noop_from(fork, &canonical);
-+					}
- 					if file.record_snapshot {
- 						tag = Some(self.store.record(&canonical, &file.after, None));
- 					}
+diff --git a/crates/pi-natives/src/edit.rs b/crates/pi-natives/src/edit.rs
+index f70ef06..96217dd 100644
 --- a/crates/pi-natives/src/edit.rs
 +++ b/crates/pi-natives/src/edit.rs
-@@ -29,7 +29,7 @@
+@@ -36,7 +36,7 @@ use std::{
  use async_trait::async_trait;
  use napi::{
  	Status,
@@ -302,29 +320,28 @@
  	threadsafe_function::{ThreadsafeFunction, UnknownReturnValue},
  };
  use napi_derive::napi;
-@@ -38,12 +38,20 @@
+@@ -45,7 +45,7 @@ use pi_edit::{
  	diff_string::{BlockContextSource, generate_diff_string},
  	modes::{hashline, sloppy},
- 	path_policy::canonical_key,
+ 	path_policy::{RecoveryGlob, canonical_key},
 -	session::{ApplyRequest, EditWriter, PreviewBatch, SessionConfig, WriteRequest, WriteResponse},
-+	session::{
-+		ApplyRequest, EditWriter, PreparedEdit, PreviewBatch, SessionConfig, WriteRequest,
-+		WriteResponse,
-+	},
++	session::{ApplyRequest, EditWriter, PreparedEdit, PreviewBatch, SessionConfig, WriteRequest, WriteResponse},
  	store,
  	stream_json::snapshot_from_text,
  	text::normalize_to_lf,
+@@ -55,6 +55,11 @@ use pi_walker::{
+ 	walk::{self, Action, Options},
  };
  
 +#[napi]
 +pub fn edit_precommit_protocol() -> u32 {
-+  1
++	1
 +}
 +
  use crate::memory::{self, Settled, native_work};
  
  fn parse_mode(mode: &str) -> Result<EditMode> {
-@@ -357,6 +365,28 @@
+@@ -374,6 +379,30 @@ impl EditStore {
  // ═══════════════════════════════════════════════════════════════════════════
  
  type PreviewCallback = ThreadsafeFunction<EditPreviewBatch, UnknownReturnValue>;
@@ -340,6 +357,7 @@
 +#[napi(object)]
 +pub struct EditPreparedBatch {
 +	pub final_input_sha256: String,
++	pub batch_sha256:       String,
 +	pub candidates:         Vec<EditPreparedCandidate>,
 +}
 +
@@ -347,13 +365,14 @@
 +pub struct EditPrecommitDecision {
 +	pub allowed:            bool,
 +	pub final_input_sha256: String,
++	pub batch_sha256:       String,
 +}
 +
 +type PrecommitCallback = ThreadsafeFunction<EditPreparedBatch, Promise<EditPrecommitDecision>>;
  type WriterCallback = ThreadsafeFunction<EditWriteRequest, Promise<EditWriteResponse>>;
  
  /// Weak so a session awaiting GC never keeps the event loop alive: every call
-@@ -451,11 +481,62 @@
+@@ -482,11 +511,67 @@ impl Shared {
  
  /// Bridges the host writer callback into the engine's writer trait.
  struct TsfnWriter {
@@ -375,8 +394,10 @@
 +			.as_ref()
 +			.ok_or_else(|| EditError::apply("Missing precommit callback"))?;
 +		let digest = batch.final_input_sha256.clone();
++		let batch_digest = batch.batch_sha256();
 +		let payload = EditPreparedBatch {
 +			final_input_sha256: batch.final_input_sha256,
++			batch_sha256:       batch_digest.clone(),
 +			candidates:         batch
 +				.candidates
 +				.into_iter()
@@ -403,8 +424,11 @@
 +			.await
 +			.map_err(|err| EditError::Writer(err.reason))?;
 +		let decision = promise.await.map_err(|err| EditError::Writer(err.reason))?;
-+		if !decision.allowed || decision.final_input_sha256 != digest {
-+			return Err(EditError::apply("Native precommit approval denied or unbound"));
++		if decision.final_input_sha256 != digest || decision.batch_sha256 != batch_digest {
++			return Err(EditError::apply("Native precommit approval digest mismatch"));
++		}
++		if !decision.allowed {
++			return Err(EditError::apply("Native precommit approval denied"));
 +		}
 +		if !self.shared.queue.lock().is_empty() {
 +			return Err(EditError::apply(
@@ -417,7 +441,7 @@
  	async fn write(&self, request: WriteRequest) -> EditResult<WriteResponse> {
  		let op = if request.move_to.is_some() {
  			"move"
-@@ -592,12 +673,15 @@
+@@ -669,12 +754,15 @@ impl EditSession {
  		#[napi(ts_arg_type = "(error: Error | null, request: EditWriteRequest) => \
  		                      Promise<EditWriteResponse>")]
  		writer: WriterCallback,

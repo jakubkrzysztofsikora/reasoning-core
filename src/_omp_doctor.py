@@ -101,18 +101,24 @@ def _authentication_probe(project: Path) -> dict | None:
 def qualification_binding(project: Path, runtime: dict) -> dict:
     policies = POLICY_FILES
     framework = Path(_install_paths.rc_repo_path())
+    configuration = {path: _sha(project / path) for path in policies}
     return {
         "version": runtime.get("version"), "source_sha": runtime.get("source_sha"),
         "native_protocol": runtime.get("native_protocol"),
         "native_sha256": runtime.get("native_sha256"),
         "host_sha256": runtime.get("host_sha256"),
-        "host_configuration_sha256": runtime.get("host_configuration_sha256"),
+        # The probe's own configuration digest reflects the directory it ran in
+        # (a disposable copy during qualification), so it cannot be compared
+        # against the real project later. Bind the project's policy files
+        # directly instead: that map is identical in both places.
+        "configuration": configuration,
+        "configuration_sha256": hashlib.sha256(
+            json.dumps(configuration, sort_keys=True).encode()).hexdigest(),
         "adapter_sha256": _sha(project / EXTENSION),
         "plugin_gate_sha256": _sha(_plugin_path(project) / PLUGIN_GATE),
         "compatibility_sha256": _sha(project / COMPATIBILITY),
         "bridge_sha256": _sha(framework / "src/hooks/omp_bridge.py"),
         "contract_sha256": _sha(framework / "src/omp_contract.py"),
-        "configuration": {path: _sha(project / path) for path in policies},
         "implementation": {str(path.relative_to(framework)): _sha(path)
                            for path in sorted((framework / "src").rglob("*.py"))},
         "environment": {name: hashlib.sha256(value.encode()).hexdigest()
@@ -136,10 +142,25 @@ PLUGIN_PACKAGE = "reasoning-core"
 PLUGIN_GATE = "extensions/reasoning_core_gate.ts"
 
 
+def _gate_settings_path() -> Path:
+    configured = os.environ.get("RC_GATE_SETTINGS", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".omp" / "agent" / "reasoning-core-gate.json"
+
+
 def _plugin_expected_mode(project: Path) -> str:
+    """Mirror the plugin's own mode resolution: env first, then persisted file."""
     requested = os.environ.get("RC_GATE", "").strip().lower()
     if requested in ("off", "advisory", "enforce"):
         return requested
+    try:
+        persisted = json.loads(_gate_settings_path().read_text())
+        mode = persisted.get("mode") if isinstance(persisted, dict) else None
+        if isinstance(mode, str) and mode.strip().lower() in ("off", "advisory", "enforce"):
+            return mode.strip().lower()
+    except (OSError, ValueError):
+        pass
     return "advisory"
 
 
@@ -243,7 +264,7 @@ def check_omp(project: Path) -> list[dict]:
         and _HASH.fullmatch(runtime["native_sha256"]) is not None
     )
     append("omp_loaded", loaded, "actual host loaded the owned adapter and native protocol 1"
-           if loaded else "executable unavailable, discovery disabled, wrong native build, or invalid host probe", "loaded")
+           if loaded else "executable unavailable, project adapter not discovered/registered, wrong native build, or invalid host probe", "loaded")
 
     plugin_installed, plugin_detail = _plugin_installed(project)
     append("omp_plugin_installed", plugin_installed, plugin_detail, "installed")

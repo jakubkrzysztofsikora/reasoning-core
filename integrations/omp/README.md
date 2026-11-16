@@ -1,17 +1,25 @@
 # OMP native precommit boundary
 
 This patch adds a complete-batch approval callback to OMP's native edit engine.
-It is tested against source `96894a6147d8cc64b7e00ad3a7d7178fd93b9531`
-(version 18.11.3), with Rust `nightly-2026-10-06` and Bun 1.4.4.
+It is tested against source `31147f9d1a76608549821c3759f8487b4d66c72d`
+(version 18.14.0), with Rust `nightly-2026-10-06` and Bun 1.4.4.
 `native-precommit.json` records the archive, patch, source-file, and tested
-development-addon digests.
+development-addon digests. The 18.14.0 archive SHA-256 is
+`d0f9c301ae8ae6af6414888145eedb151779e477863b7a35e880fd6cb9b31506`.
 
 The complete native `pi-natives` addon was built and exercised. This is
 component verification. The companion `host-precommit.patch` wires the third
 callback through session-scoped `native_edit_prepare` and `native_edit_result`
 extension events, including isolated interpreter dispatch and filesystem receipts.
-Both patches and the reasoning-core extension are required. Active installations
-remain unchanged until mutation-route qualification and delivery are complete.
+Both patches and the reasoning-core extension are required. A local 18.14.0
+standalone built from this pinned source passed the same qualification
+(allow, deny, child inheritance, restricted routes) without a model call, and a
+disposable pilot project reached all six doctor states (installed, loaded,
+plugin installed, plugin loaded, authenticated, qualified). The build is
+installed side-by-side at `~/.local/bin/omp-rc-18.14.0`; its SHA-256 is
+recorded in `src/data/templates/omp.compatibility.json`. The official
+installation at `~/.local/bin/omp` is unchanged and remains active, and strict
+mode stays off until activation is explicitly approved.
 
 ## Native API
 
@@ -55,7 +63,7 @@ Use a disposable upstream checkout/archive tree. Verify its archive and the five
 original file digests against the metadata before applying the patch. The archive
 is available at:
 
-`https://codeload.github.com/can1357/oh-my-pi/tar.gz/96894a6147d8cc64b7e00ad3a7d7178fd93b9531`
+`https://codeload.github.com/can1357/oh-my-pi/tar.gz/31147f9d1a76608549821c3759f8487b4d66c72d`
 
 Apply with `patch -p1 < /absolute/path/to/native-precommit.patch` in that tree,
 then verify the five patched file digests. This changes the upstream source,
@@ -79,12 +87,15 @@ qualified OMP package.
 
 `editPrecommitProtocol()` reports native protocol 1. The host extension API reads
 this from the loaded addon; an older addon reports unavailable rather than silently
-ignoring a third callback. `host-precommit.json` binds its ten host source files.
+ignoring a third callback. `host-precommit.json` binds ten runtime host files
+and the binding-generation script. The runtime probe hashes the ten host files.
 Apply `host-precommit.patch` after the native patch in the same pinned source tree.
 
-A production OMP build must regenerate its N-API declarations after the patch,
-build its JavaScript package against those declarations, wire the extension
-approval event, and record the resulting runtime/asset hashes before activation.
+A production OMP build must regenerate its N-API declarations after the patch;
+the patched binding script re-adds the loader-state type exports after N-API
+regeneration. Build the JavaScript package against those declarations, wire the
+extension approval event, and record the resulting runtime/asset hashes before
+activation.
 The patch intentionally keeps two-argument apply behavior for unguarded upstream
 users; the qualified adapter must always supply the third callback.
 
@@ -135,14 +146,26 @@ Default `rc init` records only the runtime and removes unchanged, RC-owned
 strict adapter assets from earlier installs. Modified or unowned assets remain
 and are reported. The global plugin gates bash/write/edit. Install the project
 adapter (`.omp/extensions/reasoning_core_gate.ts`) with
-`RC_OMP_STRICT=1 rc init --host omp`; it blocks every tool outside the
-qualified native routes in that project.
+`RC_OMP_STRICT=1 rc init --host omp`. If doctor reports the adapter installed
+but not loaded, ensure its path is in the project's effective OMP `extensions`
+setting (for example, merge `.omp/extensions/reasoning_core_gate.ts` into the
+existing `extensions:` list in `.omp/config.yml`). Preserve existing settings
+and extension entries; do not replace a user's config. When loaded, strict
+mode blocks every tool outside the qualified native routes in that project.
 
 Use `rc doctor --host omp --project-dir /absolute/project --json` for distinct
 installed, loaded, authenticated, and qualified states. `rc init --check --host omp`
 uses the same checks. The native loaded-state diagnostic discovers the owned
 extension and hashes the loaded native addon without invoking a model provider.
 The separate plugin-load probe uses `omp --print` and may invoke a model.
+
+Doctor resolves the expected gate mode the same way the plugin does: `RC_GATE`
+in the environment wins, then the persisted settings file
+(`$RC_GATE_SETTINGS`, default `~/.omp/agent/reasoning-core-gate.json`), then
+the `advisory` default. A project adapter is loaded when the host discovers it;
+in a git checkout the adapter directory is usually ignored, so register the
+adapter path in the project's OMP `extensions` setting (for example
+`.omp/config.yml`) instead of relying on ambient discovery.
 
 With the pinned patched OMP on PATH, run
 `python -m eval.host_enforcement_qualification.omp --project-dir /absolute/project`
